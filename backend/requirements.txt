@@ -1,0 +1,6 @@
+flask
+requests
+werkzeug
+PyPDF2
+openai
+python-dotenv
