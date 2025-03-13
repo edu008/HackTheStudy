@@ -23,6 +23,7 @@ interface Question {
   text: string;
   options: string[];
   correctAnswer: number;
+  explanation?: string;  // Make explanation optional to support both old and new questions
 }
 
 interface UploadResponse {
@@ -38,6 +39,9 @@ const Index = () => {
   const [questions, setQuestions] = useState<Question[]>([]);
   
   const handleUploadSuccess = (data: UploadResponse) => {
+    console.log('DEBUG: Index received upload success data:', data);
+    console.log('DEBUG: Flashcards:', data.flashcards);
+    console.log('DEBUG: Questions:', data.questions);
     setFlashcards(data.flashcards);
     setQuestions(data.questions);
     document.getElementById('flashcards')?.scrollIntoView({ behavior: 'smooth' });

@@ -12,6 +12,7 @@ interface Question {
   text: string;
   options: string[];
   correctAnswer: number;
+  explanation?: string;  // Make explanation optional to support both old and new questions
 }
 
 // Sample questions to show when no data is available
@@ -67,7 +68,9 @@ const TestSimulator = ({
   
   // Update questions when props change
   useEffect(() => {
+    console.log('DEBUG: TestSimulator received questions:', providedQuestions);
     if (providedQuestions && providedQuestions.length > 0) {
+      console.log('DEBUG: Setting questions in TestSimulator:', providedQuestions);
       setQuestions(providedQuestions);
       setCurrentQuestionIndex(0);
       setSelectedAnswers({});
@@ -83,31 +86,58 @@ const TestSimulator = ({
   
   const handleAnswerSelect = (value: string) => {
     if (currentQuestion) {
+      const selectedValue = parseInt(value);
+      
+      // Update selected answers
       setSelectedAnswers({
         ...selectedAnswers,
-        [currentQuestion.id]: parseInt(value)
+        [currentQuestion.id]: selectedValue
       });
+      
+      // Immediately show if the answer is correct or incorrect
+      setIsSubmitted(true);
+      
+      // Show toast with feedback
+      if (selectedValue === currentQuestion.correctAnswer) {
+        toast({
+          title: "Richtig!",
+          description: "Das ist die korrekte Antwort.",
+          variant: "default",
+        });
+      } else {
+        toast({
+          title: "Falsch",
+          description: `Die richtige Antwort ist: ${currentQuestion.options[currentQuestion.correctAnswer].replace(/\*\*/g, '')}`,
+          variant: "destructive",
+        });
+      }
     }
   };
   
   const handleNext = () => {
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(prevIndex => prevIndex + 1);
+      // Reset the submitted state when moving to the next question
+      setIsSubmitted(false);
     }
   };
   
   const handlePrevious = () => {
     if (currentQuestionIndex > 0) {
       setCurrentQuestionIndex(prevIndex => prevIndex - 1);
+      // Reset the submitted state when moving to the previous question
+      setIsSubmitted(false);
     }
   };
   
   const handleSubmit = () => {
-    // Check if all questions are answered
-    if (Object.keys(selectedAnswers).length < questions.length) {
+    if (!currentQuestion) return;
+    
+    // Check if the current question has been answered
+    if (selectedAnswers[currentQuestion.id] === undefined) {
       toast({
-        title: "Nicht alle Fragen beantwortet",
-        description: "Bitte beantworte alle Fragen bevor du abgibst.",
+        title: "Keine Antwort ausgewählt",
+        description: "Bitte wähle eine Antwort aus.",
         variant: "destructive",
       });
       return;
@@ -115,14 +145,15 @@ const TestSimulator = ({
     
     setIsSubmitted(true);
     
-    // Calculate score
-    const correctAnswers = questions.filter(
-      q => selectedAnswers[q.id] === q.correctAnswer
-    ).length;
+    // Show feedback for the current question
+    const isCorrect = selectedAnswers[currentQuestion.id] === currentQuestion.correctAnswer;
     
     toast({
-      title: "Test abgeschlossen",
-      description: `Du hast ${correctAnswers} von ${questions.length} Fragen richtig beantwortet.`,
+      title: isCorrect ? "Richtig!" : "Falsch",
+      description: isCorrect 
+        ? "Das ist die korrekte Antwort." 
+        : `Die richtige Antwort ist: ${currentQuestion.options[currentQuestion.correctAnswer].replace(/\*\*/g, '')}`,
+      variant: isCorrect ? "default" : "destructive",
     });
   };
   
@@ -164,7 +195,7 @@ const TestSimulator = ({
             {currentQuestion ? (
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-xl font-medium mb-6">{currentQuestion.text}</h3>
+                  <h3 className="text-xl font-medium mb-6">{currentQuestion.text.replace(/\*\*/g, '')}</h3>
                   
                   <RadioGroup
                     value={selectedAnswers[currentQuestion.id]?.toString()}
@@ -197,7 +228,7 @@ const TestSimulator = ({
                           htmlFor={`option-${index}`}
                           className="cursor-pointer"
                         >
-                          {option}
+                          {option.replace(/\*\*/g, '')}
                         </Label>
                         
                         {isSubmitted && (
@@ -219,12 +250,20 @@ const TestSimulator = ({
                   <div className="mt-6 p-4 bg-secondary/50 rounded-lg">
                     <p className="font-medium">Erklärung:</p>
                     <p className="text-muted-foreground">
-                      {currentQuestion.correctAnswer === 2 && currentQuestion.id === 1 && 
-                        "Beim Black-Box-Testing wird die Software als 'schwarze Box' betrachtet, bei der nur das externe Verhalten getestet wird, ohne Kenntnis der internen Struktur oder des Quellcodes."}
-                      {currentQuestion.correctAnswer === 1 && currentQuestion.id === 2 && 
-                        "Normalformen in relationalen Datenbanken dienen primär dazu, Datenredundanz zu reduzieren und Anomalien zu vermeiden, die bei Einfüge-, Aktualisierungs- oder Löschvorgängen auftreten können."}
-                      {currentQuestion.correctAnswer === 3 && currentQuestion.id === 3 && 
-                        "Quick Sort hat im Durchschnitt eine Zeitkomplexität von O(n log n), was besser ist als die O(n²) Komplexität von Bubble Sort, Selection Sort und Insertion Sort."}
+                      {currentQuestion.explanation ? (
+                        // Use the explanation from the backend if available
+                        // Remove any markdown formatting (** for bold)
+                        currentQuestion.explanation.replace(/\*\*/g, '')
+                      ) : (
+                        // Fallback to hardcoded explanations for sample questions
+                        currentQuestion.correctAnswer === 2 && currentQuestion.id === 1 ? 
+                          "Beim Black-Box-Testing wird die Software als 'schwarze Box' betrachtet, bei der nur das externe Verhalten getestet wird, ohne Kenntnis der internen Struktur oder des Quellcodes." :
+                        currentQuestion.correctAnswer === 1 && currentQuestion.id === 2 ? 
+                          "Normalformen in relationalen Datenbanken dienen primär dazu, Datenredundanz zu reduzieren und Anomalien zu vermeiden, die bei Einfüge-, Aktualisierungs- oder Löschvorgängen auftreten können." :
+                        currentQuestion.correctAnswer === 3 && currentQuestion.id === 3 ? 
+                          "Quick Sort hat im Durchschnitt eine Zeitkomplexität von O(n log n), was besser ist als die O(n²) Komplexität von Bubble Sort, Selection Sort und Insertion Sort." :
+                          `Die richtige Antwort ist ${currentQuestion.options[currentQuestion.correctAnswer].replace(/\*\*/g, '')}.`
+                      )}
                     </p>
                   </div>
                 )}
@@ -254,16 +293,21 @@ const TestSimulator = ({
               
               <div>
                 {isSubmitted ? (
-                  <Button onClick={resetTest}>
-                    Test zurücksetzen
-                  </Button>
-                ) : currentQuestionIndex === questions.length - 1 ? (
-                  <Button onClick={handleSubmit}>
-                    Abgeben
-                  </Button>
+                  currentQuestionIndex === questions.length - 1 ? (
+                    <Button onClick={resetTest}>
+                      Test zurücksetzen
+                    </Button>
+                  ) : (
+                    <Button onClick={handleNext}>
+                      Weiter zur nächsten Frage
+                    </Button>
+                  )
                 ) : (
-                  <Button onClick={handleNext}>
-                    Weiter
+                  <Button 
+                    onClick={handleSubmit}
+                    disabled={!selectedAnswers[currentQuestion.id]}
+                  >
+                    Antwort prüfen
                   </Button>
                 )}
               </div>

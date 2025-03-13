@@ -21,6 +21,7 @@ interface UploadResponse {
     text: string;
     options: string[];
     correctAnswer: number;
+    explanation?: string;  // Make explanation optional to support both old and new questions
   }[];
 }
 
@@ -44,7 +45,7 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       const formData = new FormData();
       filesToUpload.forEach(file => {
         console.log(`DEBUG: Appending file to FormData: ${file.name} (${file.size} bytes, type: ${file.type})`);
-        formData.append('files[]', file);
+        formData.append('file', file); // Änderung von 'files[]' zu 'file'
       });
 
       console.log('DEBUG: Sending POST request to backend');
@@ -67,6 +68,8 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
     },
     onSuccess: (data) => {
       console.log('DEBUG: Upload successful, received data:', data);
+      console.log('DEBUG: Flashcards:', data.flashcards);
+      console.log('DEBUG: Questions:', data.questions);
       setIsUploaded(true);
       toast({
         title: "Dateien hochgeladen",

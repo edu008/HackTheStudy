@@ -92,7 +92,7 @@ const FlashcardGenerator = ({
                       </div>
                       <div className="flex-1 flex items-center justify-center">
                         <h3 className="text-xl font-medium text-center">
-                          {cards[currentCardIndex]?.question}
+                          {cards[currentCardIndex]?.question.replace(/\*\*/g, '')}
                         </h3>
                       </div>
                       <div className="text-sm text-muted-foreground text-center">
@@ -111,7 +111,7 @@ const FlashcardGenerator = ({
                       </div>
                       <div className="flex-1 flex items-center justify-center">
                         <p className="text-center">
-                          {cards[currentCardIndex]?.answer}
+                          {cards[currentCardIndex]?.answer.replace(/\*\*/g, '')}
                         </p>
                       </div>
                       <div className="text-sm text-muted-foreground text-center">

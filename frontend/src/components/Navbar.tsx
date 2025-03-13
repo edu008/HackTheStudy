@@ -2,10 +2,37 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { GraduationCap, Menu, X } from 'lucide-react';
 
-const Navbar = ({ onUploadSuccess }) => { // Prop für Upload-Erfolg
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+interface Flashcard {
+  id: number;
+  question: string;
+  answer: string;
+}
+
+interface Question {
+  id: number;
+  text: string;
+  options: string[];
+  correctAnswer: number;
+  explanation?: string;  // Make explanation optional to support both old and new questions
+}
+
+interface UploadResponse {
+  success: boolean;
+  message: string;
+  flashcards: Flashcard[];
+  questions: Question[];
+}
+
+interface NavbarProps {
+  onUploadSuccess?: (data: UploadResponse) => void;
+}
+
+const Navbar = ({ onUploadSuccess }: NavbarProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const fileInputRef = useRef(null); // Ref für den Datei-Input
+  const fileInputRef = useRef<HTMLInputElement>(null); // Ref für den Datei-Input
 
   useEffect(() => {
     const handleScroll = () => {
@@ -16,7 +43,7 @@ const Navbar = ({ onUploadSuccess }) => { // Prop für Upload-Erfolg
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const scrollToSection = (sectionId) => {
+  const scrollToSection = (sectionId: string) => {
     const section = document.getElementById(sectionId);
     if (section) {
       section.scrollIntoView({ behavior: 'smooth' });
@@ -29,7 +56,7 @@ const Navbar = ({ onUploadSuccess }) => { // Prop für Upload-Erfolg
     setIsMenuOpen(false); // Schließt das mobile Menü
   };
 
-  const handleFileChange = async (event) => {
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files[0];
     if (file && onUploadSuccess) {
       // Hier simulieren wir die Logik von ExamUploader
@@ -37,13 +64,18 @@ const Navbar = ({ onUploadSuccess }) => { // Prop für Upload-Erfolg
       formData.append('file', file);
 
       try {
+        console.log('DEBUG: Navbar sending file to backend:', file.name);
         const response = await fetch(`${API_URL}/api/upload`, {
           method: 'POST',
           body: formData,
           credentials: 'include', // Entspricht withCredentials: true
         });
         const data = await response.json();
+        console.log('DEBUG: Navbar received response from backend:', data);
+        console.log('DEBUG: Navbar flashcards:', data.flashcards);
+        console.log('DEBUG: Navbar questions:', data.questions);
         if (data.success) {
+          console.log('DEBUG: Navbar calling onUploadSuccess with data');
           onUploadSuccess(data); // Übergibt die Antwort an Index
         } else {
           console.error('Upload fehlgeschlagen:', data.message);
