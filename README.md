@@ -1,136 +1,130 @@
-# HackTheStudy - Moodle Exam Analyzer
+# HackTheStudy
 
-Eine Webanwendung für Studenten zum Analysieren von Moodle-Prüfungen, Erstellen von Karteikarten und Generieren von Testsimulationen.
+A platform for students to analyze exams, generate flashcards, and prepare for tests.
 
-## Funktionen
+## New Features
 
-- **Datei-Upload**: Hochladen von bis zu 5 Dateien (.txt oder .pdf) gleichzeitig
-- **KI-Analyse**: Analyse der Prüfungsinhalte mit einer KI (Hugging Face API)
-- **Karteikarten**: Automatische Erstellung von Karteikarten im Format "Frage: Antwort"
-- **Testsimulationen**: Generierung neuer Testfragen zu ähnlichen Themen
-- **Temporäre Verarbeitung**: Keine dauerhafte Speicherung der hochgeladenen Dateien
+### OAuth Authentication
 
-## Technologien
+The application now supports OAuth authentication with Google and GitHub. Users can sign in using their existing accounts without creating a new username and password.
 
-### Frontend
-- React mit TypeScript
-- Tailwind CSS für das Styling
-- React Query für API-Anfragen
-- Axios für HTTP-Requests
+### User History
 
-### Backend
-- Flask (Python)
-- Hugging Face Inference API für KI-Funktionalitäten
-- PyPDF2 für PDF-Verarbeitung
+All user activities are now tracked and displayed in the user's dashboard. This includes:
+- Exam uploads
+- Flashcard generation
+- Test simulations
+- Concept mapping
+- Payment transactions
 
-## Installation und Ausführung
+### Payment System
 
-### Voraussetzungen
-- Node.js und npm
-- Python 3.8 oder höher
-- pip (Python Package Manager)
+Users can now purchase credits to use the platform's features. The payment system supports:
+- Credit card payments
+- PayPal
+- Bank transfers
+- Transaction history
 
-### Backend einrichten
+## Setup Instructions
 
-1. Ins Backend-Verzeichnis wechseln:
-   ```
-   cd backend
-   ```
+### Backend Setup
 
-2. Virtuelle Umgebung erstellen und aktivieren (optional, aber empfohlen):
-   ```
-   python -m venv venv
-   
-   # Windows
-   venv\Scripts\activate
-   
-   # macOS/Linux
-   source venv/bin/activate
-   ```
-
-3. Abhängigkeiten installieren:
-   ```
-   pip install -r requirements.txt
-   ```
-
-4. Hugging Face API-Key setzen (optional):
-   ```
-   # Windows
-   set HUGGING_FACE_API_KEY=dein_api_key
-   
-   # macOS/Linux
-   export HUGGING_FACE_API_KEY=dein_api_key
-   ```
-   
-   Hinweis: Wenn kein API-Key gesetzt wird, verwendet die Anwendung Beispieldaten.
-
-5. Server starten:
-   ```
-   python app.py
-   ```
-   
-   Der Backend-Server läuft dann auf http://localhost:5000
-
-### Frontend einrichten
-
-1. Ins Frontend-Verzeichnis wechseln:
-   ```
-   cd frontend
-   ```
-
-2. Abhängigkeiten installieren:
-   ```
-   npm install
-   ```
-
-3. Entwicklungsserver starten:
-   ```
-   npm run dev
-   ```
-   
-   Die Frontend-Anwendung läuft dann auf http://localhost:5173
-
-## Deployment
-
-### Backend (PythonAnywhere)
-
-1. Erstelle einen Account auf PythonAnywhere
-2. Lade die Backend-Dateien hoch
-3. Installiere die Abhängigkeiten mit pip
-4. Konfiguriere eine WSGI-Datei, die auf die Flask-App verweist
-5. Setze die Umgebungsvariable für den Hugging Face API-Key
-
-### Frontend (Netlify)
-
-1. Erstelle einen Account auf Netlify
-2. Verbinde dein GitHub-Repository
-3. Setze den Build-Befehl auf `cd frontend && npm install && npm run build`
-4. Setze das Publish-Verzeichnis auf `frontend/dist`
-5. Konfiguriere die Umgebungsvariable `VITE_API_URL` mit der URL deines Backend-Servers
-
-## Projektstruktur
-
-```
-HackTheStudy/
-├── backend/
-│   ├── app.py                 # Flask-Server und API-Endpunkte
-│   └── requirements.txt       # Python-Abhängigkeiten
-└── frontend/
-    ├── public/                # Statische Dateien
-    ├── src/
-    │   ├── components/        # React-Komponenten
-    │   │   ├── ExamUploader.tsx
-    │   │   ├── FlashcardGenerator.tsx
-    │   │   ├── TestSimulator.tsx
-    │   │   └── ...
-    │   ├── pages/             # Seitenkomponenten
-    │   │   └── Index.tsx
-    │   ├── App.tsx            # Hauptanwendungskomponente
-    │   └── main.tsx           # Einstiegspunkt
-    ├── package.json           # npm-Abhängigkeiten
-    └── ...
+1. Install the required dependencies:
+```bash
+cd backend
+pip install -r requirements.txt
 ```
 
-## Lizenz
+2. Set up the environment variables in `.env`:
+```
+FLASK_SECRET_KEY=your-secret-key
+DATABASE_URL=your-database-url
+OPENAI_API_KEY=your-openai-api-key
 
-MIT
+# OAuth Configuration
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Payment Configuration
+STRIPE_SECRET_KEY=your-stripe-secret-key
+STRIPE_PUBLISHABLE_KEY=your-stripe-publishable-key
+
+# Frontend URL for OAuth callback
+FRONTEND_URL=http://localhost:8080
+```
+
+3. Initialize the database with the new tables:
+```bash
+python init_oauth_db.py
+```
+
+4. Start the backend server:
+```bash
+python app.py
+```
+
+### Frontend Setup
+
+1. Install the required dependencies:
+```bash
+cd frontend
+npm install
+```
+
+2. Set up the environment variables in `.env`:
+```
+VITE_API_URL=http://localhost:5000
+```
+
+3. Start the frontend development server:
+```bash
+npm run dev
+```
+
+## OAuth Setup
+
+### Google OAuth
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project
+3. Navigate to "APIs & Services" > "Credentials"
+4. Click "Create Credentials" > "OAuth client ID"
+5. Set the application type to "Web application"
+6. Add authorized redirect URIs:
+   - `http://localhost:5000/auth/callback/google`
+7. Copy the Client ID and Client Secret to your `.env` file
+
+### GitHub OAuth
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Click "New OAuth App"
+3. Fill in the application details
+4. Set the authorization callback URL to:
+   - `http://localhost:5github000/auth/callback/`
+5. Copy the Client ID and Client Secret to your `.env` file
+
+## Payment System Setup
+
+For development and testing, the payment system is set up to simulate successful payments without actually charging any cards. In a production environment, you would need to:
+
+1. Create a [Stripe](https://stripe.com/) account
+2. Get your API keys from the Stripe dashboard
+3. Add the keys to your `.env` file
+4. Update the payment processing logic in `backend/api/auth.py` to use the Stripe API
+
+## Usage
+
+1. Sign in using Google or GitHub
+2. Purchase credits from the dashboard
+3. Use the platform's features (upload exams, generate flashcards, etc.)
+4. View your activity history and payment history in the dashboard
+
+## Demo Account
+
+For testing purposes, a demo account is created when you initialize the database:
+
+- Email: demo@example.com
+- Name: Demo User
+- Credits: 500

@@ -1,0 +1,149 @@
+2025-03-17 18:47:36,664 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.20.0.5:5000
+2025-03-17 18:47:36,665 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2025-03-17 18:48:02,131 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:02] "OPTIONS / HTTP/1.1" 200 -
+2025-03-17 18:48:02,137 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:02] "GET / HTTP/1.1" 200 -
+2025-03-17 18:48:02,149 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:02] "[32mGET /api/v1/auth/login/github HTTP/1.1[0m" 302 -
+2025-03-17 18:48:03,403 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:03] "[32mGET /api/v1/auth/callback/github?code=ec0bad4659d2d430da9a&state=W0cTR4fNEYdGARpH2jp6LnS6N1OL7d HTTP/1.1[0m" 302 -
+2025-03-17 18:48:03,874 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:03] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:48:03,889 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:03] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:48:08,433 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:08] "OPTIONS /api/v1/upload HTTP/1.1" 200 -
+2025-03-17 18:48:08,503 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:08] "[35m[1mPOST /api/v1/upload HTTP/1.1[0m" 202 -
+2025-03-17 18:48:08,516 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:08] "[33mGET /api/v1/results/b97dba6c-c2cc-4287-949a-02c7a4e0a87f HTTP/1.1[0m" 404 -
+2025-03-17 18:48:10,529 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:10] "[33mGET /api/v1/results/b97dba6c-c2cc-4287-949a-02c7a4e0a87f HTTP/1.1[0m" 404 -
+2025-03-17 18:48:12,554 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:12] "[33mGET /api/v1/results/b97dba6c-c2cc-4287-949a-02c7a4e0a87f HTTP/1.1[0m" 404 -
+2025-03-17 18:48:13,077 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:13] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:48:13,092 [INFO] werkzeug: 172.20.0.1 - - [17/Mar/2025 18:48:13] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:52:41,255 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.21.0.5:5000
+2025-03-17 18:52:41,255 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2025-03-17 18:52:56,273 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:52:56] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:52:56,309 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:52:56] "[33mGET /api/v1/auth/user HTTP/1.1[0m" 404 -
+2025-03-17 18:52:58,719 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:52:58] "[33mGET /api/v1/auth/logout HTTP/1.1[0m" 404 -
+2025-03-17 18:53:01,322 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:01] "OPTIONS / HTTP/1.1" 200 -
+2025-03-17 18:53:01,329 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:01] "GET / HTTP/1.1" 200 -
+2025-03-17 18:53:01,341 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:01] "[32mGET /api/v1/auth/login/github HTTP/1.1[0m" 302 -
+2025-03-17 18:53:02,558 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:02] "[32mGET /api/v1/auth/callback/github?code=61f0c2bc217adf3e9cff&state=bQSIKqa0MemHVkNAAS0zNTY3JL57jk HTTP/1.1[0m" 302 -
+2025-03-17 18:53:03,182 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:03] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:53:03,194 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:03] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:53:15,132 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:15] "OPTIONS /api/v1/upload HTTP/1.1" 200 -
+2025-03-17 18:53:15,290 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:15] "[35m[1mPOST /api/v1/upload HTTP/1.1[0m" 202 -
+2025-03-17 18:53:15,303 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:15] "[33mGET /api/v1/results/b41aec1d-3dfb-4f73-b563-34e6744ba4cf HTTP/1.1[0m" 404 -
+2025-03-17 18:53:17,333 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:17] "[33mGET /api/v1/results/b41aec1d-3dfb-4f73-b563-34e6744ba4cf HTTP/1.1[0m" 404 -
+2025-03-17 18:53:19,345 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:19] "[33mGET /api/v1/results/b41aec1d-3dfb-4f73-b563-34e6744ba4cf HTTP/1.1[0m" 404 -
+2025-03-17 18:53:20,263 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:20] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:53:20,276 [INFO] werkzeug: 172.21.0.1 - - [17/Mar/2025 18:53:20] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:56:04,416 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.22.0.5:5000
+2025-03-17 18:56:04,416 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2025-03-17 18:56:21,402 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:21] "[33mGET /api/v1/auth/logout HTTP/1.1[0m" 404 -
+2025-03-17 18:56:23,348 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:23] "OPTIONS / HTTP/1.1" 200 -
+2025-03-17 18:56:23,355 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:23] "GET / HTTP/1.1" 200 -
+2025-03-17 18:56:23,366 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:23] "[32mGET /api/v1/auth/login/github HTTP/1.1[0m" 302 -
+2025-03-17 18:56:24,766 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:24] "[32mGET /api/v1/auth/callback/github?code=76a77c02bb8a003c3156&state=xCtV5W09XjrkkHaqq9o6F0MtGnuILu HTTP/1.1[0m" 302 -
+2025-03-17 18:56:25,367 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:25] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:56:25,379 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:25] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:56:48,583 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:48] "OPTIONS /api/v1/upload HTTP/1.1" 200 -
+2025-03-17 18:56:48,725 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:48] "[35m[1mPOST /api/v1/upload HTTP/1.1[0m" 202 -
+2025-03-17 18:56:48,738 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:48] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:56:50,754 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:50] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:56:52,769 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:52] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:56:54,789 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:54] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:56:56,800 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:56] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:56:58,814 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:56:58] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:57:00,826 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:57:00] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:57:02,846 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:57:02] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:57:04,864 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:57:04] "[33mGET /api/v1/results/45f78280-a7be-4b27-83a0-35dedc298dc0 HTTP/1.1[0m" 404 -
+2025-03-17 18:57:05,485 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:57:05] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 18:57:05,496 [INFO] werkzeug: 172.22.0.1 - - [17/Mar/2025 18:57:05] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:00:05,009 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.23.0.5:5000
+2025-03-17 19:00:05,009 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2025-03-17 19:00:15,960 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:15] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:00:15,988 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:15] "[33mGET /api/v1/auth/user HTTP/1.1[0m" 404 -
+2025-03-17 19:00:18,209 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:18] "[33mGET /api/v1/auth/logout HTTP/1.1[0m" 404 -
+2025-03-17 19:00:20,034 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:20] "OPTIONS / HTTP/1.1" 200 -
+2025-03-17 19:00:20,040 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:20] "GET / HTTP/1.1" 200 -
+2025-03-17 19:00:20,051 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:20] "[32mGET /api/v1/auth/login/github HTTP/1.1[0m" 302 -
+2025-03-17 19:00:21,413 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:21] "[32mGET /api/v1/auth/callback/github?code=dca43368225ca132377d&state=Qoat4uXaKjO3YWZPojP52Spihk8XW7 HTTP/1.1[0m" 302 -
+2025-03-17 19:00:21,842 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:21] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:00:21,850 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:21] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:00:30,064 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:30] "OPTIONS /api/v1/upload HTTP/1.1" 200 -
+2025-03-17 19:00:30,169 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:30] "[35m[1mPOST /api/v1/upload HTTP/1.1[0m" 202 -
+2025-03-17 19:00:30,182 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:30] "[33mGET /api/v1/results/f2940bee-e614-4259-9eb8-768134cefe28 HTTP/1.1[0m" 404 -
+2025-03-17 19:00:32,196 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:32] "[33mGET /api/v1/results/f2940bee-e614-4259-9eb8-768134cefe28 HTTP/1.1[0m" 404 -
+2025-03-17 19:00:34,206 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:34] "[33mGET /api/v1/results/f2940bee-e614-4259-9eb8-768134cefe28 HTTP/1.1[0m" 404 -
+2025-03-17 19:00:36,225 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:36] "[33mGET /api/v1/results/f2940bee-e614-4259-9eb8-768134cefe28 HTTP/1.1[0m" 404 -
+2025-03-17 19:00:37,655 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:37] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:00:37,666 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:00:37] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:02:20,734 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:20] "OPTIONS /api/v1/upload HTTP/1.1" 200 -
+2025-03-17 19:02:20,757 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:20] "[35m[1mPOST /api/v1/upload HTTP/1.1[0m" 202 -
+2025-03-17 19:02:20,766 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:20] "[33mGET /api/v1/results/8fff4354-3d03-4b33-aedf-6ffcb7a8244a HTTP/1.1[0m" 404 -
+2025-03-17 19:02:22,791 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:22] "[33mGET /api/v1/results/8fff4354-3d03-4b33-aedf-6ffcb7a8244a HTTP/1.1[0m" 404 -
+2025-03-17 19:02:24,808 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:24] "[33mGET /api/v1/results/8fff4354-3d03-4b33-aedf-6ffcb7a8244a HTTP/1.1[0m" 404 -
+2025-03-17 19:02:26,831 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:26] "[33mGET /api/v1/results/8fff4354-3d03-4b33-aedf-6ffcb7a8244a HTTP/1.1[0m" 404 -
+2025-03-17 19:02:29,116 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:29] "GET /api/v1/results/8fff4354-3d03-4b33-aedf-6ffcb7a8244a HTTP/1.1" 200 -
+2025-03-17 19:02:29,157 [INFO] werkzeug: 172.23.0.1 - - [17/Mar/2025 19:02:29] "GET /api/v1/results/8fff4354-3d03-4b33-aedf-6ffcb7a8244a HTTP/1.1" 200 -
+2025-03-17 19:08:01,010 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.24.0.5:5000
+2025-03-17 19:08:01,010 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2025-03-17 19:08:11,412 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:11] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:08:11,449 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:11] "[33mGET /api/v1/auth/user HTTP/1.1[0m" 404 -
+2025-03-17 19:08:13,414 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:13] "[33mGET /api/v1/auth/logout HTTP/1.1[0m" 404 -
+2025-03-17 19:08:15,215 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:15] "OPTIONS / HTTP/1.1" 200 -
+2025-03-17 19:08:15,221 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:15] "GET / HTTP/1.1" 200 -
+2025-03-17 19:08:15,235 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:15] "[32mGET /api/v1/auth/login/github HTTP/1.1[0m" 302 -
+2025-03-17 19:08:16,516 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:16] "[32mGET /api/v1/auth/callback/github?code=72d8e581925ee7ef3281&state=OZyg96HhjNvLrbMF7WQHo7rBSLESb2 HTTP/1.1[0m" 302 -
+2025-03-17 19:08:16,994 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:16] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:08:17,007 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:17] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:08:22,312 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:22] "OPTIONS /api/v1/upload HTTP/1.1" 200 -
+2025-03-17 19:08:22,397 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:22] "[35m[1mPOST /api/v1/upload HTTP/1.1[0m" 202 -
+2025-03-17 19:08:22,410 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:22] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:24,431 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:24] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:26,452 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:26] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:28,467 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:28] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:30,477 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:30] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:32,494 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:32] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:34,515 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:34] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:36,533 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:36] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:38,549 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:38] "[33mGET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1[0m" 404 -
+2025-03-17 19:08:40,921 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:40] "GET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1" 200 -
+2025-03-17 19:08:41,002 [INFO] werkzeug: 172.24.0.1 - - [17/Mar/2025 19:08:41] "GET /api/v1/results/1ac368dd-9456-46cc-8fd1-8c0f93e35c25 HTTP/1.1" 200 -
+2025-03-17 19:11:17,136 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.25.0.5:5000
+2025-03-17 19:11:17,137 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2025-03-17 19:11:27,940 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:27] "[33mGET /api/v1/auth/logout HTTP/1.1[0m" 404 -
+2025-03-17 19:11:29,972 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:29] "OPTIONS / HTTP/1.1" 200 -
+2025-03-17 19:11:29,977 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:29] "GET / HTTP/1.1" 200 -
+2025-03-17 19:11:29,987 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:29] "[32mGET /api/v1/auth/login/github HTTP/1.1[0m" 302 -
+2025-03-17 19:11:31,261 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:31] "[32mGET /api/v1/auth/callback/github?code=d7466f69e397037f3da8&state=5PLLrcYHywLKmHVUUZtM42y73Bn6uG HTTP/1.1[0m" 302 -
+2025-03-17 19:11:31,759 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:31] "OPTIONS /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:11:31,777 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:31] "GET /api/v1/auth/user HTTP/1.1" 200 -
+2025-03-17 19:11:35,339 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:35] "OPTIONS /api/v1/upload HTTP/1.1" 200 -
+2025-03-17 19:11:35,434 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:35] "[35m[1mPOST /api/v1/upload HTTP/1.1[0m" 202 -
+2025-03-17 19:11:35,446 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:35] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:37,476 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:37] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:39,488 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:39] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:41,509 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:41] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:43,521 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:43] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:45,543 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:45] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:47,567 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:47] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:49,583 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:49] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:51,605 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:51] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:53,621 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:53] "[33mGET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1[0m" 404 -
+2025-03-17 19:11:55,914 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:55] "GET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1" 200 -
+2025-03-17 19:11:55,963 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:11:55] "GET /api/v1/results/4118de3d-c28e-4ce3-a6b6-a73581ba85f4 HTTP/1.1" 200 -
+2025-03-17 19:12:28,455 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:12:28] "OPTIONS /api/v1/generate-more-flashcards HTTP/1.1" 200 -
+2025-03-17 19:12:28,461 [INFO] werkzeug: 172.25.0.1 - - [17/Mar/2025 19:12:28] "[31m[1mPOST /api/v1/generate-more-flashcards HTTP/1.1[0m" 400 -

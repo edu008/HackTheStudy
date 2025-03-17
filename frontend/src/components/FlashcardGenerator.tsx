@@ -169,13 +169,6 @@ const FlashcardGenerator = ({
                     <span className="text-sm font-medium">Gesamt</span>
                     <span className="text-sm">{cards.length} Karten</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Gelernt</span>
-                    <span className="text-sm">{Math.floor(cards.length * 0.6)} Karten</span>
-                  </div>
-                  <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full" style={{ width: `${cards.length > 0 ? 60 : 0}%` }}></div>
-                  </div>
                   
                   {cards.length === 0 && (
                     <div className="p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg mt-4">

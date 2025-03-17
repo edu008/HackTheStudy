@@ -8,6 +8,37 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+// This interface matches the response from the backend's upload endpoint
+interface BackendUploadResponse {
+  success: boolean;
+  message: string;
+  session_id: string;
+  task_id: string;
+}
+
+// This interface matches the response from the backend's results endpoint
+interface SessionData {
+  flashcards: {
+    id: number;
+    question: string;
+    answer: string;
+  }[];
+  test_questions: {
+    id: number;
+    text: string;
+    options: string[];
+    correctAnswer: number;
+    explanation?: string;  // Make explanation optional to support both old and new questions
+  }[];
+  analysis: {
+    main_topic: string;
+    subtopics: string[];
+    content_type?: string;
+    language?: string;
+  };
+}
+
+// This interface matches what the parent component expects
 interface UploadResponse {
   success: boolean;
   message: string;
@@ -21,8 +52,9 @@ interface UploadResponse {
     text: string;
     options: string[];
     correctAnswer: number;
-    explanation?: string;  // Make explanation optional to support both old and new questions
+    explanation?: string;
   }[];
+  session_id: string;
 }
 
 interface ExamUploaderProps {
@@ -49,7 +81,7 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       });
 
       console.log('DEBUG: Sending POST request to backend');
-      const response = await axios.post<UploadResponse>(`${API_URL}/api/upload`, formData, {
+      const response = await axios.post<BackendUploadResponse>(`${API_URL}/api/v1/upload`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -64,17 +96,76 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       });
 
       console.log('DEBUG: Received response from backend:', response.data);
-      return response.data;
+      
+      // Wait for the backend to process the upload
+      console.log('DEBUG: Waiting for backend to process the upload...');
+      
+      // Poll the results endpoint until the data is available
+      let retries = 0;
+      const maxRetries = 30; // Maximum number of retries (30 * 2 seconds = 60 seconds)
+      const retryInterval = 2000; // 2 seconds
+      
+      while (retries < maxRetries) {
+        try {
+          console.log(`DEBUG: Polling results endpoint (attempt ${retries + 1}/${maxRetries})...`);
+          const resultsResponse = await axios.get<{ success: boolean, data: SessionData }>(
+            `${API_URL}/api/v1/results/${response.data.session_id}`,
+            { withCredentials: true }
+          );
+          
+          if (resultsResponse.data.success && resultsResponse.data.data) {
+            console.log('DEBUG: Results data available:', resultsResponse.data);
+            
+            // Combine the upload response and results data
+            const completeResponse: UploadResponse = {
+              success: true,
+              message: response.data.message,
+              session_id: response.data.session_id,
+              flashcards: resultsResponse.data.data.flashcards || [],
+              questions: resultsResponse.data.data.test_questions || []
+            };
+            
+            return completeResponse;
+          }
+        } catch (error) {
+          console.log('DEBUG: Results not available yet, retrying...');
+        }
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, retryInterval));
+        retries++;
+      }
+      
+      // If we've exhausted all retries, return a partial response with an error message
+      console.log('DEBUG: Maximum retries reached, returning partial response');
+      return {
+        success: true,
+        message: "Upload successful, but processing is taking longer than expected. The server might be busy or the worker might not be running. Please try again later or contact support.",
+        session_id: response.data.session_id,
+        flashcards: [],
+        questions: []
+      };
     },
     onSuccess: (data) => {
       console.log('DEBUG: Upload successful, received data:', data);
       console.log('DEBUG: Flashcards:', data.flashcards);
       console.log('DEBUG: Questions:', data.questions);
       setIsUploaded(true);
-      toast({
-        title: "Dateien hochgeladen",
-        description: `${files.length} Prüfung${files.length > 1 ? 'en wurden' : ' wurde'} erfolgreich hochgeladen und analysiert.`,
-      });
+      
+      if (data.flashcards.length === 0 && data.questions.length === 0) {
+        // Show a warning toast if no flashcards or questions were generated
+        toast({
+          title: "Dateien hochgeladen",
+          description: data.message || "Die Dateien wurden hochgeladen, aber es konnten keine Lernmaterialien erstellt werden. Bitte versuche es später erneut.",
+          variant: "default",
+        });
+      } else {
+        // Show a success toast if flashcards or questions were generated
+        toast({
+          title: "Dateien hochgeladen",
+          description: `${files.length} Prüfung${files.length > 1 ? 'en wurden' : ' wurde'} erfolgreich hochgeladen und analysiert.`,
+        });
+      }
       
       if (onUploadSuccess) {
         console.log('DEBUG: Calling onUploadSuccess with data');
@@ -320,7 +411,11 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
                 <div className="text-center">
                   <p className="font-medium text-lg">Erfolgreich hochgeladen!</p>
                   <p className="text-muted-foreground mt-1">
-                    Die KI hat deine Prüfungen analysiert und Lernmaterialien erstellt.
+                    {uploadMutation.data && uploadMutation.data.flashcards.length === 0 && uploadMutation.data.questions.length === 0 ? (
+                      uploadMutation.data.message || "Die Dateien wurden hochgeladen, aber es konnten keine Lernmaterialien erstellt werden. Bitte versuche es später erneut."
+                    ) : (
+                      "Die KI hat deine Prüfungen analysiert und Lernmaterialien erstellt."
+                    )}
                   </p>
                 </div>
               </div>

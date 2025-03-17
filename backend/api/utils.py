@@ -1,268 +1,276 @@
-import os
+import json
 import re
 import PyPDF2
-import time  # Hinzugefügt
-from openai import OpenAI
-from colorama import init, Fore, Style
-
-# Initialisiere colorama
-init()
-
-# Configuration
-ALLOWED_EXTENSIONS = {'pdf', 'txt'}
-MAX_FILES = 5
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-
-# Hilfsfunktionen für Debugging
-def print_debug(message, success=True):
-    """Hilfsfunktion für farbigen Debug-Output."""
-    if success:
-        print(f"{Fore.GREEN}DEBUG: {message}{Style.RESET_ALL}")
-    else:
-        print(f"{Fore.RED}DEBUG: {message}{Style.RESET_ALL}")
-
-def print_loading(step):
-    """Simuliert eine Ladeanzeige."""
-    print(f"{Fore.CYAN}LOADING: {step}...{Style.RESET_ALL}", end="\r")
-    time.sleep(0.5)
+import docx
+from langdetect import detect
+import io  # Hinzugefügt für BytesIO
 
 def allowed_file(filename):
-    """Check if the file has an allowed extension"""
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    allowed_extensions = {'pdf', 'txt', 'docx', 'doc'}
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
-def extract_text_from_pdf(file_stream):
-    """Extract text from a PDF file"""
-    pdf_reader = PyPDF2.PdfReader(file_stream)
-    text = ""
-    for page in pdf_reader.pages:
-        extracted_text = page.extract_text()
-        if extracted_text:
-            text += extracted_text + "\n"
-    return text.strip()
+def extract_text_from_file(file, filename):
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    if ext == 'pdf':
+        try:
+            # Konvertiere bytes in ein file-like Objekt
+            file_like = io.BytesIO(file)
+            pdf_reader = PyPDF2.PdfReader(file_like)
+            text = "".join(page.extract_text() + "\n" for page in pdf_reader.pages if page.extract_text())
+            return text
+        except Exception as e:
+            return f"Error extracting text from PDF: {str(e)}"
+    elif ext == 'docx':
+        try:
+            doc = docx.Document(file)
+            text = "".join(para.text + "\n" for para in doc.paragraphs)
+            return text
+        except Exception as e:
+            return f"Error extracting text from DOCX: {str(e)}"
+    elif ext == 'txt':
+        try:
+            return file.read().decode('utf-8', errors='ignore')
+        except Exception as e:
+            return f"Error decoding text file: {str(e)}"
+    return f"Unsupported file format: {ext}"
 
-def extract_text_from_file(file, filename=None):
-    """Extract text from a file based on its extension"""
-    # If filename is provided directly, use it
-    # Otherwise try to get it from the file object (for Flask FileStorage objects)
-    if filename is None:
-        if hasattr(file, 'filename'):
-            filename = file.filename
-        else:
-            # For file objects without filename attribute, we can't determine the extension
-            raise ValueError("Filename must be provided for file objects without a filename attribute")
-    
-    file_extension = filename.rsplit('.', 1)[1].lower()
-    file.seek(0)
-    if file_extension == 'pdf':
-        return extract_text_from_pdf(file)
-    elif file_extension == 'txt':
-        return file.read().decode('utf-8')
-    return ""
-
-def query_chatgpt(prompt, client):
-    """Query the OpenAI API with a prompt"""
-    if not client.api_key:
-        raise ValueError("OpenAI API key is missing. Please set the OPENAI_API_KEY in the .env file.")
-    
+def detect_language(text):
     try:
+        lang = detect(text[:500])  # Begrenze auf 500 Zeichen für Effizienz
+        return 'de' if lang == 'de' else 'en'
+    except Exception:
+        return 'en'
+
+def query_chatgpt(prompt, client, system_content=None):
+    try:
+        messages = []
+        if system_content:
+            messages.append({"role": "system", "content": system_content})
+        else:
+            messages.append({"role": "system", "content": "You are a helpful assistant that provides concise, accurate information."})
+        messages.append({"role": "user", "content": prompt})
+        
         response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant for creating study materials from exam content. Analyze the content and decide how many flashcards and multiple-choice questions to generate based on its complexity and depth. Ensure all generated items are directly related to the provided content."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=2000,
-            temperature=0.7,
+            model="gpt-3.5-turbo-16k",
+            messages=messages,
+            temperature=0.9,
+            max_tokens=4000
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        raise Exception(f"ChatGPT API request failed: {str(e)}")
+        return f"Error querying OpenAI API: {str(e)}"
 
-def analyze_content(text, client):
-    """Analyze the content and let ChatGPT decide the number of items."""
-    prompt = f"""
-    Analyze the following content and determine:
-    - Key topics.
-    - How many flashcards should be generated based on the content's depth and complexity.
-    - How many multiple-choice questions should be generated based on the content's depth and complexity.
-    - Whether it is an exam or study material (based on structure and content).
-    - Extract existing questions if present.
-
-    Format:
-    Topics: [list of key topics]
-    Estimated Flashcards: [number]
-    Estimated Questions: [number]
-    Content Type: [exam/study_material]
-    Existing Questions: [question1:answer1, ...] or None
-
-    Content:
-    {text[:10000]}
-    """
-    response = query_chatgpt(prompt, client)
-    print_debug(f"Content analysis response:\n{response}")
-    return parse_analysis(response)
-
-def parse_analysis(response):
-    """Parse the analysis response."""
-    topics = []
-    estimated_flashcards = 0
-    estimated_questions = 0
-    content_type = "study_material"
-    existing_questions = []
-
-    lines = response.split('\n')
-    for line in lines:
-        line = line.strip()
-        if line.startswith("Topics:"):
-            topics = line[len("Topics:"):].strip().split(", ")
-        elif line.startswith("Estimated Flashcards:"):
-            # Extract just the number from the string, ignoring any text in parentheses
-            flashcards_text = line[len("Estimated Flashcards:"):].strip()
-            # Extract the first number from the string
-            import re
-            flashcards_match = re.search(r'\d+', flashcards_text)
-            estimated_flashcards = int(flashcards_match.group(0)) if flashcards_match else 5  # Default to 5 if no number found
-        elif line.startswith("Estimated Questions:"):
-            # Extract just the number from the string, ignoring any text in parentheses
-            questions_text = line[len("Estimated Questions:"):].strip()
-            # Extract the first number from the string
-            import re
-            questions_match = re.search(r'\d+', questions_text)
-            estimated_questions = int(questions_match.group(0)) if questions_match else 3  # Default to 3 if no number found
-        elif line.startswith("Content Type:"):
-            content_type = line[len("Content Type:"):].strip()
-        elif line.startswith("Existing Questions:") and "None" not in line:
-            eq_text = line[len("Existing Questions:"):].strip()
-            pairs = eq_text.split(", ")
-            for pair in pairs:
-                if ":" in pair:
-                    q, a = pair.split(":", 1)
-                    existing_questions.append({"question": q.strip(), "answer": a.strip()})
-
-    estimated_flashcards = max(1, estimated_flashcards)
-    estimated_questions = max(1, estimated_questions)
-
-    return {
-        "topics": topics,
-        "estimated_flashcards": estimated_flashcards,
-        "estimated_questions": estimated_questions,
-        "content_type": content_type,
-        "existing_questions": existing_questions
-    }
-
-def generate_flashcards(text, client, existing_flashcards=None):
-    """Generate flashcards based on ChatGPT's estimation."""
-    analysis = analyze_content(text, client)
-    target_flashcards = analysis["estimated_flashcards"]
-    existing_questions = analysis["existing_questions"]
+def analyze_content(text, client, language='en'):
+    system_content = (
+        "You are an expert in educational content analysis. Your task is to analyze the provided text and extract key information for generating study materials."
+        if language != 'de' else
+        "Sie sind ein Experte für die Analyse von Bildungsinhalten. Ihre Aufgabe ist es, den bereitgestellten Text zu analysieren und wichtige Informationen für die Erstellung von Lernmaterialien zu extrahieren."
+    )
     
-    prompt = f"""
-    Create {target_flashcards} flashcards from the following content. Use existing questions if provided, and generate new ones to reach the total number decided by you based on the content's depth.
+    prompt = (
+        """
+        Analyze the following text and extract the following information:
+        1. The main topic of the text (a concise phrase)
+        2. 3-7 important subtopics or concepts (as an array)
+        3. An estimate of how many flashcards would be useful (between 5-20, as a number)
+        4. An estimate of how many test questions would be useful (between 3-10, as a number)
+        5. A list of existing questions in the text (if any, otherwise empty array)
+        6. The content type (e.g., 'lecture', 'textbook', 'notes', 'scientific article')
 
-    Format (DO NOT use markdown formatting like ** or numbering):
-    Question: [question]
-    Answer: [answer]
+        Format your response as JSON with the keys: main_topic, subtopics, estimated_flashcards, estimated_questions, existing_questions, content_type.
 
-    Content:
-    {text[:10000]}
+        Text:
+        """
+        if language != 'de' else
+        """
+        Analysieren Sie den folgenden Text und extrahieren Sie die folgenden Informationen:
+        1. Das Hauptthema des Textes (eine prägnante Phrase)
+        2. 3-7 wichtige Unterthemen oder Konzepte (als Array)
+        3. Eine Schätzung, wie viele Karteikarten sinnvoll wären (zwischen 5-20, als Zahl)
+        4. Eine Schätzung, wie viele Testfragen sinnvoll wären (zwischen 3-10, als Zahl)
+        5. Eine Liste von existierenden Fragen im Text (falls vorhanden, sonst leeres Array)
+        6. Den Inhaltstyp (z.B. 'Vorlesung', 'Lehrbuch', 'Notizen', 'Wissenschaftlicher Artikel')
 
-    Existing questions (use as many as possible up to {target_flashcards}):
-    {', '.join([f"{q['question']}:{q['answer']}" for q in existing_questions]) if existing_questions else 'None'}
+        Formatieren Sie Ihre Antwort als JSON mit den Schlüsseln: main_topic, subtopics, estimated_flashcards, estimated_questions, existing_questions, content_type.
 
-    Rules:
-    - Generate exactly {target_flashcards} flashcards as estimated from the content analysis.
-    - Use existing questions where possible and supplement with new ones.
-    - Avoid duplicates with: {', '.join([f"{f['question']}:{f['answer']}" for f in existing_flashcards]) if existing_flashcards else 'None'}
-    - Ensure all flashcards are relevant to the content.
-    - DO NOT use markdown formatting like ** or numbering in your response.
-    - Follow the exact format specified above.
-    """
+        Text:
+        """
+    )
+    
+    max_chars = 15000
+    if len(text) > max_chars:
+        text = text[:max_chars] + "...[text truncated]"
+    
+    response = query_chatgpt(prompt + text, client, system_content)
     
     try:
-        response = query_chatgpt(prompt, client)
-        print_debug(f"Raw ChatGPT response for flashcards:\n{response}")
-        flashcards = []
-        pattern = r'(?:Question:|^\d+\.\s+\*\*Question:\*\*)\s*(.+?)\s*(?:Answer:|^\s*\*\*Answer:\*\*)\s*(.+?)(?=(?:\n(?:Question:|\d+\.\s+\*\*Question:\*\*)|\Z))'
-        matches = re.finditer(pattern, response, re.DOTALL)
+        result = json.loads(response)
+        expected_keys = ['main_topic', 'subtopics', 'estimated_flashcards', 'estimated_questions', 'existing_questions', 'content_type']
+        for key in expected_keys:
+            if key not in result:
+                result[key] = [] if key in ['subtopics', 'existing_questions'] else "" if key == 'main_topic' else "unknown" if key == 'content_type' else 0
+        return result
+    except json.JSONDecodeError:
+        main_topic_match = re.search(r'"main_topic"\s*:\s*"([^"]+)"', response)
+        subtopics_match = re.search(r'"subtopics"\s*:\s*\[(.*?)\]', response, re.DOTALL)
+        flashcards_match = re.search(r'"estimated_flashcards"\s*:\s*(\d+)', response)
+        questions_match = re.search(r'"estimated_questions"\s*:\s*(\d+)', response)
         
-        for i, match in enumerate(matches, 1):
-            question = match.group(1).strip()
-            answer = match.group(2).strip()
-            flashcards.append({"id": i, "question": question, "answer": answer})
+        main_topic = main_topic_match.group(1) if main_topic_match else "Unknown Topic"
+        subtopics_str = subtopics_match.group(1) if subtopics_match else ""
+        subtopics = [s.strip(' "\'') for s in subtopics_str.split(',') if s.strip(' "\'')]
+        estimated_flashcards = int(flashcards_match.group(1)) if flashcards_match else 10
+        estimated_questions = int(questions_match.group(1)) if questions_match else 5
         
-        while len(flashcards) < target_flashcards:
-            flashcards.append({
-                "id": len(flashcards) + 1,
-                "question": f"Could not generate flashcard {len(flashcards) + 1}.",
-                "answer": "Insufficient content."
-            })
-        
-        return flashcards
-    except Exception as e:
-        print_debug(f"Error generating flashcards: {e}", success=False)
-        return [{"id": i, "question": "Error", "answer": "Try again."} for i in range(1, target_flashcards + 1)]
+        return {
+            'main_topic': main_topic,
+            'subtopics': subtopics,
+            'estimated_flashcards': estimated_flashcards,
+            'estimated_questions': estimated_questions,
+            'existing_questions': [],
+            'content_type': "unknown"
+        }
 
-def generate_test_questions(text, client, existing_questions_list=None):
-    """Generate test questions based on ChatGPT's estimation."""
-    analysis = analyze_content(text, client)
-    target_questions = analysis["estimated_questions"]
-    existing_questions = analysis["existing_questions"]
+def generate_flashcards(text, client, analysis=None, existing_flashcards=None, language='en'):
+    system_content = (
+        "You are an expert in creating educational flashcards. Generate concise, clear, and unique question-answer pairs based on the provided text."
+        if language != 'de' else
+        "Sie sind ein Experte für die Erstellung von Lernkarteikarten. Erstellen Sie prägnante, klare und einzigartige Frage-Antwort-Paare basierend auf dem bereitgestellten Text."
+    )
     
-    prompt = f"""
-    Create {target_questions} multiple-choice questions from the following content. Use existing questions if provided, and generate new ones to reach the total number decided by you based on the content's depth.
-
-    Format (DO NOT use markdown formatting like ** or numbering):
-    Question: [question]
-    Options:
-    A. [option 1]
-    B. [option 2]
-    C. [option 3]
-    D. [option 4]
-    Correct: [A/B/C/D]
-    Explanation: [brief explanation of why the correct answer is correct]
-
-    Content:
-    {text[:10000]}
-
-    Existing questions (use as many as possible up to {target_questions}):
-    {', '.join([f"{q['question']}:{q['answer']}" for q in existing_questions]) if existing_questions else 'None'}
-
-    Rules:
-    - Generate exactly {target_questions} questions as estimated from the content analysis.
-    - Use existing questions where possible and supplement with new ones.
-    - Avoid duplicates with: {', '.join([f"{q['text']}:{q['options'][q['correctAnswer']]}" for q in existing_questions_list]) if existing_questions_list else 'None'}
-    - Ensure all questions are relevant to the content.
-    - Include a brief explanation for each correct answer.
-    - DO NOT use markdown formatting like ** or numbering in your response.
-    - Follow the exact format specified above.
-    """
+    prompt = (
+        """
+        Create flashcards for the following material. Each flashcard should have a question and an answer.
+        The questions should cover important concepts and the answers should be precise and informative.
+        Format your response as a JSON array of objects with the keys "question" and "answer".
+        """
+        if language != 'de' else
+        """
+        Erstelle Karteikarten für das folgende Material. Jede Karteikarte sollte eine Frage und eine Antwort enthalten.
+        Die Fragen sollten wichtige Konzepte abdecken und die Antworten sollten präzise und informativ sein.
+        Formatiere deine Antwort als JSON-Array mit Objekten, die die Schlüssel "question" und "answer" enthalten.
+        """
+    )
+    
+    if analysis:
+        prompt += (
+            f"\n\nMain topic: {analysis.get('main_topic', '')}\nSubtopics: {', '.join(analysis.get('subtopics', []))}\n"
+            if language != 'de' else
+            f"\n\nHauptthema: {analysis.get('main_topic', '')}\nUnterthemen: {', '.join(analysis.get('subtopics', []))}\n"
+        )
+    
+    if existing_flashcards:
+        prompt += (
+            f"\n\nExisting flashcards (do not create duplicates):\n{json.dumps(existing_flashcards[:10])}\n"
+            if language != 'de' else
+            f"\n\nBereits vorhandene Karteikarten (erstelle keine Duplikate):\n{json.dumps(existing_flashcards[:10])}\n"
+        )
+    
+    num_flashcards = min(analysis.get('estimated_flashcards', 10), 15) if analysis else 10
+    prompt += (
+        f"\nCreate {num_flashcards} flashcards for the following text:\n\n"
+        if language != 'de' else
+        f"\nErstelle {num_flashcards} Karteikarten für den folgenden Text:\n\n"
+    )
+    
+    max_chars = 15000
+    if len(text) > max_chars:
+        text = text[:max_chars] + "...[text truncated]"
+    
+    response = query_chatgpt(prompt + text, client, system_content)
     
     try:
-        response = query_chatgpt(prompt, client)
-        print_debug(f"Raw ChatGPT response for test questions:\n{response}")
+        flashcards = json.loads(response)
+        if not isinstance(flashcards, list):
+            raise ValueError("Response is not a list")
+        return [fc for fc in flashcards if isinstance(fc, dict) and 'question' in fc and 'answer' in fc]
+    except (json.JSONDecodeError, ValueError):
+        pattern = r'(?:Q:|"question":\s*")(.*?)(?:"\s*,|\n\s*A:)(?:\s*"answer":\s*"|\s*)(.*?)(?:"\s*}|(?=\n\s*Q:|$))'
+        matches = re.findall(pattern, response, re.DOTALL)
+        flashcards = [{"question": q.strip().strip('"'), "answer": a.strip().strip('"')} for q, a in matches if q and a]
+        return flashcards if flashcards else [{"question": "Could not generate flashcards", "answer": "Please try again"}]
+
+def generate_test_questions(text, client, analysis=None, existing_questions_list=None, language='en'):
+    system_content = (
+        """
+        You are an expert in creating exam questions. Your task is to create COMPLETELY NEW multiple-choice test questions that are FUNDAMENTALLY different from the existing questions.
+        - Each new question MUST cover a different concept or topic than the existing questions.
+        - NEVER use similar phrasings or structures as the existing questions.
+        - Focus on untouched aspects of the text.
+        - Return fewer questions if completely new ones cannot be created.
+        """
+        if language != 'de' else
+        """
+        Sie sind ein Experte für die Erstellung von Testfragen. Ihre Aufgabe ist es, KOMPLETT NEUE Multiple-Choice-Fragen zu erstellen, die sich GRUNDLEGEND von den vorhandenen Fragen unterscheiden.
+        - Jede neue Frage MUSS ein anderes Konzept oder Thema behandeln als die vorhandenen Fragen.
+        - Verwenden Sie NIEMALS ähnliche Formulierungen oder Strukturen wie bei den vorhandenen Fragen.
+        - Konzentrieren Sie sich auf unberührte Aspekte des Textes.
+        - Geben Sie weniger Fragen zurück, wenn keine völlig neuen erstellt werden können.
+        """
+    )
+    
+    prompt = (
+        """
+        Create multiple-choice test questions for the following material. Each question should have 4 options with only one correct answer.
+        Format your response as a JSON array of objects with the keys "text", "options", "correct", and "explanation".
+        """
+        if language != 'de' else
+        """
+        Erstelle Multiple-Choice-Testfragen für das folgende Material. Jede Frage sollte 4 Antwortmöglichkeiten haben, wobei nur eine korrekt ist.
+        Formatiere deine Antwort als JSON-Array mit Objekten, die die Schlüssel "text", "options", "correct" und "explanation" enthalten.
+        """
+    )
+    
+    if analysis:
+        prompt += (
+            f"\n\nMain topic: {analysis.get('main_topic', '')}\nSubtopics: {', '.join(analysis.get('subtopics', []))}\n"
+            if language != 'de' else
+            f"\n\nHauptthema: {analysis.get('main_topic', '')}\nUnterthemen: {', '.join(analysis.get('subtopics', []))}\n"
+        )
+    
+    if existing_questions_list:
+        prompt += (
+            "\n\n### EXISTING QUESTIONS (DO NOT CREATE SIMILAR QUESTIONS) ###\n"
+            if language != 'de' else
+            "\n\n### BEREITS VORHANDENE FRAGEN (ERSTELLE KEINE ÄHNLICHEN FRAGEN) ###\n"
+        )
+        for i, q in enumerate(existing_questions_list):
+            prompt += f"{i+1}. {q.get('text', '')}\n"
+        prompt += (
+            "\nCreate COMPLETELY NEW questions covering different aspects of the text.\n"
+            if language != 'de' else
+            "\nErstelle KOMPLETT NEUE Fragen, die andere Aspekte des Textes abdecken.\n"
+        )
+    
+    num_questions = min(analysis.get('estimated_questions', 5), 8) if analysis else 5
+    prompt += (
+        f"\nCreate {num_questions} test questions for the following text:\n\n"
+        if language != 'de' else
+        f"\nErstelle {num_questions} Testfragen für den folgenden Text:\n\n"
+    )
+    
+    max_chars = 15000
+    if len(text) > max_chars:
+        text = text[:max_chars] + "...[text truncated]"
+    
+    response = query_chatgpt(prompt + text, client, system_content)
+    
+    try:
+        questions = json.loads(response)
+        if not isinstance(questions, list):
+            raise ValueError("Response is not a list")
+        return [q for q in questions if isinstance(q, dict) and 'text' in q and 'options' in q and 'correct' in q]
+    except (json.JSONDecodeError, ValueError):
+        pattern = r'(?:"text":\s*")(.*?)(?:")\s*,\s*"options":\s*\[(.*?)\]\s*,\s*"correct"\s*:\s*(\d+)'
+        matches = re.findall(pattern, response, re.DOTALL)
         questions = []
-        pattern = r'(?:Question:|^\d+\.\s+\*\*Question:\*\*)\s*(.+?)\s*(?:Options:|^\s*\*\*Options:\*\*)\s*(?:A\.|^\s*A\.)\s*(.+?)\s*(?:B\.|^\s*B\.)\s*(.+?)\s*(?:C\.|^\s*C\.)\s*(.+?)\s*(?:D\.|^\s*D\.)\s*(.+?)\s*(?:Correct:|^\s*\*\*Correct:\*\*)\s*([A-D])\s*(?:Explanation:|^\s*\*\*Explanation:\*\*)\s*(.+?)(?=(?:\n(?:Question:|\d+\.\s+\*\*Question:\*\*)|\Z))'
-        matches = re.finditer(pattern, response, re.DOTALL)
-        
-        correct_map = {"A": 0, "B": 1, "C": 2, "D": 3}
-        for i, match in enumerate(matches, 1):
-            questions.append({
-                "id": i,
-                "text": match.group(1).strip(),
-                "options": [match.group(2).strip(), match.group(3).strip(), match.group(4).strip(), match.group(5).strip()],
-                "correctAnswer": correct_map[match.group(6)],
-                "explanation": match.group(7).strip()
-            })
-        
-        while len(questions) < target_questions:
-            questions.append({
-                "id": len(questions) + 1,
-                "text": f"Could not generate question {len(questions) + 1}.",
-                "options": ["Try again", "Upload more content", "Check file", "Insufficient data"],
-                "correctAnswer": 3
-            })
-        
-        return questions
-    except Exception as e:
-        print_debug(f"Error generating test questions: {e}", success=False)
-        return [{"id": i, "text": "Error", "options": ["Try again", "Check file", "Contact support", "N/A"], "correctAnswer": 0} for i in range(1, target_questions + 1)]
+        for text, options_str, correct in matches:
+            options = re.findall(r'"([^"]*)"', options_str)
+            if len(options) >= 2:
+                questions.append({
+                    "text": text,
+                    "options": options,
+                    "correct": int(correct),
+                    "explanation": ""
+                })
+        return questions if questions else [{"text": "Could not generate test questions", "options": ["Try again"], "correct": 0, "explanation": ""}]

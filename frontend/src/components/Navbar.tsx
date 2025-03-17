@@ -1,38 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
+
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
-import { GraduationCap, Menu, X } from 'lucide-react';
+import { GraduationCap, Menu, X, History, CreditCard, LogOut, User } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import UserHistory from '@/components/UserHistory';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
-interface Flashcard {
-  id: number;
-  question: string;
-  answer: string;
-}
-
-interface Question {
-  id: number;
-  text: string;
-  options: string[];
-  correctAnswer: number;
-  explanation?: string;  // Make explanation optional to support both old and new questions
-}
-
-interface UploadResponse {
-  success: boolean;
-  message: string;
-  flashcards: Flashcard[];
-  questions: Question[];
-}
-
-interface NavbarProps {
-  onUploadSuccess?: (data: UploadResponse) => void;
-}
-
-const Navbar = ({ onUploadSuccess }: NavbarProps) => {
+const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null); // Ref für den Datei-Input
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -43,49 +30,9 @@ const Navbar = ({ onUploadSuccess }: NavbarProps) => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const scrollToSection = (sectionId: string) => {
-    const section = document.getElementById(sectionId);
-    if (section) {
-      section.scrollIntoView({ behavior: 'smooth' });
-    }
-    setIsMenuOpen(false);
-  };
-
-  const handleGetStartedClick = () => {
-    fileInputRef.current?.click(); // Öffnet den Datei-Dialog
-    setIsMenuOpen(false); // Schließt das mobile Menü
-  };
-
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files[0];
-    if (file && onUploadSuccess) {
-      // Hier simulieren wir die Logik von ExamUploader
-      const formData = new FormData();
-      formData.append('file', file);
-
-      try {
-        console.log('DEBUG: Navbar sending file to backend:', file.name);
-        const response = await fetch(`${API_URL}/api/upload`, {
-          method: 'POST',
-          body: formData,
-          credentials: 'include', // Entspricht withCredentials: true
-        });
-        const data = await response.json();
-        console.log('DEBUG: Navbar received response from backend:', data);
-        console.log('DEBUG: Navbar flashcards:', data.flashcards);
-        console.log('DEBUG: Navbar questions:', data.questions);
-        if (data.success) {
-          console.log('DEBUG: Navbar calling onUploadSuccess with data');
-          onUploadSuccess(data); // Übergibt die Antwort an Index
-        } else {
-          console.error('Upload fehlgeschlagen:', data.message);
-        }
-      } catch (error) {
-        console.error('Fehler beim Upload:', error);
-      }
-    }
-    // Reset des Inputs, damit dieselbe Datei erneut hochgeladen werden kann
-    event.target.value = '';
+  const handleSignOut = () => {
+    signOut();
+    navigate('/');
   };
 
   return (
@@ -97,43 +44,133 @@ const Navbar = ({ onUploadSuccess }: NavbarProps) => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center">
-            <button 
-              onClick={() => scrollToSection('hero')} 
+            <Link 
+              to="/" 
               className="flex items-center space-x-2 text-xl font-semibold"
+              onClick={(e) => {
+                e.preventDefault();
+                window.scrollTo(0, 0);
+                window.location.href = '/';
+              }}
             >
               <GraduationCap className="h-6 w-6 text-primary" />
               <span className="animate-fade-in">HackTheStudy</span>
-            </button>
+            </Link>
           </div>
           
           {/* Desktop Navigation */}
           <div className="hidden md:block">
             <div className="flex items-center space-x-6">
-              <button 
-                onClick={() => scrollToSection('hero')} 
+              <Link 
+                to="/" 
                 className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.scrollTo(0, 0);
+                  window.location.href = '/';
+                }}
               >
                 Home
-              </button>
-              <button 
-                onClick={() => scrollToSection('flashcards')} 
-                className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-              >
-                Flashcards
-              </button>
-              <button 
-                onClick={() => scrollToSection('test-simulator')} 
-                className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-              >
-                Test Simulator
-              </button>
-              <Button 
-                size="sm" 
-                className="ml-6 animate-fade-in" 
-                onClick={handleGetStartedClick}
-              >
-                Get Started
-              </Button>
+              </Link>
+              
+              {user && (
+                <>
+                  <Link 
+                    to="/dashboard" 
+                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate('/dashboard', { replace: true });
+                    }}
+                  >
+                    Dashboard
+                  </Link>
+                  <Link 
+                    to="/#flashcards" 
+                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      window.location.href = '/#flashcards';
+                    }}
+                  >
+                    Flashcards
+                  </Link>
+                  <Link 
+                    to="/#test-simulator" 
+                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      window.location.href = '/#test-simulator';
+                    }}
+                  >
+                    Test Simulator
+                  </Link>
+                  <Link 
+                    to="/#concept-mapper" 
+                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      window.location.href = '/#concept-mapper';
+                    }}
+                  >
+                    Mindmap
+                  </Link>
+                </>
+              )}
+              
+              {user ? (
+                <div className="flex items-center space-x-4">
+                  <div className="text-sm font-medium">
+                    Credits: {user.credits}
+                  </div>
+                  
+                  <Sheet>
+                    <SheetTrigger asChild>
+                      <Button variant="outline" size="sm">
+                        <History className="h-4 w-4 mr-2" />
+                        History
+                      </Button>
+                    </SheetTrigger>
+                    <SheetContent side="right">
+                      <SheetHeader>
+                        <SheetTitle>Your History</SheetTitle>
+                        <SheetDescription>
+                          Your recent activities on ExamMaster
+                        </SheetDescription>
+                      </SheetHeader>
+                      <UserHistory />
+                    </SheetContent>
+                  </Sheet>
+                  
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Avatar className="h-8 w-8 cursor-pointer">
+                        <AvatarImage src={user.avatar} alt={user.name} />
+                        <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
+                      </Avatar>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem className="cursor-pointer" onClick={() => navigate('/dashboard', { replace: true })}>
+                        <User className="mr-2 h-4 w-4" />
+                        Dashboard
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="cursor-pointer" onClick={() => navigate('/payment')}>
+                        <CreditCard className="mr-2 h-4 w-4" />
+                        Buy Credits
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="cursor-pointer" onClick={handleSignOut}>
+                        <LogOut className="mr-2 h-4 w-4" />
+                        Sign Out
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              ) : (
+                <Button size="sm" onClick={() => navigate('/signin')} className="ml-6 animate-fade-in">
+                  Sign In
+                </Button>
+              )}
             </div>
           </div>
           
@@ -159,43 +196,124 @@ const Navbar = ({ onUploadSuccess }: NavbarProps) => {
       {isMenuOpen && (
         <div className="md:hidden absolute top-full left-0 right-0 bg-white/95 dark:bg-black/95 backdrop-blur-md shadow-medium border-t">
           <div className="px-4 pt-2 pb-4 space-y-3 flex flex-col">
-            <button 
-              onClick={() => scrollToSection('hero')} 
+            <Link 
+              to="/" 
               className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
+              onClick={(e) => {
+                e.preventDefault();
+                setIsMenuOpen(false);
+                window.scrollTo(0, 0);
+                window.location.href = '/';
+              }}
             >
               Home
-            </button>
-            <button 
-              onClick={() => scrollToSection('flashcards')} 
-              className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
-            >
-              Flashcards
-            </button>
-            <button 
-              onClick={() => scrollToSection('test-simulator')} 
-              className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
-            >
-              Test Simulator
-            </button>
-            <Button 
-              size="sm" 
-              className="mt-2 w-full" 
-              onClick={handleGetStartedClick}
-            >
-              Get Started
-            </Button>
+            </Link>
+            {user && (
+              <>
+                <Link 
+                  to="/#flashcards" 
+                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsMenuOpen(false);
+                    window.location.href = '/#flashcards';
+                  }}
+                >
+                  Flashcards
+                </Link>
+                <Link 
+                  to="/#test-simulator" 
+                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsMenuOpen(false);
+                    window.location.href = '/#test-simulator';
+                  }}
+                >
+                  Test Simulator
+                </Link>
+                <Link 
+                  to="/#concept-mapper" 
+                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsMenuOpen(false);
+                    window.location.href = '/#concept-mapper';
+                  }}
+                >
+                  Mindmap
+                </Link>
+              </>
+            )}
+            
+            {user ? (
+              <>
+                <div className="flex items-center justify-between px-3 py-2">
+                  <div className="flex items-center space-x-2">
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={user.avatar} alt={user.name} />
+                      <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
+                    </Avatar>
+                    <span className="font-medium">{user.name}</span>
+                  </div>
+                  <div className="text-sm">Credits: {user.credits}</div>
+                </div>
+                <Link 
+                  to="/dashboard" 
+                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsMenuOpen(false);
+                    navigate('/dashboard', { replace: true });
+                  }}
+                >
+                  Dashboard
+                </Link>
+                <Link 
+                  to="/payment" 
+                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  Buy Credits
+                </Link>
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button variant="outline" size="sm" className="w-full justify-start">
+                      <History className="h-4 w-4 mr-2" />
+                      History
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="right">
+                    <SheetHeader>
+                      <SheetTitle>Your History</SheetTitle>
+                      <SheetDescription>
+                        Your recent activities on ExamMaster
+                      </SheetDescription>
+                    </SheetHeader>
+                    <UserHistory />
+                  </SheetContent>
+                </Sheet>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="justify-start"
+                  onClick={() => {
+                    handleSignOut();
+                    setIsMenuOpen(false);
+                  }}
+                >
+                  <LogOut className="h-4 w-4 mr-2" /> 
+                  Sign Out
+                </Button>
+              </>
+            ) : (
+              <Button size="sm" className="mt-2 w-full" onClick={() => navigate('/signin')}>
+                Sign In
+              </Button>
+            )}
           </div>
         </div>
       )}
-      
-      {/* Versteckter Datei-Input */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        className="hidden"
-        accept=".pdf,.doc,.docx,.txt" // Anpassbare Dateitypen
-      />
     </nav>
   );
 };

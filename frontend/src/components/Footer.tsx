@@ -49,11 +49,11 @@ const Footer = () => {
             <ul className="space-y-3">
               <li>
                 <a href="mailto:info@HackTheStudy.de" className="text-muted-foreground hover:text-foreground transition-colors duration-200">
-                  info@HackTheStudy.de
+                  info@HackTheStudy.ch
                 </a>
               </li>
               <li className="text-muted-foreground">
-                © {new Date().getFullYear()} ExamMaster
+                © {new Date().getFullYear()} HackTheStudy
               </li>
               <li className="text-muted-foreground">
                 Alle Rechte vorbehalten

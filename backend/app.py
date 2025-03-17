@@ -1,44 +1,55 @@
 import os
-import uuid
-from flask import Flask, session
-from flask_cors import CORS
 from dotenv import load_dotenv
+from flask import Flask, redirect
+from flask_cors import CORS
 from openai import OpenAI
-from api.routes import api_bp
-import time
-import shutil
+from models import db
+from prometheus_flask_exporter import PrometheusMetrics
+import logging
 
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
+load_dotenv()
 
 def create_app():
     app = Flask(__name__)
-    app.secret_key = os.getenv("FLASK_SECRET_KEY", "your-secret-key")
-    CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "*"}})
+    app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
+    app.config['CELERY_BROKER_URL'] = os.getenv('REDIS_URL', 'redis://redis:6379/0')
+    app.config['CELERY_RESULT_BACKEND'] = os.getenv('REDIS_URL', 'redis://redis:6379/0')
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        handlers=[logging.FileHandler('app.log'), logging.StreamHandler()]
+    )
+
+    CORS(app, supports_credentials=True)
+    db.init_app(app)
     
-    # Verzeichnis für temporäre Dateien
-    app.config['TEMP_FOLDER'] = os.path.join(os.path.dirname(__file__), 'temp')
-    os.makedirs(app.config['TEMP_FOLDER'], exist_ok=True)
+    # Initialize Celery with the app context
+    from tasks import init_celery
+    init_celery(app)
     
-    app.config['OPENAI_CLIENT'] = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-    app.config['MAX_AGE'] = 3600  # 1 Stunde Lebensdauer für temporäre Dateien
+    metrics = PrometheusMetrics(app)
+
+    # Import api_bp after app initialization
+    from api import api_bp, setup_oauth
     
-    # Cleanup-Funktion für alte Dateien
-    @app.before_request
-    def cleanup_temp_files():
-        now = time.time()
-        temp_folder = app.config['TEMP_FOLDER']
-        for session_id in os.listdir(temp_folder):
-            session_path = os.path.join(temp_folder, session_id)
-            if os.path.isdir(session_path):
-                mod_time = os.path.getmtime(session_path)
-                if now - mod_time > app.config['MAX_AGE']:
-                    shutil.rmtree(session_path)
-                    print(f"Deleted old session: {session_id}")
+    app.register_blueprint(api_bp, url_prefix='/api/v1')
     
-    app.register_blueprint(api_bp, url_prefix='/api')
+    # Setup OAuth
+    setup_oauth(app)
+
+    @app.route('/')
+    def index():
+        return "Welcome to HackTheStudy Backend"
+
+    with app.app_context():
+        db.create_all()
+
     return app
 
-app = create_app()
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    app = create_app()
+    app.run(debug=True, host='0.0.0.0', port=5000)
