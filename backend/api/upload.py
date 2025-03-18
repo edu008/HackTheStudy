@@ -7,10 +7,12 @@ from tasks import process_upload
 import uuid
 from .utils import allowed_file, extract_text_from_file
 import logging
+from .auth import token_required
 
 logger = logging.getLogger(__name__)
 
 @api_bp.route('/upload', methods=['POST'])
+@token_required
 def upload_file():
     if 'file' not in request.files:
         return jsonify({"success": False, "error": {"code": "NO_FILE", "message": "No file part"}}), 400
@@ -37,6 +39,7 @@ def upload_file():
     }), 202
 
 @api_bp.route('/results/<session_id>', methods=['GET'])
+@token_required
 def get_results(session_id):
     upload = Upload.query.filter_by(session_id=session_id).first()
     if not upload:

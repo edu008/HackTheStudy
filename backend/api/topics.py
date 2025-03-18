@@ -3,10 +3,12 @@ from . import api_bp
 from .utils import query_chatgpt, detect_language
 from models import db, Upload, Topic, UserActivity, Connection
 import logging
+from .auth import token_required
 
 logger = logging.getLogger(__name__)
 
 @api_bp.route('/generate-related-topics', methods=['POST'])
+@token_required
 def generate_related_topics():
     data = request.json
     session_id = data.get('session_id')
@@ -260,6 +262,7 @@ def generate_related_topics():
         return jsonify({"success": False, "error": {"code": "GENERATION_FAILED", "message": str(e)}}), 500
 
 @api_bp.route('/topics/<session_id>', methods=['GET'])
+@token_required
 def get_topics(session_id):
     try:
         upload = Upload.query.filter_by(session_id=session_id).first()

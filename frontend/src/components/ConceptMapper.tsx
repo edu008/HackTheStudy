@@ -166,8 +166,15 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
 
   const fetchInitialConcepts = async (sessionId: string) => {
     try {
+      // Get the token from localStorage
+      const token = localStorage.getItem('exammaster_token');
+      
       // First, try to get the topics with their IDs from the backend
-      const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
+      const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`, {
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : ''
+        }
+      });
       const topicsData = await topicsResponse.json();
       
       if (topicsData.success && topicsData.topics?.main_topic) {
@@ -254,7 +261,11 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         });
       } else {
         // If topics are not available, fall back to results endpoint
-        const resultsResponse = await fetch(`${API_URL}/api/v1/results/${sessionId}`);
+        const resultsResponse = await fetch(`${API_URL}/api/v1/results/${sessionId}`, {
+          headers: {
+            'Authorization': token ? `Bearer ${token}` : ''
+          }
+        });
         const resultsData = await resultsResponse.json();
 
         
@@ -333,8 +344,15 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       const centerX = containerWidth / 2;
       const centerY = containerHeight / 2;
       
+      // Get the token from localStorage
+      const token = localStorage.getItem('exammaster_token');
+      
       // First, check if we have backend IDs for the topics
-      const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
+      const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`, {
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : ''
+        }
+      });
       const topicsData = await topicsResponse.json();
       
       // If we don't have backend IDs yet, we need to generate related topics first
@@ -349,7 +367,11 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         await new Promise(resolve => setTimeout(resolve, 2000));
         
         // Try again
-        const retryResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
+        const retryResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`, {
+          headers: {
+            'Authorization': token ? `Bearer ${token}` : ''
+          }
+        });
         const retryData = await retryResponse.json();
         
         if (!retryData.success || !retryData.topics?.main_topic) {

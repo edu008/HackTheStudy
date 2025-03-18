@@ -4,6 +4,7 @@ from .utils import generate_test_questions, detect_language
 from models import db, Upload, Question, UserActivity, Topic
 from marshmallow import Schema, fields, ValidationError
 import logging
+from .auth import token_required
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ class QuestionRequestSchema(Schema):
     count = fields.Int(required=True, validate=lambda n: n > 0)
 
 @api_bp.route('/generate-more-questions', methods=['POST'])
+@token_required
 def generate_more_questions():
     try:
         data = QuestionRequestSchema().load(request.json)

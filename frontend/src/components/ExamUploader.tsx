@@ -74,16 +74,20 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       console.log(`DEBUG: API URL: ${API_URL}`);
       console.log(`DEBUG: Uploading ${filesToUpload.length} files:`, filesToUpload.map(f => f.name));
       
+      // Get the token from localStorage
+      const token = localStorage.getItem('exammaster_token');
+      
       const formData = new FormData();
       filesToUpload.forEach(file => {
         console.log(`DEBUG: Appending file to FormData: ${file.name} (${file.size} bytes, type: ${file.type})`);
         formData.append('file', file); // Änderung von 'files[]' zu 'file'
       });
-
+      
       console.log('DEBUG: Sending POST request to backend');
       const response = await axios.post<BackendUploadResponse>(`${API_URL}/api/v1/upload`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
+          'Authorization': token ? `Bearer ${token}` : '',
         },
         withCredentials: true,
         onUploadProgress: (progressEvent) => {
@@ -108,7 +112,12 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
         try {
           const resultsResponse = await axios.get<{ success: boolean, data: SessionData }>(
             `${API_URL}/api/v1/results/${response.data.session_id}`,
-            { withCredentials: true }
+            { 
+              headers: {
+                'Authorization': token ? `Bearer ${token}` : '',
+              },
+              withCredentials: true 
+            }
           );
           
           if (resultsResponse.data.success && resultsResponse.data.data) {
