@@ -166,58 +166,150 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
 
   const fetchInitialConcepts = async (sessionId: string) => {
     try {
-      const response = await fetch(`${API_URL}/api/v1/results/${sessionId}`);
-      const data = await response.json();
-      console.log("API Response:", data);
-      if (data.success && data.data?.analysis?.main_topic && data.data?.analysis?.subtopics) {
+      // First, try to get the topics with their IDs from the backend
+      const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
+      const topicsData = await topicsResponse.json();
+      
+      if (topicsData.success && topicsData.topics?.main_topic) {
+        // If topics are available, use them
         const containerWidth = 700;
         const containerHeight = 500;
         const centerX = containerWidth / 2;
         const centerY = containerHeight / 2;
-        const initialConcepts: Concept[] = [];
-
-        initialConcepts.push({
-          id: "main",
-          text: data.data.analysis.main_topic,
+        
+        const mainTopic = topicsData.topics.main_topic;
+        const subtopics = topicsData.topics.subtopics || [];
+        const childTopics = topicsData.topics.child_topics || [];
+        const backendConnections = topicsData.connections || [];
+        
+        // Create concepts from topics
+        const mainConcept: Concept = {
+          id: mainTopic.id.toString(),
+          text: mainTopic.name,
           x: centerX,
           y: centerY,
           isMainTopic: true,
-        });
-
-        const initialConnections: Connection[] = [];
-        const subtopicCount = data.data.analysis.subtopics.length;
-        const radius = 250;
+        };
         
-        data.data.analysis.subtopics.forEach((topic: string, index: number) => {
+        const subtopicConcepts: Concept[] = [];
+        const radius = 250;
+        const subtopicCount = subtopics.length;
+        
+        subtopics.forEach((topic, index) => {
           const angle = (index * 2 * Math.PI) / subtopicCount;
           const x = centerX + radius * Math.cos(angle);
           const y = centerY + radius * Math.sin(angle);
-          const newId = `${index + 1}`;
           
-          initialConcepts.push({
-            id: newId,
-            text: topic,
+          subtopicConcepts.push({
+            id: topic.id.toString(),
+            text: topic.name,
             x,
             y,
           });
+        });
+        
+        const childConcepts: Concept[] = [];
+        childTopics.forEach((topic) => {
+          // Find parent subtopic
+          const parentTopic = subtopics.find(s => s.id === topic.parent_id);
+          if (!parentTopic) return;
           
-          initialConnections.push({
-            id: generateUniqueId(),
-            sourceId: "main",
-            targetId: newId,
-            label: ""
+          // Find parent concept
+          const parentConcept = subtopicConcepts.find(c => c.id === parentTopic.id.toString());
+          if (!parentConcept) return;
+          
+          // Calculate position relative to parent
+          const position = calculatePositionRelativeToParent(
+            parentConcept,
+            [mainConcept, ...subtopicConcepts, ...childConcepts],
+            containerWidth,
+            containerHeight,
+            centerX,
+            centerY,
+            []
+          );
+          
+          childConcepts.push({
+            id: topic.id.toString(),
+            text: topic.name,
+            x: position.x,
+            y: position.y,
           });
         });
-
-        setConcepts(initialConcepts);
-        setConnections(initialConnections);
-
+        
+        // Create connections from backend connections
+        const frontendConnections: Connection[] = backendConnections.map(conn => ({
+          id: conn.id.toString(),
+          sourceId: conn.source_id.toString(),
+          targetId: conn.target_id.toString(),
+          label: conn.label,
+        }));
+        
+        setConcepts([mainConcept, ...subtopicConcepts, ...childConcepts]);
+        setConnections(frontendConnections);
+        
         toast({
           title: "Topics geladen",
           description: "Die Konzeptkarte wurde mit den analysierten Themen initialisiert.",
         });
       } else {
-        throw new Error("Keine Topics gefunden");
+        // If topics are not available, fall back to results endpoint
+        const resultsResponse = await fetch(`${API_URL}/api/v1/results/${sessionId}`);
+        const resultsData = await resultsResponse.json();
+
+        
+        if (resultsData.success && resultsData.data?.analysis?.main_topic && resultsData.data?.analysis?.subtopics) {
+          const containerWidth = 700;
+          const containerHeight = 500;
+          const centerX = containerWidth / 2;
+          const centerY = containerHeight / 2;
+          
+          // Since we can't create topics directly through the API, we'll create temporary frontend-only concepts
+          // with UUID IDs. These will be replaced with backend IDs when the user generates related topics.
+          const mainId = "main";
+          const initialConcepts: Concept[] = [{
+            id: mainId,
+            text: resultsData.data.analysis.main_topic,
+            x: centerX,
+            y: centerY,
+            isMainTopic: true,
+          }];
+          
+          const initialConnections: Connection[] = [];
+          const subtopicCount = resultsData.data.analysis.subtopics.length;
+          const radius = 250;
+          
+          resultsData.data.analysis.subtopics.forEach((topic: string, index: number) => {
+            const angle = (index * 2 * Math.PI) / subtopicCount;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+            const newId = generateUniqueId();
+            
+            initialConcepts.push({
+              id: newId,
+              text: topic,
+              x,
+              y,
+            });
+            
+            initialConnections.push({
+              id: generateUniqueId(),
+              sourceId: mainId,
+              targetId: newId,
+              label: "relates to"
+            });
+          });
+          
+          setConcepts(initialConcepts);
+          setConnections(initialConnections);
+          
+          toast({
+            title: "Topics geladen",
+            description: "Die Konzeptkarte wurde mit den analysierten Themen initialisiert.",
+          });
+        } else {
+          throw new Error("Keine Topics gefunden");
+        }
       }
     } catch (error) {
       console.error("Fehler beim Laden der Topics:", error);
@@ -229,10 +321,43 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
     }
   };
 
-  const generateConnectionsWithAI = async (existingConcepts: Concept[], sessionId: string) => {
+  const generateConnectionsWithAI = async (existingConcepts, sessionId) => {
     if (!sessionId) return;
   
     try {
+      setIsGenerating(true);
+      
+      // Define constants for positioning
+      const containerWidth = 700;
+      const containerHeight = 500;
+      const centerX = containerWidth / 2;
+      const centerY = containerHeight / 2;
+      
+      // First, check if we have backend IDs for the topics
+      const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
+      const topicsData = await topicsResponse.json();
+      
+      // If we don't have backend IDs yet, we need to generate related topics first
+      // to create the topics in the backend
+      if (!topicsData.success || !topicsData.topics?.main_topic) {
+        toast({
+          title: "Initialisiere Topics",
+          description: "Die Topics werden zuerst im Backend initialisiert...",
+        });
+        
+        // Wait a moment to allow the backend to process the upload
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Try again
+        const retryResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
+        const retryData = await retryResponse.json();
+        
+        if (!retryData.success || !retryData.topics?.main_topic) {
+          throw new Error("Topics konnten nicht initialisiert werden. Bitte lade die Seite neu.");
+        }
+      }
+      
+      // Now generate related topics
       const response = await fetch(`${API_URL}/api/v1/generate-related-topics`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -241,83 +366,107 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       const data = await response.json();
   
       if (!data.success) throw new Error(data.error || "Generierung fehlgeschlagen");
-  
-      const containerWidth = 700;
-      const containerHeight = 500;
-      const centerX = containerWidth / 2;
-      const centerY = containerHeight / 2;
-  
-      const allConcepts = [...existingConcepts];
-      const newConcepts: Concept[] = [];
-      const newConnections: Connection[] = [];
-  
-      const mainTopic = existingConcepts.find(c => c.isMainTopic);
-      if (!mainTopic) throw new Error("Main Topic nicht gefunden");
-  
-      const subtopics = existingConcepts.filter(c =>
-        connections.some(conn =>
-          (conn.sourceId === mainTopic.id && conn.targetId === c.id) ||
-          (conn.targetId === mainTopic.id && conn.sourceId === c.id)
-        )
-      );
-  
-      data.data.new_topics.forEach((topicText: string, index: number) => {
-        const parentConcept = subtopics[index];
-        if (parentConcept) {
-          const position = calculatePositionRelativeToParent(
-            parentConcept,
-            [...allConcepts, ...newConcepts],
-            containerWidth,
-            containerHeight,
-            centerX,
-            centerY,
-            connections
-          );
-          const newId = `${allConcepts.length + newConcepts.length + 1}`;
-          newConcepts.push({
-            id: newId,
-            text: topicText,
-            x: position.x,
-            y: position.y,
-          });
+      
 
-          const connection = data.data.new_connections.find(
-            (conn: { source_text: string, target_text: string }) =>
-              (conn.source_text === parentConcept.text && conn.target_text === topicText) ||
-              (conn.target_text === parentConcept.text && conn.source_text === topicText)
-          );
-
-          newConnections.push({
-            id: generateUniqueId(),
-            sourceId: parentConcept.id,
-            targetId: newId,
-            label: connection ? connection.label : "Beziehung"
-          });
-        }
-      });
-  
-      const mainTopicConnected = newConnections.some(conn => 
-        conn.sourceId === mainTopic.id || conn.targetId === mainTopic.id
-      );
-      if (!mainTopicConnected && newConcepts.length > 0) {
-        const connection = data.data.new_connections.find(
-          (conn: { source_text: string, target_text: string }) =>
-            conn.source_text === mainTopic.text || conn.target_text === mainTopic.text
-        );
-        newConnections.push({
-          id: generateUniqueId(),
-          sourceId: mainTopic.id,
-          targetId: newConcepts[0].id,
-          label: connection ? connection.label : "umfasst"
+      
+      // Get the updated topics and connections from the backend
+      const updatedResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
+      const updatedData = await updatedResponse.json();
+      
+      if (updatedData.success) {
+        
+        // Create a mapping from topic name to position
+        const positionMap = {};
+        existingConcepts.forEach(concept => {
+          positionMap[concept.text] = { x: concept.x, y: concept.y };
         });
+        
+        // Create a mapping from backend ID to frontend ID
+        const idMap = {};
+        concepts.forEach(concept => {
+          // Try to find the corresponding backend topic
+          const backendTopic = 
+            (concept.text === updatedData.topics.main_topic.name) ? updatedData.topics.main_topic :
+            updatedData.topics.subtopics.find(t => t.name === concept.text) ||
+            updatedData.topics.child_topics.find(t => t.name === concept.text);
+          
+          if (backendTopic) {
+            idMap[backendTopic.id] = concept.id;
+          }
+        });
+        
+        // Process main topic
+        const mainTopic = {
+          id: updatedData.topics.main_topic.id,
+          text: updatedData.topics.main_topic.name,
+          x: positionMap[updatedData.topics.main_topic.name]?.x || centerX,
+          y: positionMap[updatedData.topics.main_topic.name]?.y || centerY,
+          isMainTopic: true
+        };
+        idMap[mainTopic.id] = mainTopic.id;
+        
+        // Process subtopics
+        const subtopics = updatedData.topics.subtopics.map(s => {
+          const position = positionMap[s.name] || 
+            findFreePosition(existingConcepts, containerWidth, containerHeight, centerX, centerY);
+          const topic = {
+            id: s.id,
+            text: s.name,
+            x: position.x,
+            y: position.y
+          };
+          idMap[s.id] = topic.id;
+          return topic;
+        });
+        
+        // Process child topics
+        const childTopics = updatedData.topics.child_topics.map(c => {
+          const parentTopic = updatedData.topics.subtopics.find(s => s.id === c.parent_id);
+          const parentPosition = positionMap[parentTopic?.name] || { x: centerX, y: centerY };
+          
+          // Calculate position relative to parent or use existing position
+          const position = positionMap[c.name] || 
+            calculatePositionRelativeToParent(
+              { id: parentTopic?.id, text: parentTopic?.name, x: parentPosition.x, y: parentPosition.y },
+              [...existingConcepts, ...subtopics],
+              containerWidth,
+              containerHeight,
+              centerX,
+              centerY,
+              connections
+            );
+          
+          const topic = {
+            id: c.id,
+            text: c.name,
+            x: position.x,
+            y: position.y
+          };
+          idMap[c.id] = topic.id;
+          return topic;
+        });
+        
+        // Update concepts with all topics
+        const allTopics = [mainTopic, ...subtopics, ...childTopics];
+        setConcepts(allTopics);
+        
+        // Process connections using the ID mapping
+        const newConnections = updatedData.connections.map(c => ({
+          id: generateUniqueId(),
+          sourceId: idMap[c.source_id] || c.source_id,
+          targetId: idMap[c.target_id] || c.target_id,
+          label: c.label
+        }));
+        
+        // Set all connections
+        setConnections(newConnections);
+        
+
       }
-  
-      setConcepts([...allConcepts, ...newConcepts]);
-      setConnections((prev) => [...prev, ...newConnections]);
   
       toast({
         title: "KI-Vorschläge generiert",
-        description: "Neue Kind-Subtopics wurden hinzugefügt.",
+        description: "Neue Kind-Subtopics und Verbindungen wurden hinzugefügt.",
       });
     } catch (error) {
       console.error("Fehler beim Generieren der Verbindungen:", error);
@@ -326,6 +475,8 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         description: "Kind-Subtopics konnten nicht generiert werden.",
         variant: "destructive",
       });
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -336,7 +487,7 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
     const containerHeight = 500;
     const centerX = containerWidth / 2;
     const centerY = containerHeight / 2;
-    const newId = `${concepts.length + 1}`;
+    const newId = generateUniqueId();
     
     const mainTopic = concepts.find(c => c.isMainTopic);
     

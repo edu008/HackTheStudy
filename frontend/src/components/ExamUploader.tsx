@@ -19,12 +19,12 @@ interface BackendUploadResponse {
 // This interface matches the response from the backend's results endpoint
 interface SessionData {
   flashcards: {
-    id: number;
+    id: string;
     question: string;
     answer: string;
   }[];
   test_questions: {
-    id: number;
+    id: string;
     text: string;
     options: string[];
     correctAnswer: number;
@@ -43,12 +43,12 @@ interface UploadResponse {
   success: boolean;
   message: string;
   flashcards: {
-    id: number;
+    id: string;
     question: string;
     answer: string;
   }[];
   questions: {
-    id: number;
+    id: string;
     text: string;
     options: string[];
     correctAnswer: number;
@@ -98,7 +98,6 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       console.log('DEBUG: Received response from backend:', response.data);
       
       // Wait for the backend to process the upload
-      console.log('DEBUG: Waiting for backend to process the upload...');
       
       // Poll the results endpoint until the data is available
       let retries = 0;
@@ -107,14 +106,12 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       
       while (retries < maxRetries) {
         try {
-          console.log(`DEBUG: Polling results endpoint (attempt ${retries + 1}/${maxRetries})...`);
           const resultsResponse = await axios.get<{ success: boolean, data: SessionData }>(
             `${API_URL}/api/v1/results/${response.data.session_id}`,
             { withCredentials: true }
           );
           
           if (resultsResponse.data.success && resultsResponse.data.data) {
-            console.log('DEBUG: Results data available:', resultsResponse.data);
             
             // Combine the upload response and results data
             const completeResponse: UploadResponse = {
@@ -128,7 +125,6 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
             return completeResponse;
           }
         } catch (error) {
-          console.log('DEBUG: Results not available yet, retrying...');
         }
         
         // Wait before retrying
@@ -137,7 +133,6 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       }
       
       // If we've exhausted all retries, return a partial response with an error message
-      console.log('DEBUG: Maximum retries reached, returning partial response');
       return {
         success: true,
         message: "Upload successful, but processing is taking longer than expected. The server might be busy or the worker might not be running. Please try again later or contact support.",
@@ -147,9 +142,6 @@ const ExamUploader = ({ onUploadSuccess }: ExamUploaderProps) => {
       };
     },
     onSuccess: (data) => {
-      console.log('DEBUG: Upload successful, received data:', data);
-      console.log('DEBUG: Flashcards:', data.flashcards);
-      console.log('DEBUG: Questions:', data.questions);
       setIsUploaded(true);
       
       if (data.flashcards.length === 0 && data.questions.length === 0) {

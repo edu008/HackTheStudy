@@ -26,32 +26,77 @@ def generate_more_flashcards():
     if not upload:
         return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
     
-    existing_flashcards = [{"question": fc.question, "answer": fc.answer} for fc in Flashcard.query.filter_by(upload_id=upload.id).all()]
-    # Initialize OpenAI client directly
+    # Hole alle bestehenden Flashcards für diese Upload-ID
+    existing_flashcards = [
+        {"question": f.question, "answer": f.answer}
+        for f in Flashcard.query.filter_by(upload_id=upload.id).all()
+    ]
+    logger.info(f"Found {len(existing_flashcards)} existing flashcards for session_id: {session_id}")
+    
+    # Initialisiere den OpenAI-Client
     from openai import OpenAI
     client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
+    
+    # Ermittle die Sprache und analysiere den Inhalt
     language = detect_language(upload.content)
-    analysis = {"main_topic": Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first().name}
+    main_topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
+    analysis = {
+        "main_topic": main_topic.name if main_topic else "Unknown Topic",
+        "subtopics": [topic.name for topic in Topic.query.filter_by(upload_id=upload.id, is_main_topic=False).all()]
+    }
+    logger.info(f"Analysis for session_id {session_id}: Main topic={analysis['main_topic']}, Subtopics={analysis['subtopics']}")
     
     try:
-        new_flashcards = generate_flashcards(upload.content, client, analysis=analysis, existing_flashcards=existing_flashcards, language=language)
-        filtered_flashcards = [fc for fc in new_flashcards if not any(fc['question'] == ex['question'] for ex in existing_flashcards)]
-        for fc in filtered_flashcards[:count]:
-            if fc.get('question') and fc.get('answer') and not fc['question'].startswith('Could not generate'):
-                flashcard = Flashcard(upload_id=upload.id, question=fc['question'], answer=fc['answer'])
-                db.session.add(flashcard)
+        # Generiere neue Flashcards mit bestehenden Flashcards als Referenz
+        new_flashcards = generate_flashcards(
+            upload.content,
+            client,
+            analysis=analysis,
+            existing_flashcards=existing_flashcards,
+            language=language
+        )
         
+        # Filtere Duplikate basierend auf der Frage
+        filtered_flashcards = [
+            f for f in new_flashcards
+            if not any(f['question'] == ex['question'] for ex in existing_flashcards)
+        ]
+        logger.info(f"Generated {len(filtered_flashcards)} new flashcards before limiting to {count}")
+        
+        # Begrenze die Anzahl der zurückgegebenen Flashcards auf die angeforderte Anzahl
+        filtered_flashcards = filtered_flashcards[:count]
+        
+        # Speichere nur gültige Flashcards in der Datenbank
+        for f in filtered_flashcards:
+            if f.get('question') and f.get('answer') and not f['question'].startswith('Could not generate'):
+                flashcard = Flashcard(
+                    upload_id=upload.id,
+                    question=f['question'],
+                    answer=f['answer']
+                )
+                db.session.add(flashcard)
+                logger.info(f"Saved flashcard: {f['question']}")
+        
+        # Logge und speichere Benutzeraktivität, falls vorhanden
         if hasattr(request, 'user_id'):
             activity = UserActivity(
                 user_id=request.user_id,
                 activity_type='flashcard',
-                title=f"Generated {len(filtered_flashcards[:count])} more flashcards",
-                details={"count": len(filtered_flashcards[:count]), "session_id": session_id}
+                title=f"Generated {len(filtered_flashcards)} more flashcards",
+                details={"count": len(filtered_flashcards), "session_id": session_id}
             )
             db.session.add(activity)
+            logger.info(f"Logged user activity for generating {len(filtered_flashcards)} flashcards")
         
         db.session.commit()
-        return jsonify({"success": True, "flashcards": filtered_flashcards[:count], "message": "Additional flashcards generated successfully"}), 200
+        return jsonify({
+            "success": True,
+            "data": {
+                "flashcards": filtered_flashcards
+            },
+            "message": "Additional flashcards generated successfully"
+        }), 200
     except Exception as e:
-        logger.error(f"Error generating flashcards: {str(e)}")
+        logger.error(f"Error generating flashcards for session_id {session_id}: {str(e)}")
+        db.session.rollback()
         return jsonify({"success": False, "error": {"code": "GENERATION_FAILED", "message": str(e)}}), 500

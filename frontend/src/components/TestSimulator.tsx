@@ -7,7 +7,7 @@ import { CheckCircle, XCircle, Loader2, AlertCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 
 interface Question {
-  id?: number;
+  id?: string;
   text: string;
   options: string[];
   correctAnswer?: number;
@@ -31,7 +31,7 @@ const TestSimulator = ({
   // Main state
   const [processedQuestions, setProcessedQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answeredQuestions, setAnsweredQuestions] = useState<Record<number, number>>({});
+  const [answeredQuestions, setAnsweredQuestions] = useState<Record<string, number>>({});
   const [selectedOption, setSelectedOption] = useState<string | undefined>(undefined);
   
   // Current question
@@ -63,7 +63,7 @@ const TestSimulator = ({
     // Process questions to ensure they have unique IDs
     const questionsWithIds = providedQuestions.map((q, index) => ({
       ...q,
-      id: q.id !== undefined ? q.id : index + 1
+      id: q.id !== undefined ? q.id : (index + 1).toString()
     }));
     
     console.log('Questions with IDs:', questionsWithIds);
@@ -96,10 +96,7 @@ const TestSimulator = ({
       seenTexts.add(normalizedText);
       uniqueQuestions.push(question);
     }
-    
-    console.log('Unique questions after filtering:', uniqueQuestions.length);
-    console.log('Unique questions details:', JSON.stringify(uniqueQuestions, null, 2));
-    
+
     // Helper function to extract key concepts from a question
     function extractConcepts(text: string): string[] {
       // Remove common question starters
@@ -147,7 +144,14 @@ const TestSimulator = ({
       );
       
       if (newQuestions.length > 0) {
+        const currentQuestionsCount = processedQuestions.length;
         setProcessedQuestions(prev => [...prev, ...newQuestions]);
+        
+        // Jump to the first new question (index is zero-based, so we use the current length)
+        setCurrentIndex(currentQuestionsCount);
+        setSelectedOption(undefined);
+        
+        console.log(`Added ${newQuestions.length} new questions. Jumping to question ${currentQuestionsCount + 1}`);
       }
     }
   }, [providedQuestions]);
@@ -237,7 +241,6 @@ const TestSimulator = ({
                 Frage {currentIndex + 1} von {processedQuestions.length}
                 {processedQuestions.length > 0 && (
                   <span className="ml-2 text-xs">
-                    (Beantwortet: {Object.keys(answeredQuestions).length})
                   </span>
                 )}
               </div>

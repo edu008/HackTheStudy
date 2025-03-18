@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, GraduationCap, RefreshCw, AlertCircle } from 'lucide-react';
 
 interface Flashcard {
-  id: number;
+  id: string;
   question: string;
   answer: string;
 }
@@ -26,9 +26,25 @@ const FlashcardGenerator = ({
 
   useEffect(() => {
     if (flashcards.length > 0) {
-      setCards(flashcards);
-      setCurrentCardIndex(0);
-      setIsFlipped(false);
+      // Check if these are new flashcards being added to existing ones
+      if (cards.length > 0 && flashcards.length > cards.length) {
+        // Store the current count before updating
+        const currentCount = cards.length;
+        
+        // Update the cards
+        setCards(flashcards);
+        
+        // Jump to the first new card (index is zero-based)
+        setCurrentCardIndex(currentCount);
+        setIsFlipped(false);
+        
+        console.log(`Added ${flashcards.length - currentCount} new flashcards. Jumping to flashcard ${currentCount + 1}`);
+      } else {
+        // Initial load or complete replacement
+        setCards(flashcards);
+        setCurrentCardIndex(0);
+        setIsFlipped(false);
+      }
     }
   }, [flashcards]);
 

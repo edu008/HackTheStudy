@@ -108,9 +108,27 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
             db.session.add(main_topic)
             db.session.commit()
             
-            logger.info("Saving subtopics...")
+            logger.info("Saving subtopics and creating connections...")
+            from models import Connection
+            subtopics = []
             for subtopic_name in analysis['subtopics']:
-                db.session.add(Topic(upload_id=upload.id, name=subtopic_name, is_main_topic=False, parent_id=main_topic.id))
+                subtopic = Topic(upload_id=upload.id, name=subtopic_name, is_main_topic=False, parent_id=main_topic.id)
+                db.session.add(subtopic)
+                subtopics.append(subtopic)
+            
+            # Flush to get IDs for the subtopics
+            db.session.flush()
+            
+            # Create connections between main topic and each subtopic
+            for subtopic in subtopics:
+                connection = Connection(
+                    upload_id=upload.id,
+                    source_id=main_topic.id,
+                    target_id=subtopic.id,
+                    label=f"{main_topic.name} relates to {subtopic.name}"
+                )
+                db.session.add(connection)
+                logger.info(f"Created connection: {main_topic.name} -> {subtopic.name}")
             
             logger.info("Saving flashcards...")
             for fc in flashcards:
