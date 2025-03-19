@@ -87,6 +87,6 @@ class OAuthToken(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
     provider = db.Column(db.String(50), nullable=False)
-    access_token = db.Column(db.String(200), nullable=False)
-    refresh_token = db.Column(db.String(200))
+    access_token = db.Column(db.Text, nullable=False)
+    refresh_token = db.Column(db.Text)
     expires_at = db.Column(db.DateTime, nullable=False)

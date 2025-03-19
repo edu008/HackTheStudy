@@ -4,6 +4,7 @@ from celery import Celery
 import logging
 import time
 import redis
+import json
 
 # Add the current directory to the Python path to ensure app.py is found
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -283,18 +284,113 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                 app.config['OPENAI_MODEL'] = "gpt-4o"
             
             # 8. Verarbeitung des Textes in einem einzigen API-Aufruf
-            result = unified_content_processing(
-                text=all_text,
-                client=openai_client, 
-                file_names=file_names
-            )
-            
-            if not result:
-                logger.error("Unified content processing failed to return results")
-                upload.processing_status = "failed"
-                db.session.commit()
-                release_session_lock(session_id)
-                raise Exception("Content processing failed")
+            try:
+                # Versuche zunächst, Schlüssel aus Redis zu entfernen, falls vorhanden
+                error_key = f"error_details:{session_id}"
+                redis_client.delete(error_key)
+                
+                result = unified_content_processing(
+                    text=all_text,
+                    client=openai_client, 
+                    file_names=file_names
+                )
+                
+                if not result:
+                    logger.error("Unified content processing failed to return results")
+                    upload.processing_status = "failed"
+                    db.session.commit()
+                    
+                    # Fehlerdetails in Redis speichern
+                    error_details = {
+                        "error_type": "processing_failed",
+                        "message": "Die Verarbeitung konnte nicht abgeschlossen werden. Keine Ergebnisse erhalten."
+                    }
+                    redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    release_session_lock(session_id)
+                    return {
+                        "success": False,
+                        "error_type": "processing_failed",
+                        "message": "Die Verarbeitung konnte nicht abgeschlossen werden. Keine Ergebnisse erhalten."
+                    }
+            except Exception as e:
+                error_message = str(e)
+                logger.error(f"OpenAI API Fehler: {error_message}")
+                
+                # Prüfen auf spezifische OpenAI-Fehlertypen
+                if "maximum context length" in error_message or "token limit" in error_message:
+                    upload.processing_status = "failed"
+                    db.session.commit()
+                    
+                    # Fehlerdetails in Redis speichern
+                    error_details = {
+                        "error_type": "token_limit",
+                        "message": "Die Datei ist zu groß für die Verarbeitung. Bitte teilen Sie die Datei in kleinere Abschnitte auf."
+                    }
+                    error_key = f"error_details:{session_id}"
+                    redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    release_session_lock(session_id)
+                    return {
+                        "success": False,
+                        "error_type": "token_limit",
+                        "message": "Die Datei ist zu groß für die Verarbeitung. Bitte teilen Sie die Datei in kleinere Abschnitte auf."
+                    }
+                elif "rate limit" in error_message.lower():
+                    upload.processing_status = "failed"
+                    db.session.commit()
+                    
+                    # Fehlerdetails in Redis speichern
+                    error_details = {
+                        "error_type": "rate_limit",
+                        "message": "Zu viele Anfragen. Bitte versuchen Sie es später erneut."
+                    }
+                    error_key = f"error_details:{session_id}"
+                    redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    release_session_lock(session_id)
+                    return {
+                        "success": False,
+                        "error_type": "rate_limit",
+                        "message": "Zu viele Anfragen. Bitte versuchen Sie es später erneut."
+                    }
+                elif "corrupted" in error_message.lower() or "corrupted_pdf" in error_message.lower():
+                    upload.processing_status = "failed"
+                    db.session.commit()
+                    
+                    # Fehlerdetails in Redis speichern
+                    error_details = {
+                        "error_type": "corrupted_file",
+                        "message": "Die Datei scheint beschädigt zu sein und kann nicht verarbeitet werden."
+                    }
+                    error_key = f"error_details:{session_id}"
+                    redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    release_session_lock(session_id)
+                    return {
+                        "success": False,
+                        "error_type": "corrupted_file",
+                        "message": "Die Datei scheint beschädigt zu sein und kann nicht verarbeitet werden."
+                    }
+                else:
+                    # Allgemeiner Fehler
+                    upload.processing_status = "failed"
+                    db.session.commit()
+                    
+                    # Fehlerdetails in Redis speichern
+                    error_details = {
+                        "error_type": "api_error",
+                        "message": f"Bei der Verarbeitung ist ein Fehler aufgetreten: {error_message}"
+                    }
+                    error_key = f"error_details:{session_id}"
+                    redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    release_session_lock(session_id)
+                    return {
+                        "success": False,
+                        "error_type": "api_error",
+                        "message": f"Bei der Verarbeitung ist ein Fehler aufgetreten: {error_message}"
+                    }
             
             logger.info(f"Unified processing completed successfully with {len(result.get('flashcards', []))} flashcards and {len(result.get('questions', []))} questions")
             

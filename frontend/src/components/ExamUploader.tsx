@@ -454,7 +454,7 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
           
           // Cache-busting Parameter hinzufügen um aktuelle Daten zu erhalten
           const timestamp = new Date().getTime();
-          const resultsResponse = await axios.get<{ success: boolean, data: SessionData }>(
+          const resultsResponse = await axios.get<{ success: boolean, data: SessionData, error?: any, error_type?: string }>(
             `${API_URL}/api/v1/results/${currentSessionId}?nocache=${timestamp}`,
             { 
               headers: {
@@ -466,6 +466,61 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
               withCredentials: true 
             }
           );
+          
+          // Wenn die Antwort einen Fehler enthält, diesen entsprechend anzeigen
+          if (!resultsResponse.data.success) {
+            console.error('DEBUG: Error response from results endpoint:', resultsResponse.data);
+            
+            // Zeige einen Toast mit der Fehlermeldung an
+            toast({
+              title: "Fehler bei der Verarbeitung",
+              description: resultsResponse.data.error?.message || "Ein unbekannter Fehler ist aufgetreten",
+              variant: "destructive",
+              duration: 8000,
+            });
+            
+            // Wenn der Fehler aufgrund der Dateigröße auftritt
+            if (resultsResponse.data.error_type === 'token_limit') {
+              return {
+                success: false,
+                message: "Die Datei ist zu groß für die Verarbeitung",
+                session_id: currentSessionId,
+                flashcards: [],
+                questions: []
+              };
+            }
+            
+            // Bei beschädigten Dateien
+            if (resultsResponse.data.error_type === 'corrupted_file') {
+              return {
+                success: false,
+                message: "Die Datei scheint beschädigt zu sein",
+                session_id: currentSessionId,
+                flashcards: [],
+                questions: []
+              };
+            }
+            
+            // Bei API-Ratenlimits
+            if (resultsResponse.data.error_type === 'rate_limit') {
+              return {
+                success: false,
+                message: "API-Anfragelimit erreicht. Bitte versuchen Sie es später erneut",
+                session_id: currentSessionId,
+                flashcards: [],
+                questions: []
+              };
+            }
+            
+            // Allgemeiner Fehler
+            return {
+              success: false,
+              message: resultsResponse.data.error?.message || "Ein Fehler ist während der Verarbeitung aufgetreten",
+              session_id: currentSessionId,
+              flashcards: [],
+              questions: []
+            };
+          }
           
           if (resultsResponse.data.success && resultsResponse.data.data) {
             // Daten analysieren, um zu sehen, ob die Verarbeitung abgeschlossen ist
@@ -586,11 +641,50 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
       console.error('DEBUG: Upload error:', error);
       console.error('DEBUG: Error response:', error.response?.data);
       setError(error.message);
-      toast({
-        title: "Fehler beim Hochladen",
-        description: `Es gab ein Problem: ${error.message}`,
-        variant: "destructive",
-      });
+      
+      // Prüfen, ob ein strukturierter Fehler vom Backend vorliegt
+      if (error.response?.data?.error_type) {
+        const errorData = error.response.data;
+        
+        // Je nach Fehlertyp eine spezifische Nachricht anzeigen
+        switch (errorData.error_type) {
+          case 'token_limit':
+            toast({
+              title: "Datei zu groß",
+              description: errorData.message || "Die Datei überschreitet das Tokensize-Limit. Bitte teilen Sie die Datei in kleinere Abschnitte auf.",
+              variant: "destructive",
+            });
+            break;
+          case 'rate_limit':
+            toast({
+              title: "API-Limit erreicht",
+              description: errorData.message || "Das API-Anfragelimit wurde erreicht. Bitte versuchen Sie es später erneut.",
+              variant: "destructive",
+            });
+            break;
+          case 'corrupted_file':
+            toast({
+              title: "Beschädigte Datei",
+              description: errorData.message || "Die Datei scheint beschädigt zu sein und kann nicht verarbeitet werden.",
+              variant: "destructive",
+              duration: 8000,
+            });
+            break;
+          default:
+            toast({
+              title: "Fehler beim Hochladen",
+              description: errorData.message || `Es gab ein Problem: ${error.message}`,
+              variant: "destructive",
+            });
+        }
+      } else {
+        // Fallback für andere Fehler
+        toast({
+          title: "Fehler beim Hochladen",
+          description: `Es gab ein Problem: ${error.message}`,
+          variant: "destructive",
+        });
+      }
     },
   });
 

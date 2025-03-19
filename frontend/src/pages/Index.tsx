@@ -1,20 +1,26 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from "react-router-dom";
-import Navbar from "@/components/Navbar";
+import axios from "axios";
+import { useMutation } from "@tanstack/react-query";
+import { v4 as uuidv4 } from 'uuid';
+
+// UI Components
+import Navbar from '@/components/Navbar';
+import Footer from '@/components/Footer';
+import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+
+// Landing Page Components
+import HeroSection from '@/components/landing/HeroSection';
+import LoginSection from '@/components/landing/LoginSection';
+import AboutSection from '@/components/landing/AboutSection';
+
+// Main App Components
 import ExamUploader from "@/components/ExamUploader";
 import FlashcardGenerator from "@/components/FlashcardGenerator";
 import TestSimulator from "@/components/TestSimulator";
-import Footer from "@/components/Footer";
-import { useMutation } from "@tanstack/react-query";
-import axios from "axios";
 import ConceptMapper from "@/components/ConceptMapper";
-import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { FcGoogle } from "react-icons/fc";
-import { Github, Loader2, BookOpen, Plus } from "lucide-react";
-import { v4 as uuidv4 } from 'uuid';
+import { Loader2 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -63,11 +69,79 @@ const Index = () => {
   const { user, isLoading, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // App state for logged-in functionality
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
+  
+  // Landing page navigation state
+  const [currentView, setCurrentView] = useState<'hero' | 'about' | 'login'>('hero');
+  const heroSectionRef = useRef<HTMLDivElement>(null);
+  const aboutSectionRef = useRef<HTMLDivElement>(null);
+  const loginSectionRef = useRef<HTMLDivElement>(null);
 
+  // Scroll to the appropriate section when view changes
+  useEffect(() => {
+    if (currentView === 'login' && loginSectionRef.current) {
+      loginSectionRef.current.scrollIntoView({ behavior: 'smooth' });
+    } else if (currentView === 'about' && aboutSectionRef.current) {
+      aboutSectionRef.current.scrollIntoView({ behavior: 'smooth' });
+    } else if (currentView === 'hero' && heroSectionRef.current) {
+      heroSectionRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [currentView]);
+
+  // Load session data functionality
+  const loadSessionData = async (sessionIdToLoad: string) => {
+    if (isLoadingSession) return;
+
+    setIsLoadingSession(true);
+    try {
+      // Cache-busting Parameter hinzufügen, um sicherzustellen, dass wir frische Daten erhalten
+      const timestamp = new Date().getTime();
+      const response = await axios.get<{ success: boolean; data: SessionData }>(
+        `${API_URL}/api/v1/results/${sessionIdToLoad}?nocache=${timestamp}`,
+        { 
+          withCredentials: true,
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        }
+      );
+      
+      if (response.data.success && response.data.data) {
+        const sessionData = response.data.data;
+        console.log('DEBUG: Loaded session data:', sessionData);
+        
+        // Immer die neuen Daten verwenden, unabhängig von früheren Zuständen
+        setFlashcards(sessionData.flashcards || []);
+        setQuestions(sessionData.test_questions || []);
+        setSessionId(sessionIdToLoad);
+        
+        toast({
+          title: "Analyse geladen",
+          description: `Die Analyse "${sessionData.analysis.main_topic}" wurde erfolgreich geladen mit ${sessionData.flashcards.length} Karteikarten und ${sessionData.test_questions.length} Fragen.`,
+        });
+      } else {
+        throw new Error("Keine gültigen Daten für diese Session gefunden");
+      }
+    } catch (error) {
+      console.error('DEBUG: Error loading session data:', error);
+      toast({
+        title: "Fehler beim Laden",
+        description: "Die Daten für diese Session konnten nicht geladen werden.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingSession(false);
+    }
+  };
+
+  // Check for session ID and state data from URL
   useEffect(() => {
     // Erkennen, ob wir mit einem nocache-Parameter geladen wurden, was ein komplettes Reset signalisiert
     const urlParams = new URLSearchParams(location.search);
@@ -145,53 +219,42 @@ const Index = () => {
     }
   }, [user, location.search, location.state]);
 
-  const loadSessionData = async (sessionIdToLoad: string) => {
-    if (isLoadingSession) return;
-
-    setIsLoadingSession(true);
-    try {
-      // Cache-busting Parameter hinzufügen, um sicherzustellen, dass wir frische Daten erhalten
-      const timestamp = new Date().getTime();
-      const response = await axios.get<{ success: boolean; data: SessionData }>(
-        `${API_URL}/api/v1/results/${sessionIdToLoad}?nocache=${timestamp}`,
-        { 
-          withCredentials: true,
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          }
-        }
-      );
+  // Check for forced session reset
+  useEffect(() => {
+    // Prüfe, ob wir gerade von einem Reset-Redirect kommen
+    const forceNewSession = sessionStorage.getItem('force_new_session');
+    
+    if (forceNewSession === 'true') {
+      // Lösche die Reset-Flags
+      sessionStorage.removeItem('force_new_session');
+      sessionStorage.removeItem('redirect_time');
       
-      if (response.data.success && response.data.data) {
-        const sessionData = response.data.data;
-        console.log('DEBUG: Loaded session data:', sessionData);
+      // Lösche alle Session-bezogenen Daten
+      localStorage.removeItem('current_session_id');
+      localStorage.removeItem('session_id');
+      localStorage.removeItem('last_session_id');
+      
+      // Setze den lokalen Zustand zurück
+      setSessionId(undefined);
+      setFlashcards([]);
+      setQuestions([]);
+      
+      // Entferne alle URL-Parameter für ein sauberes Neuladen
+      if (window.location.search) {
+        window.history.replaceState({}, '', window.location.pathname);
         
-        // Immer die neuen Daten verwenden, unabhängig von früheren Zuständen
-        setFlashcards(sessionData.flashcards || []);
-        setQuestions(sessionData.test_questions || []);
-        setSessionId(sessionIdToLoad);
-        
-        toast({
-          title: "Analyse geladen",
-          description: `Die Analyse "${sessionData.analysis.main_topic}" wurde erfolgreich geladen mit ${sessionData.flashcards.length} Karteikarten und ${sessionData.test_questions.length} Fragen.`,
-        });
-      } else {
-        throw new Error("Keine gültigen Daten für diese Session gefunden");
+        // Nach kurzer Verzögerung (um React-Rendering abzuwarten) einen Toast anzeigen
+        setTimeout(() => {
+          toast({
+            title: "Neue Session gestartet",
+            description: "Die alte Session wurde vollständig entfernt und eine neue Session ist bereit.",
+          });
+        }, 500);
       }
-    } catch (error) {
-      console.error('DEBUG: Error loading session data:', error);
-      toast({
-        title: "Fehler beim Laden",
-        description: "Die Daten für diese Session konnten nicht geladen werden.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingSession(false);
     }
-  };
+  }, []);
 
+  // Handle upload success
   const handleUploadSuccess = (data: UploadResponse) => {
     setFlashcards(data.flashcards || []);
     setQuestions(data.questions || []);
@@ -199,6 +262,7 @@ const Index = () => {
     document.getElementById('flashcards')?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Mutation to generate more flashcards
   const generateMoreFlashcardsMutation = useMutation({
     mutationFn: async () => {
       const token = localStorage.getItem('exammaster_token');
@@ -240,6 +304,7 @@ const Index = () => {
     }
   });
 
+  // Mutation to generate more questions
   const generateMoreQuestionsMutation = useMutation({
     mutationFn: async () => {
       console.log('DEBUG: Requesting more test questions from backend');
@@ -319,7 +384,7 @@ const Index = () => {
     }
   });
 
-  // Mutation zum Zurücksetzen der Session und Laden neuer Themen
+  // Mutation to reset session and load new topics
   const loadTopicsMutation = useMutation({
     mutationFn: async () => {
       // Wir generieren eine temporäre ID für einen Redirect
@@ -344,45 +409,18 @@ const Index = () => {
     }
   });
 
+  // Handle sign-in with provider
   const handleSignIn = async (provider: string) => {
     await signIn(provider);
   };
 
-  // Prüfe beim Laden der Seite, ob ein Reset erzwungen werden soll
-  useEffect(() => {
-    // Prüfe, ob wir gerade von einem Reset-Redirect kommen
-    const forceNewSession = sessionStorage.getItem('force_new_session');
-    const redirectTime = sessionStorage.getItem('redirect_time');
-    
-    if (forceNewSession === 'true') {
-      // Lösche die Reset-Flags
-      sessionStorage.removeItem('force_new_session');
-      sessionStorage.removeItem('redirect_time');
-      
-      // Lösche alle Session-bezogenen Daten
-      localStorage.removeItem('current_session_id');
-      localStorage.removeItem('session_id');
-      localStorage.removeItem('last_session_id');
-      
-      // Setze den lokalen Zustand zurück
-      setSessionId(undefined);
-      setFlashcards([]);
-      setQuestions([]);
-      
-      // Entferne alle URL-Parameter für ein sauberes Neuladen
-      if (window.location.search) {
-        window.history.replaceState({}, '', window.location.pathname);
-        
-        // Nach kurzer Verzögerung (um React-Rendering abzuwarten) einen Toast anzeigen
-        setTimeout(() => {
-          toast({
-            title: "Neue Session gestartet",
-            description: "Die alte Session wurde vollständig entfernt und eine neue Session ist bereit.",
-          });
-        }, 500);
-      }
+  // Handle going back to hero section
+  const handleBackToHero = () => {
+    setCurrentView('hero');
+    if (heroSectionRef.current) {
+      heroSectionRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, []);
+  };
 
   if (isLoading) {
     return (
@@ -393,90 +431,61 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Navbar />
-      <main className="flex-1">
-        {!user ? (
-          <div className="container mx-auto px-4 py-16">
-            <div className="text-center mb-16">
-              <h1 className="text-4xl font-bold mb-4">Willkommen bei HackTheStudy</h1>
-              <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-                Die intelligente Plattform für Studenten, um Prüfungen zu analysieren, 
-                Karteikarten zu erstellen und sich optimal auf Tests vorzubereiten.
-              </p>
+    <>
+      {!user ? (
+        // Landing page layout without Navbar and Footer
+        <div className="min-h-screen w-full flex flex-col bg-[#f0f7ff]">
+          {/* Hero Section - Full height for initial view */}
+          <section 
+            ref={heroSectionRef}
+            className={`min-h-screen flex items-center justify-center bg-[#f0f7ff] py-20 ${currentView !== 'hero' ? 'h-auto' : ''}`}
+            id="hero-section"
+          >
+            <div className="w-full">
+              <HeroSection 
+                onStartClick={() => setCurrentView('login')}
+                onLearnMoreClick={() => setCurrentView('about')}
+              />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Prüfungen analysieren</CardTitle>
-                  <CardDescription>
-                    Lade deine Prüfungsunterlagen hoch und erhalte eine detaillierte Analyse.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p>Unsere KI analysiert deine Prüfungsunterlagen und identifiziert die wichtigsten Konzepte und Themen.</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Karteikarten erstellen</CardTitle>
-                  <CardDescription>
-                    Generiere automatisch Karteikarten aus deinen Unterlagen.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p>Erstelle effektive Lernmaterialien mit nur einem Klick und optimiere deine Lernzeit.</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Testsimulation</CardTitle>
-                  <CardDescription>
-                    Bereite dich mit realistischen Testfragen auf deine Prüfungen vor.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p>Übe mit automatisch generierten Testfragen, die auf deinen Unterlagen basieren.</p>
-                </CardContent>
-              </Card>
+          </section>
+          
+          {/* About Section */}
+          <section 
+            ref={aboutSectionRef} 
+            className={`min-h-screen py-20 flex items-center bg-[#f0f7ff] ${currentView === 'about' ? 'animate-fade-in' : ''}`}
+            id="about-section"
+          >
+            <div className="w-full">
+              <AboutSection 
+                onStartClick={() => setCurrentView('login')}
+                onBackClick={handleBackToHero}
+              />
             </div>
-            <div className="max-w-md mx-auto">
-              <Card>
-                <CardHeader className="text-center">
-                  <CardTitle>Jetzt loslegen</CardTitle>
-                  <CardDescription>
-                    Melde dich an, um alle Funktionen zu nutzen
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Button variant="outline" className="w-full" onClick={() => handleSignIn('google')}>
-                    <FcGoogle className="mr-2 h-4 w-4" />
-                    Mit Google anmelden
-                  </Button>
-                  <Button variant="outline" className="w-full" onClick={() => handleSignIn('github')}>
-                    <Github className="mr-2 h-4 w-4" />
-                    Mit GitHub anmelden
-                  </Button>
-                  <Button variant="default" className="w-full" onClick={() => handleSignIn('mock')}>
-                    Demo Login (ohne OAuth)
-                  </Button>
-                  <p className="text-xs text-center text-muted-foreground mt-2">
-                    Hinweis: Für die echte OAuth-Authentifizierung muss der Backend-Server laufen.
-                  </p>
-                </CardContent>
-                <CardFooter className="flex justify-center">
-                  <p className="text-sm text-muted-foreground">
-                    Neues Konto wird automatisch erstellt
-                  </p>
-                </CardFooter>
-              </Card>
+          </section>
+          
+          {/* Login Section */}
+          <section 
+            ref={loginSectionRef} 
+            className={`min-h-screen py-20 flex items-center justify-center bg-[#f0f7ff] ${currentView === 'login' ? 'animate-fade-in' : ''}`}
+            id="login-section"
+          >
+            <div className="w-full">
+              <LoginSection 
+                onBackClick={handleBackToHero}
+                onSignIn={handleSignIn}
+              />
             </div>
-          </div>
-        ) : (
-          <>
+          </section>
+        </div>
+      ) : (
+        // Logged-in user view with Navbar and Footer
+        <div className="min-h-screen flex flex-col bg-[#f0f7ff]">
+          <Navbar onLoginClick={() => setCurrentView('login')} />
+          
+          <main className="flex-1">
             {isLoadingSession && (
-              <div className="fixed inset-0 bg-background/80 flex items-center justify-center z-50">
-                <div className="bg-card p-6 rounded-lg shadow-lg flex flex-col items-center">
+              <div className="fixed inset-0 bg-white/80 flex items-center justify-center z-50">
+                <div className="bg-white p-6 rounded-lg shadow-lg flex flex-col items-center">
                   <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
                   <p className="text-lg font-medium">Lade Analyse...</p>
                 </div>
@@ -547,11 +556,12 @@ const Index = () => {
             <section id="concept-mapper">
               <ConceptMapper sessionId={sessionId} />
             </section>
-          </>
-        )}
-      </main>
-      <Footer />
-    </div>
+          </main>
+          
+          <Footer />
+        </div>
+      )}
+    </>
   );
 };
 

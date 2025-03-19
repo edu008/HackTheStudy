@@ -9,6 +9,7 @@ from .utils import allowed_file, extract_text_from_file, check_and_manage_user_s
 import logging
 from .auth import token_required
 import time
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +360,33 @@ def get_results(session_id):
     
     # Direkte Datenbankabfrage verwenden, um sicherzustellen, dass wir aktuelle Daten bekommen
     db.session.refresh(upload)
+    
+    # Überprüfe den Verarbeitungsstatus und gib bei Fehlern entsprechende Informationen zurück
+    if upload.processing_status == "failed":
+        error_message = "Bei der Verarbeitung ist ein Fehler aufgetreten"
+        error_type = "processing_failed"
+        
+        # Versuche, aus Redis eventuell gespeicherte detailliertere Fehlerinformationen zu bekommen
+        from tasks import redis_client
+        error_key = f"error_details:{session_id}"
+        
+        stored_error = redis_client.get(error_key)
+        if stored_error:
+            try:
+                error_data = json.loads(stored_error)
+                error_type = error_data.get("error_type", error_type)
+                error_message = error_data.get("message", error_message)
+            except:
+                pass  # Bei Parsing-Fehlern verwenden wir die Standardnachricht
+        
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": error_type.upper(),
+                "message": error_message
+            },
+            "error_type": error_type
+        }), 400, response_headers
     
     # Flashcards und Fragen in separaten Abfragen laden
     flashcards = db.session.query(Flashcard).filter_by(upload_id=upload.id).all()

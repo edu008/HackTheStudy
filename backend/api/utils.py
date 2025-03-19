@@ -217,24 +217,6 @@ def query_chatgpt(prompt, client, system_content=None, temperature=0.7, max_retr
                 messages.append({"role": "system", "content": "You are a helpful assistant that provides concise, accurate information."})
             messages.append({"role": "user", "content": prompt})
             
-            # Hier einen Mock-Response zurückgeben, wenn wir zu viele Rate-Limits bekommen
-            if retry_count >= 3:
-                print(f"Using fallback response after {retry_count} retries")
-                mock_response = generate_mock_response(prompt, system_content)
-                
-                # Debug: Logging der Fallback-Antwort
-                print("\n\n==================================================")
-                print("OPENAI DEBUG: FALLBACK ANTWORT VERWENDET")
-                print("==================================================")
-                print(f"ANTWORT (gekürzt): {mock_response[:300]}..." if len(mock_response) > 300 else f"ANTWORT: {mock_response}")
-                print("==================================================\n\n")
-                
-                # Speichere die Antwort im Cache, wenn Caching aktiviert ist
-                if use_cache:
-                    _response_cache[cache_key] = mock_response
-                
-                return mock_response
-            
             # Debug: API-Aufruf loggen
             print(f"\nDEBUG: Sending API request (attempt {retry_count+1}/{max_retries})")
             
@@ -275,180 +257,20 @@ def query_chatgpt(prompt, client, system_content=None, temperature=0.7, max_retr
                 retry_count += 1
             else:
                 # Bei anderen Fehlern oder wenn max_retries erreicht ist
-                print(f"Error querying OpenAI API: {error_str}, using fallback response")
+                print(f"Error querying OpenAI API: {error_str}")
                 
                 # Debug: Fehler ausführlich loggen
                 print("\n\n==================================================")
                 print("OPENAI DEBUG: FEHLER")
                 print("==================================================")
                 print(f"FEHLER: {error_str}")
-                print("FALLBACK WIRD VERWENDET")
                 print("==================================================\n\n")
                 
-                mock_response = generate_mock_response(prompt, system_content)
-                
-                # Speichere die Antwort im Cache, wenn Caching aktiviert ist
-                if use_cache:
-                    _response_cache[cache_key] = mock_response
-                
-                return mock_response
+                # Kein Fallback mehr, sondern Fehler weiterleiten
+                raise ValueError(f"OpenAI API Error: {error_str}")
     
-    # Nach allen Wiederholungsversuchen verwenden wir eine Mock-Antwort
-    print("Maximum retries exceeded, using fallback response")
-    mock_response = generate_mock_response(prompt, system_content)
-    
-    # Debug: Maximale Wiederholungen überschritten
-    print("\n\n==================================================")
-    print("OPENAI DEBUG: MAX RETRIES ÜBERSCHRITTEN")
-    print("==================================================")
-    print("FALLBACK WIRD VERWENDET")
-    print(f"ANTWORT (gekürzt): {mock_response[:300]}..." if len(mock_response) > 300 else f"ANTWORT: {mock_response}")
-    print("==================================================\n\n")
-    
-    # Speichere die Antwort im Cache, wenn Caching aktiviert ist
-    if use_cache:
-        _response_cache[cache_key] = mock_response
-    
-    return mock_response
-
-def generate_mock_response(prompt, system_content=None, file_name=None):
-    """
-    Generiert eine intelligentere Mock-Antwort basierend auf dem Prompt, dem System-Content und optional dem Dateinamen.
-    Dies wird verwendet, wenn OpenAI-API-Anfragen fehlschlagen oder das Rate-Limit erreicht ist.
-    """
-    # Extrahiere Hinweise aus dem Dateinamen
-    topic_hints = {}
-    if file_name:
-        file_name = file_name.lower()
-        if "nsa" in file_name or "network" in file_name or "security" in file_name:
-            topic_hints = {
-                "main_topic": "Network Security Analysis",
-                "subtopics": [
-                    {"name": "Vulnerability Assessment", "child_topics": ["Scanning Tools", "Risk Scoring", "Remediation"]},
-                    {"name": "Intrusion Detection", "child_topics": ["Signature Detection", "Anomaly Detection", "SIEM Tools"]},
-                    {"name": "Encryption Protocols", "child_topics": ["Symmetric Encryption", "Asymmetric Encryption", "TLS/SSL"]},
-                    {"name": "Authentication Methods", "child_topics": ["Multi-factor Authentication", "Biometrics", "Zero Trust"]}
-                ],
-                "key_terms": [
-                    {"term": "Firewall", "definition": "A security system that monitors and controls incoming and outgoing network traffic."},
-                    {"term": "IDS/IPS", "definition": "Intrusion Detection/Prevention Systems that monitor networks for suspicious activities."},
-                    {"term": "VPN", "definition": "Virtual Private Network that extends a private network across public networks."}
-                ]
-            }
-        elif "program" in file_name or "coding" in file_name or "algorithm" in file_name:
-            topic_hints = {
-                "main_topic": "Programming Fundamentals",
-                "subtopics": [
-                    {"name": "Data Structures", "child_topics": ["Arrays", "Linked Lists", "Trees", "Graphs"]},
-                    {"name": "Algorithms", "child_topics": ["Sorting", "Searching", "Dynamic Programming", "Greedy Algorithms"]},
-                    {"name": "Programming Paradigms", "child_topics": ["Procedural", "Object-Oriented", "Functional", "Event-Driven"]}
-                ],
-                "key_terms": [
-                    {"term": "Complexity", "definition": "A measure of the resources required for an algorithm to run."},
-                    {"term": "Recursion", "definition": "A programming technique where a function calls itself."},
-                    {"term": "Object", "definition": "An instance of a class that encapsulates data and behavior."}
-                ]
-            }
-        elif "math" in file_name or "calculus" in file_name or "algebra" in file_name:
-            topic_hints = {
-                "main_topic": "Advanced Mathematics",
-                "subtopics": [
-                    {"name": "Calculus", "child_topics": ["Differentiation", "Integration", "Limits", "Series"]},
-                    {"name": "Linear Algebra", "child_topics": ["Matrices", "Vector Spaces", "Eigenvalues", "Transformations"]},
-                    {"name": "Probability Theory", "child_topics": ["Distributions", "Random Variables", "Bayesian Statistics"]}
-                ],
-                "key_terms": [
-                    {"term": "Derivative", "definition": "The rate of change of a function with respect to a variable."},
-                    {"term": "Matrix", "definition": "A rectangular array of numbers arranged in rows and columns."},
-                    {"term": "Probability Distribution", "definition": "A function that gives the probabilities of occurrence of different outcomes."}
-                ]
-            }
-    
-    # Wenn keine Hinweise gefunden wurden, verwende einen generischen Ansatz
-    if not topic_hints:
-        topic_hints = {
-            "main_topic": "Academic Study Methods",
-            "subtopics": [
-                {"name": "Effective Learning Strategies", "child_topics": ["Spaced Repetition", "Active Recall", "Feynman Technique"]},
-                {"name": "Time Management", "child_topics": ["Pomodoro Technique", "Prioritization", "Deep Work Sessions"]},
-                {"name": "Information Organization", "child_topics": ["Mind Mapping", "Cornell Note-Taking", "Outlining Methods"]},
-                {"name": "Critical Thinking", "child_topics": ["Argument Analysis", "Bias Identification", "Socratic Questioning"]}
-            ],
-            "key_terms": [
-                {"term": "Metacognition", "definition": "The awareness and understanding of one's own thought processes."},
-                {"term": "Elaborative Interrogation", "definition": "Asking 'why' and 'how' questions to deepen understanding."},
-                {"term": "Cognitive Load", "definition": "The total amount of mental effort used in working memory."}
-            ]
-        }
-    
-    # Flashcard-Anfrage
-    if "generate" in prompt.lower() and "flashcard" in prompt.lower():
-        flashcards = []
-        for subtopic in topic_hints["subtopics"]:
-            # Generiere Flashcards für jedes Unterthema
-            flashcards.append({
-                "question": f"What are the key components of {subtopic['name']}?",
-                "answer": f"The key components include {', '.join(subtopic['child_topics'])}."
-            })
-            
-            # Generiere zusätzliche Flashcards für einige Unterunterthemen
-            for child_topic in subtopic['child_topics'][:2]:  # Begrenze auf die ersten zwei Kinder
-                flashcards.append({
-                    "question": f"Explain the concept of {child_topic} in the context of {subtopic['name']}.",
-                    "answer": f"{child_topic} is an important aspect of {subtopic['name']} that helps to structure and organize information effectively."
-                })
-        
-        # Füge einige Flashcards für Schlüsselbegriffe hinzu
-        for term_info in topic_hints["key_terms"][:3]:  # Begrenze auf die ersten drei Begriffe
-            flashcards.append({
-                "question": f"Define the term: {term_info['term']}",
-                "answer": term_info['definition']
-            })
-            
-        return json.dumps(flashcards[:10])  # Begrenze auf 10 Flashcards
-    
-    # Test-Fragen-Anfrage
-    elif "generate" in prompt.lower() and "question" in prompt.lower():
-        questions = []
-        for subtopic in topic_hints["subtopics"]:
-            options = subtopic['child_topics'] + [f"None of the above"]
-            questions.append({
-                "text": f"Which of the following is NOT a component of {subtopic['name']}?",
-                "options": options,
-                "correct": len(options) - 1,  # "None of the above" ist die letzte Option
-                "explanation": f"All of the listed items except 'None of the above' are components of {subtopic['name']}."
-            })
-        
-        # Generiere einige Fragen auf Grundlage der Schlüsselbegriffe
-        for term_info in topic_hints["key_terms"][:2]:
-            questions.append({
-                "text": f"What is the correct definition of {term_info['term']}?",
-                "options": [
-                    term_info['definition'],
-                    f"A technique for visualizing complex data structures",
-                    f"A method for organizing information in a hierarchical format",
-                    f"A strategy for improving memory retention"
-                ],
-                "correct": 0,  # Die richtige Definition ist die erste Option
-                "explanation": f"The term {term_info['term']} is correctly defined as: {term_info['definition']}"
-            })
-            
-        return json.dumps(questions[:5])  # Begrenze auf 5 Fragen
-    
-    # Analyse-Anfrage
-    elif "analyze" in prompt.lower() or "extract" in prompt.lower():
-        return json.dumps({
-            "main_topic": topic_hints["main_topic"],
-            "subtopics": topic_hints["subtopics"],
-            "estimated_flashcards": 15,
-            "estimated_questions": 8,
-            "key_terms": topic_hints["key_terms"],
-            "content_type": "lecture"
-        })
-    
-    # Fallback für andere Anfragen
-    else:
-        return "Could not generate response from OpenAI API. Please try again later."
+    # Nach allen Wiederholungsversuchen: Fehler weiterleiten
+    raise ValueError(f"OpenAI API Error: Nach {max_retries} Versuchen konnte keine Antwort erhalten werden.")
 
 def analyze_content(text, client, language='en'):
     system_content = (
@@ -1544,328 +1366,59 @@ def unified_content_processing(text, client, file_names=None, language=None):
             
             response_text = response.choices[0].message.content.strip()
             
-            # Versuche, das JSON zu parsen
-            try:
-                result = json.loads(response_text)
-                
-                # Validierung des Ergebnisses
-                expected_keys = ['main_topic', 'subtopics', 'key_terms', 'flashcards', 'questions', 'content_type']
-                missing_keys = [key for key in expected_keys if key not in result]
-                
-                if missing_keys:
-                    print(f"Warnung: Fehlende Schlüssel im API-Ergebnis: {missing_keys}")
-                    # Fehlende Schlüssel ergänzen
-                    for key in missing_keys:
-                        if key in ['subtopics', 'key_terms', 'flashcards', 'questions']:
-                            result[key] = []
-                        elif key == 'main_topic':
-                            result[key] = "Unknown Topic"
-                        elif key == 'content_type':
-                            result[key] = "unknown"
-                
-                # Mindestprüfung auf Inhalte
-                if (not result['flashcards'] or len(result['flashcards']) < 3 or 
-                    not result['questions'] or len(result['questions']) < 2):
-                    print("Warnung: Zu wenige Flashcards oder Fragen generiert, versuche erneut...")
-                    continue
-                
-                # Log der Anzahl der generierten Topics
-                subtopics_count = len(result.get('subtopics', []))
-                print(f"DEBUG: Anzahl der generierten Subtopics: {subtopics_count}")
-                print(f"DEBUG: Generierte Subtopics: {[subtopic.get('name', 'Unnamed') for subtopic in result.get('subtopics', [])]}")
-                
-                # Stellen sicher, dass genügend Topics erstellt wurden
-                if subtopics_count < 3 and len(text) > 1000:
-                    print(f"Warnung: Nur {subtopics_count} Subtopics generiert. Das scheint für die Textlänge zu wenig zu sein. Versuche es erneut...")
-                    
-                    # Ändern des Prompts, um die Wichtigkeit von mehr Subtopics zu betonen
-                    if attempt < max_retries - 1:
-                        system_content += "\n\nCRITICAL: The input contains substantial content. Please extract AT LEAST 5-10 subtopics to properly represent all the material."
-                        continue
-                
-                return result
-                
-            except json.JSONDecodeError:
-                print(f"Warnung: Antwort enthält kein gültiges JSON, versuche Fallback-Parsing (Versuch {attempt+1})")
-                # Versuchen, die JSON-Struktur aus der Textantwort zu extrahieren
+            # Versuch, die Antwort als JSON zu parsen
+            print(f"Warnung: Antwort enthält kein gültiges JSON, versuche Fallback-Parsing (Versuch 1)")
+            
+            # Versuche, die JSON-Response zu extrahieren, indem nach Markern suchen
+            if "```json" in response_text:
+                json_text = response_text.split("```json")[1].split("```")[0].strip()
                 try:
-                    # Finde JSON-Block in der Antwort
-                    json_match = re.search(r'```(?:json)?\s*(.*?)```', response_text, re.DOTALL) or re.search(r'({.*})', response_text, re.DOTALL)
-                    
-                    if json_match:
-                        result = json.loads(json_match.group(1))
-                        
-                        # Log der Anzahl der generierten Topics
-                        subtopics_count = len(result.get('subtopics', []))
-                        print(f"DEBUG: Anzahl der generierten Subtopics (nach Fallback-Parsing): {subtopics_count}")
-                        print(f"DEBUG: Generierte Subtopics: {[subtopic.get('name', 'Unnamed') for subtopic in result.get('subtopics', [])]}")
-                        
-                        return result
-                    else:
-                        print("Kein JSON-Block in der Antwort gefunden")
-                except:
-                    print("Fallback-Parsing fehlgeschlagen")
-                
-                # Wenn wir hier sind, ist kein gültiges JSON gefunden worden
-                if attempt < max_retries - 1:
-                    # Versuche es noch einmal mit einem klareren Prompt
-                    complete_prompt = prompt + "WICHTIG: Antworten Sie NUR mit einem gültigen JSON-Objekt! Extrahieren Sie MINDESTENS 5-10 Unterthemen aus dem Text!" + text + filename_hint
-                else:
-                    # Letzter Versuch gescheitert, verwende Fallback
-                    break
-                    
+                    result = json.loads(json_text)
+                    return result
+                except json.JSONDecodeError as json_err:
+                    print(f"JSON parse error (Versuch 1): {str(json_err)}")
+                    # Versuche, den vollen Text zu parsen, falls die Markersuche fehlgeschlagen ist
+            
+            # Versuch 2: Suche nach geschweiften Klammern, um JSON zu extrahieren
+            pattern = r"\{.*\}"
+            match = re.search(pattern, response_text, re.DOTALL)
+            if match:
+                try:
+                    print(f"Warnung: Versuche JSON mit Regex zu extrahieren (Versuch 2)")
+                    json_candidate = match.group(0)
+                    result = json.loads(json_candidate)
+                    return result
+                except json.JSONDecodeError as json_err:
+                    print(f"JSON parse error (Versuch 2): {str(json_err)}")
+            
+            # Wenn alle Versuche fehlschlagen, melde einen detaillierten Fehler
+            raise ValueError(f"Konnte keine gültige JSON-Antwort extrahieren. OpenAI Antwort war möglicherweise nicht valide.")
+            
         except Exception as e:
-            print(f"API-Fehler: {str(e)}")
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # Exponentielles Backoff
-                print(f"Warte {wait_time} Sekunden vor dem nächsten Versuch...")
-                time.sleep(wait_time)
-            else:
-                print("Maximale Anzahl von Versuchen erreicht, verwende Fallback-Antwort")
-                break
-    
-    # Wenn wir hier sind, verwenden wir den Fallback-Mechanismus
-    print("Verwende Fallback-Mechanismus für die Inhaltsanalyse")
-    fallback_result = generate_smart_fallback(file_names, language)
-    
-    # Log der Anzahl der Fallback-Topics
-    subtopics_count = len(fallback_result.get('subtopics', []))
-    print(f"DEBUG: Anzahl der Fallback-Subtopics: {subtopics_count}")
-    print(f"DEBUG: Fallback-Subtopics: {[subtopic.get('name', 'Unnamed') for subtopic in fallback_result.get('subtopics', [])]}")
-    
-    return fallback_result
-
-def generate_smart_fallback(file_names, language='en'):
-    """
-    Generiert eine intelligente Fallback-Antwort basierend auf den Dateinamen.
-    Wird verwendet, wenn die OpenAI API nicht verfügbar ist oder fehlschlägt.
-    
-    Args:
-        file_names: Liste der Dateinamen
-        language: Sprache der Antwort
-    
-    Returns:
-        Ein Dictionary mit allen generierten Inhalten (Struktur wie bei unified_content_processing)
-    """
-    print(f"DEBUG: Generiere Fallback-Antwort mit {len(file_names) if file_names else 0} Dateinamen")
-    
-    # Versuche, aus den Dateinamen Themenhints zu extrahieren
-    topic_hints = {}
-    if file_names and len(file_names) > 0:
-        # Dateinamen in Kleinbuchstaben für besseren Vergleich
-        combined_filenames = " ".join([name.lower() for name in file_names])
-        
-        # Zufällige Anzahl von Topics für dynamischere Ergebnisse
-        import random
-        num_topics = random.randint(5, 8)  # Mehr als 4, um die Beschränkung zu vermeiden
-        print(f"DEBUG: Generiere {num_topics} Fallback-Topics basierend auf Dateinamen")
-        
-        # Verschiedene Themen-Kategorien erkennen
-        if any(keyword in combined_filenames for keyword in ["nsa", "network", "security", "intrusion", "firewall", "crypto"]):
-            # Netzwerksicherheitsthemen
-            possible_topics = [
-                {"name": "Threat Detection", "child_topics": ["Intrusion Detection", "Anomaly Analysis", "Security Monitoring"]},
-                {"name": "Security Architecture", "child_topics": ["Firewalls", "Zero Trust", "Defense in Depth"]},
-                {"name": "Encryption Methods", "child_topics": ["Symmetric Encryption", "Asymmetric Encryption", "Key Management"]},
-                {"name": "Authentication Systems", "child_topics": ["Multi-factor Authentication", "Biometrics", "OAuth Protocols"]},
-                {"name": "Network Monitoring", "child_topics": ["Traffic Analysis", "Log Management", "SIEM Solutions"]},
-                {"name": "Security Policies", "child_topics": ["Compliance Frameworks", "Risk Assessment", "Security Governance"]},
-                {"name": "Incident Response", "child_topics": ["Forensic Analysis", "Threat Hunting", "Recovery Procedures"]},
-                {"name": "Secure Communication", "child_topics": ["VPN Technologies", "Secure Protocols", "Data Transit Protection"]}
-            ]
+            error_message = str(e)
+            print(f"Error bei API-Anfrage (Versuch {attempt+1}): {error_message}")
             
-            # Zufällig auswählen, aber mindestens 5
-            selected_topics = random.sample(possible_topics, min(num_topics, len(possible_topics)))
+            # Spezifische Fehlertypen erkennen
+            if "maximum context length" in error_message or "maximum content length" in error_message:
+                raise ValueError(f"Die Datei ist zu groß für die Verarbeitung (Token-Limit überschritten). OpenAI-Fehler: {error_message}")
             
-            topic_hints = {
-                "main_topic": "Network Security Analysis",
-                "subtopics": selected_topics,
-                "key_terms": [
-                    {"term": "IDS", "definition": "Intrusion Detection System - Monitors network traffic for suspicious activity and policy violations."},
-                    {"term": "Firewall", "definition": "Network security device that monitors and filters incoming/outgoing traffic based on security policies."},
-                    {"term": "Encryption", "definition": "Process of encoding information to prevent unauthorized access."},
-                    {"term": "Zero Trust", "definition": "Security model that requires strict identity verification for every person and device."},
-                    {"term": "VPN", "definition": "Virtual Private Network - Creates a secure, encrypted connection over a less secure network."}
-                ],
-                "content_type": "lecture"
-            }
-        elif any(keyword in combined_filenames for keyword in ["program", "code", "algorithm", "data", "struct"]):
-            # Programmier- und Algorithmenthemen
-            possible_topics = [
-                {"name": "Data Structures", "child_topics": ["Arrays", "Linked Lists", "Trees", "Hash Tables"]},
-                {"name": "Algorithm Complexity", "child_topics": ["Time Complexity", "Space Complexity", "Big O Notation"]},
-                {"name": "Software Design", "child_topics": ["Object-Oriented Programming", "Functional Programming", "Design Patterns"]},
-                {"name": "Problem Solving", "child_topics": ["Divide and Conquer", "Dynamic Programming", "Greedy Algorithms"]},
-                {"name": "Programming Paradigms", "child_topics": ["Procedural", "Object-Oriented", "Functional", "Event-Driven"]},
-                {"name": "Memory Management", "child_topics": ["Stack vs Heap", "Garbage Collection", "Memory Leaks"]},
-                {"name": "Code Quality", "child_topics": ["Testing", "Refactoring", "Code Reviews", "Documentation"]},
-                {"name": "Development Tools", "child_topics": ["Version Control", "Build Systems", "Debugging Tools"]}
-            ]
+            if "rate limit" in error_message.lower() or "rate_limit" in error_message.lower():
+                raise ValueError(f"API-Anfrage-Limit erreicht. Bitte versuchen Sie es später erneut. OpenAI-Fehler: {error_message}")
             
-            # Zufällig auswählen, aber mindestens 5
-            selected_topics = random.sample(possible_topics, min(num_topics, len(possible_topics)))
+            if "invalid_api_key" in error_message.lower():
+                raise ValueError(f"Problem mit dem API-Schlüssel. Bitte kontaktieren Sie den Support. OpenAI-Fehler: {error_message}")
             
-            topic_hints = {
-                "main_topic": "Programming & Algorithms",
-                "subtopics": selected_topics,
-                "key_terms": [
-                    {"term": "Algorithm", "definition": "Step-by-step procedure for calculations, data processing, or automated reasoning."},
-                    {"term": "Data Structure", "definition": "Specific way of organizing data to use it efficiently."},
-                    {"term": "Recursion", "definition": "Method where solution depends on solutions to smaller instances of the same problem."},
-                    {"term": "Complexity", "definition": "Measure of resources (time, space) required by an algorithm to run."},
-                    {"term": "Object-Oriented", "definition": "Programming paradigm based on objects containing data and methods."}
-                ],
-                "content_type": "lecture"
-            }
-        elif any(keyword in combined_filenames for keyword in ["math", "calc", "algebra", "statistics", "probability"]):
-            # Mathematische Themen
-            possible_topics = [
-                {"name": "Calculus", "child_topics": ["Derivatives", "Integrals", "Differential Equations", "Limits"]},
-                {"name": "Linear Algebra", "child_topics": ["Vectors", "Matrices", "Linear Transformations", "Eigenvalues"]},
-                {"name": "Probability Theory", "child_topics": ["Random Variables", "Distributions", "Expected Values", "Stochastic Processes"]},
-                {"name": "Discrete Mathematics", "child_topics": ["Graph Theory", "Combinatorics", "Number Theory", "Logic"]},
-                {"name": "Numerical Methods", "child_topics": ["Interpolation", "Numerical Integration", "Root Finding", "Optimization"]},
-                {"name": "Statistics", "child_topics": ["Hypothesis Testing", "Regression Analysis", "Confidence Intervals", "ANOVA"]},
-                {"name": "Optimization", "child_topics": ["Linear Programming", "Nonlinear Optimization", "Constraint Satisfaction", "Heuristics"]},
-                {"name": "Mathematical Logic", "child_topics": ["Propositional Logic", "Predicate Logic", "Set Theory", "Model Theory"]}
-            ]
+            # Bei letztem Versuch, gib Fehler weiter
+            if attempt == max_retries - 1:
+                raise ValueError(f"Fehler bei der OpenAI API nach {max_retries} Versuchen: {error_message}")
             
-            # Zufällig auswählen, aber mindestens 5
-            selected_topics = random.sample(possible_topics, min(num_topics, len(possible_topics)))
-            
-            topic_hints = {
-                "main_topic": "Mathematical Concepts",
-                "subtopics": selected_topics,
-                "key_terms": [
-                    {"term": "Derivative", "definition": "Rate at which a function changes at a particular point."},
-                    {"term": "Vector", "definition": "Quantity having both magnitude and direction."},
-                    {"term": "Probability", "definition": "Measure of the likelihood that an event will occur."},
-                    {"term": "Matrix", "definition": "Rectangular array of numbers arranged in rows and columns."},
-                    {"term": "Function", "definition": "Relation that associates each element of a set with exactly one element of another set."}
-                ],
-                "content_type": "lecture"
-            }
-        else:
-            # Generisches akademisches Thema als Fallback
-            possible_topics = [
-                {"name": "Effective Learning", "child_topics": ["Spaced Repetition", "Active Recall", "Mind Mapping", "Feynman Technique"]},
-                {"name": "Research Skills", "child_topics": ["Literature Review", "Data Collection", "Critical Analysis", "Academic Writing"]},
-                {"name": "Time Management", "child_topics": ["Pomodoro Technique", "Priority Matrix", "Time Blocking", "Goal Setting"]},
-                {"name": "Critical Thinking", "child_topics": ["Logical Reasoning", "Cognitive Biases", "Argumentation", "Problem Solving"]},
-                {"name": "Study Environment", "child_topics": ["Physical Setup", "Digital Tools", "Distraction Management", "Productivity Spaces"]},
-                {"name": "Academic Writing", "child_topics": ["Structure", "Citation Styles", "Revising", "Publishing"]},
-                {"name": "Information Literacy", "child_topics": ["Source Evaluation", "Information Ethics", "Digital Literacy", "Research Strategy"]},
-                {"name": "Motivation and Focus", "child_topics": ["Intrinsic Motivation", "Extrinsic Rewards", "Flow State", "Goal Setting"]}
-            ]
-            
-            # Zufällig auswählen, aber mindestens 5
-            selected_topics = random.sample(possible_topics, min(num_topics, len(possible_topics)))
-            
-            topic_hints = {
-                "main_topic": "Academic Study Methods",
-                "subtopics": selected_topics,
-                "key_terms": [
-                    {"term": "Metacognition", "definition": "Awareness and understanding of one's own thought processes."},
-                    {"term": "Active Recall", "definition": "Learning technique that involves actively stimulating memory during the learning process."},
-                    {"term": "Spaced Repetition", "definition": "Technique where review of material is spread out over time to improve long-term retention."},
-                    {"term": "Critical Analysis", "definition": "Detailed examination and evaluation of something, especially information."},
-                    {"term": "Cognitive Bias", "definition": "Systematic pattern of deviation from norm or rationality in judgment."}
-                ],
-                "content_type": "study guide"
-            }
-    else:
-        # Ohne Dateinamen - allgemeines akademisches Lernen mit dynamischer Anzahl von Topics
-        possible_topics = [
-            {"name": "Note-Taking Methods", "child_topics": ["Cornell Method", "Mind Mapping", "Outline Method", "Charting Method"]},
-            {"name": "Exam Preparation", "child_topics": ["Practice Tests", "Group Study", "Memory Techniques", "Stress Management"]},
-            {"name": "Research Methods", "child_topics": ["Source Evaluation", "Data Analysis", "Citation Practices", "Research Ethics"]},
-            {"name": "Academic Writing", "child_topics": ["Essay Structure", "Critical Writing", "Peer Review", "Editing Techniques"]},
-            {"name": "Information Organization", "child_topics": ["Knowledge Mapping", "Digital Tools", "Tagging Systems", "Information Hierarchy"]},
-            {"name": "Cognitive Enhancement", "child_topics": ["Sleep Optimization", "Nutrition", "Exercise", "Meditation"]},
-            {"name": "Collaboration Skills", "child_topics": ["Group Projects", "Peer Teaching", "Feedback Exchange", "Conflict Resolution"]},
-            {"name": "Digital Literacy", "child_topics": ["Search Strategies", "Tool Evaluation", "Online Learning", "Digital Ethics"]}
-        ]
-        
-        # Zufällig 5-8 Topics auswählen
-        import random
-        num_topics = random.randint(5, 8)
-        selected_topics = random.sample(possible_topics, min(num_topics, len(possible_topics)))
-        
-        topic_hints = {
-            "main_topic": "Academic Study Skills",
-            "subtopics": selected_topics,
-            "key_terms": [
-                {"term": "Academic Integrity", "definition": "Adherence to ethical standards in academic work, including honesty and respect for others' intellectual property."},
-                {"term": "Critical Thinking", "definition": "The objective analysis and evaluation of an issue to form a judgment."},
-                {"term": "Literature Review", "definition": "A survey of scholarly materials relevant to a specific research question."},
-                {"term": "Peer Review", "definition": "Evaluation of work by one or more people with similar competencies as the producers of the work."},
-                {"term": "Citation", "definition": "A reference to a published or unpublished source used in academic writing."}
-            ],
-            "content_type": "educational resources"
-        }
+            # Exponentielles Backoff vor dem nächsten Versuch
+            backoff_time = 2 ** attempt + random.uniform(0, 1)
+            print(f"Warte {backoff_time:.2f} Sekunden vor dem nächsten Versuch...")
+            time.sleep(backoff_time)
     
-    print(f"DEBUG: Gewähltes Hauptthema für Fallback: {topic_hints['main_topic']}")
-    print(f"DEBUG: Anzahl der Topics im Fallback: {len(topic_hints['subtopics'])}")
-    
-    # Generiere Flashcards basierend auf den Themenhinweisen
-    flashcards = []
-    for subtopic in topic_hints["subtopics"]:
-        # Hauptfrage zum Unterthema
-        flashcards.append({
-            "question": f"What are the key components of {subtopic['name']}?",
-            "answer": f"The key components include {', '.join(subtopic['child_topics'])}."
-        })
-        
-        # Weitere Fragen zu den Unterunterthemen
-        for child in subtopic["child_topics"][:2]:  # Beschränke auf 2 pro Unterthema
-            flashcards.append({
-                "question": f"Explain the concept of {child} in the context of {subtopic['name']}.",
-                "answer": f"{child} is a crucial element within {subtopic['name']} that helps students effectively organize and process information."
-            })
-    
-    # Generiere ein paar Fragen zu Schlüsselbegriffen
-    for term in topic_hints["key_terms"][:3]:
-        flashcards.append({
-            "question": f"Define {term['term']} and explain its importance.",
-            "answer": f"{term['term']}: {term['definition']} It is important because it forms a fundamental concept in this field."
-        })
-    
-    # Begrenze die Anzahl der Flashcards
-    flashcards = flashcards[:12]
-    
-    # Generiere Multiple-Choice-Fragen
-    questions = []
-    for subtopic in topic_hints["subtopics"][:3]:
-        questions.append({
-            "text": f"Which of the following is NOT part of {subtopic['name']}?",
-            "options": subtopic["child_topics"][:3] + ["All of the above are part of it"],
-            "correct": 3,
-            "explanation": f"All the listed elements are core components of {subtopic['name']}."
-        })
-    
-    # Fragen zu Schlüsselbegriffen
-    for term in topic_hints["key_terms"][:2]:
-        questions.append({
-            "text": f"What is the best definition of {term['term']}?",
-            "options": [
-                term["definition"],
-                "A complex mathematical formula used in data analysis",
-                "A software tool for organizing research papers",
-                "A collaborative learning technique used in group studies"
-            ],
-            "correct": 0,
-            "explanation": f"The correct definition of {term['term']} is: {term['definition']}"
-        })
-    
-    # Vollständiges Ergebnis zusammenstellen
-    return {
-        "main_topic": topic_hints["main_topic"],
-        "subtopics": topic_hints["subtopics"],
-        "key_terms": topic_hints["key_terms"],
-        "flashcards": flashcards,
-        "questions": questions,
-        "content_type": topic_hints["content_type"]
-    }
+    # Diese Zeile sollte nie erreicht werden, aber zur Sicherheit
+    raise ValueError("Unerwarteter Fehler bei der OpenAI API-Anfrage")
 
 def check_and_manage_user_sessions(user_id):
     """

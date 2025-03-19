@@ -14,7 +14,11 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import UserHistory from '@/components/UserHistory';
 
-const Navbar = () => {
+interface NavbarProps {
+  onLoginClick?: () => void;
+}
+
+const Navbar = ({ onLoginClick }: NavbarProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { user, signOut } = useAuth();
