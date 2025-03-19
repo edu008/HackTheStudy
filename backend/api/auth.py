@@ -130,7 +130,16 @@ def get_activity():
     return jsonify({
         "success": True,
         "data": {
-            "activities": [{"id": a.id, "type": a.activity_type, "title": a.title, "details": a.details, "timestamp": a.timestamp.isoformat()} for a in activities]
+            "activities": [{
+                "id": a.id,
+                "type": a.activity_type,
+                "title": a.title,
+                "main_topic": a.main_topic,
+                "subtopics": a.subtopics,
+                "session_id": a.session_id,
+                "details": a.details,
+                "timestamp": a.timestamp.isoformat()
+            } for a in activities]
         }
     }), 200
 
@@ -140,7 +149,23 @@ def record_activity():
     data = request.json
     if not data or 'type' not in data or 'title' not in data:
         return jsonify({"success": False, "error": {"code": "INVALID_REQUEST", "message": "Invalid request"}}), 400
-    activity = UserActivity(user_id=request.user_id, activity_type=data['type'], title=data['title'], details=data.get('details'))
+    
+    # Begrenze auf 5 Einträge
+    existing_activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.asc()).all()
+    if len(existing_activities) >= 5:
+        oldest_activity = existing_activities[0]
+        db.session.delete(oldest_activity)
+        current_app.logger.info(f"Deleted oldest activity: {oldest_activity.id}")
+    
+    activity = UserActivity(
+        user_id=request.user_id,
+        activity_type=data['type'],
+        title=data['title'],
+        main_topic=data.get('main_topic'),
+        subtopics=data.get('subtopics'),
+        session_id=data.get('session_id'),
+        details=data.get('details')
+    )
     db.session.add(activity)
     db.session.commit()
     return jsonify({
@@ -149,6 +174,9 @@ def record_activity():
             "id": activity.id,
             "type": activity.activity_type,
             "title": activity.title,
+            "main_topic": activity.main_topic,
+            "subtopics": activity.subtopics,
+            "session_id": activity.session_id,
             "details": activity.details,
             "timestamp": activity.timestamp.isoformat()
         }
@@ -160,11 +188,24 @@ def process_payment():
     data = request.json
     if not data or 'amount' not in data or 'credits' not in data or 'payment_method' not in data:
         return jsonify({"success": False, "error": {"code": "INVALID_REQUEST", "message": "Invalid request"}}), 400
+    
+    # Begrenze auf 5 Einträge
+    existing_activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.asc()).all()
+    if len(existing_activities) >= 5:
+        oldest_activity = existing_activities[0]
+        db.session.delete(oldest_activity)
+        current_app.logger.info(f"Deleted oldest activity: {oldest_activity.id}")
+    
     payment = Payment(user_id=request.user_id, amount=data['amount'], credits=data['credits'], payment_method=data['payment_method'], transaction_id=str(uuid.uuid4()), status='completed')
     db.session.add(payment)
     user = User.query.get(request.user_id)
     user.credits += data['credits']
-    activity = UserActivity(user_id=request.user_id, activity_type='payment', title=f"Purchased {data['credits']} credits", details={'amount': data['amount'], 'payment_method': data['payment_method']})
+    activity = UserActivity(
+        user_id=request.user_id,
+        activity_type='payment',
+        title=f"Purchased {data['credits']} credits",
+        details={'amount': data['amount'], 'payment_method': data['payment_method']}
+    )
     db.session.add(activity)
     db.session.commit()
     return jsonify({

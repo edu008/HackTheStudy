@@ -25,7 +25,12 @@ const FlashcardGenerator = ({
   const [isFlipped, setIsFlipped] = useState(false);
 
   useEffect(() => {
-    if (flashcards.length > 0) {
+    // Reset wenn keine Flashcards vorhanden sind
+    if (flashcards.length === 0) {
+      setCards([]);
+      setCurrentCardIndex(0);
+      setIsFlipped(false);
+    } else if (flashcards.length > 0) {
       // Check if these are new flashcards being added to existing ones
       if (cards.length > 0 && flashcards.length > cards.length) {
         // Store the current count before updating
@@ -37,8 +42,6 @@ const FlashcardGenerator = ({
         // Jump to the first new card (index is zero-based)
         setCurrentCardIndex(currentCount);
         setIsFlipped(false);
-        
-        console.log(`Added ${flashcards.length - currentCount} new flashcards. Jumping to flashcard ${currentCount + 1}`);
       } else {
         // Initial load or complete replacement
         setCards(flashcards);

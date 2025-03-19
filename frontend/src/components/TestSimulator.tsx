@@ -39,121 +39,28 @@ const TestSimulator = ({
   
   // Process provided questions when they change
   useEffect(() => {
-    if (!providedQuestions || providedQuestions.length === 0) return;
-    
-    console.log('TestSimulator received questions:', JSON.stringify(providedQuestions, null, 2));
-    
-    // Debug each question in detail
-    providedQuestions.forEach((q, index) => {
-      console.log(`Question ${index + 1}:`, {
-        text: q.text,
-        options: q.options,
-        correct: q.correct,
-        correctAnswer: q.correctAnswer,
-        explanation: q.explanation,
-        id: q.id
-      });
-      
-      // Check for potential issues
-      if (!q.text) console.warn(`Question ${index + 1} has no text`);
-      if (!q.options || q.options.length < 2) console.warn(`Question ${index + 1} has insufficient options`);
-      if (q.correct === undefined && q.correctAnswer === undefined) console.warn(`Question ${index + 1} has no correct answer`);
-    });
-    
-    // Process questions to ensure they have unique IDs
-    const questionsWithIds = providedQuestions.map((q, index) => ({
-      ...q,
-      id: q.id !== undefined ? q.id : (index + 1).toString()
-    }));
-    
-    console.log('Questions with IDs:', questionsWithIds);
-    
-    // Less aggressive duplicate detection to ensure all questions are shown
-    const uniqueQuestions: Question[] = [];
-    const seenTexts = new Set<string>();
-    
-    for (const question of questionsWithIds) {
-      // Skip questions with error messages
-      if (question.text.includes("Could not generate")) {
-        console.warn('Skipping error question:', question.text);
-        continue;
-      }
-      
-      // Skip questions with missing options
-      if (!question.options || question.options.length < 2) {
-        console.warn('Skipping question with insufficient options:', question.text);
-        continue;
-      }
-      
-      const normalizedText = question.text.toLowerCase().trim();
-      
-      // Only check for exact duplicates
-      if (seenTexts.has(normalizedText)) {
-        console.log('Skipping exact duplicate:', normalizedText);
-        continue;
-      }
-      
-      seenTexts.add(normalizedText);
-      uniqueQuestions.push(question);
-    }
-
-    // Helper function to extract key concepts from a question
-    function extractConcepts(text: string): string[] {
-      // Remove common question starters
-      const cleanedText = text
-        .replace(/^what is|define|explain|describe|how does|how do|how would you/i, '')
-        .trim();
-      
-      // Split into words and filter out common words
-      const words = cleanedText.split(/\s+/);
-      const concepts: string[] = [];
-      
-      // Extract potential concepts (nouns and noun phrases)
-      for (let i = 0; i < words.length; i++) {
-        if (words[i].length > 4) { // Only consider words with 5+ characters as potential concepts
-          // Check for noun phrases (2-3 words)
-          if (i < words.length - 1 && words[i+1].length > 3) {
-            concepts.push(`${words[i]} ${words[i+1]}`);
-          }
-          if (i < words.length - 2 && words[i+1].length > 3 && words[i+2].length > 3) {
-            concepts.push(`${words[i]} ${words[i+1]} ${words[i+2]}`);
-          }
-          concepts.push(words[i]);
-        }
-      }
-      
-      return concepts;
-    }
-    
-    // Check if these are completely new questions or just additional ones
-    const isNewSet = processedQuestions.length === 0 || 
-                     uniqueQuestions.length !== processedQuestions.length ||
-                     uniqueQuestions[0]?.text !== processedQuestions[0]?.text;
-    
-    if (isNewSet) {
-      // Reset state for a new set of questions
-      setProcessedQuestions(uniqueQuestions);
+    // Reset wenn keine Fragen vorhanden sind
+    if (providedQuestions.length === 0) {
+      setProcessedQuestions([]);
       setCurrentIndex(0);
       setAnsweredQuestions({});
       setSelectedOption(undefined);
-    } else {
-      // Add only new questions that don't exist in the current set
-      const existingTexts = new Set(processedQuestions.map(q => q.text.toLowerCase().trim()));
-      const newQuestions = uniqueQuestions.filter(q => 
-        !existingTexts.has(q.text.toLowerCase().trim())
-      );
-      
-      if (newQuestions.length > 0) {
-        const currentQuestionsCount = processedQuestions.length;
-        setProcessedQuestions(prev => [...prev, ...newQuestions]);
-        
-        // Jump to the first new question (index is zero-based, so we use the current length)
-        setCurrentIndex(currentQuestionsCount);
-        setSelectedOption(undefined);
-        
-        console.log(`Added ${newQuestions.length} new questions. Jumping to question ${currentQuestionsCount + 1}`);
-      }
+      return;
     }
+    
+    // Wenn Fragen vorhanden sind, verarbeite diese
+    const processedQuestions = providedQuestions.map(q => ({
+      ...q,
+      correct: undefined
+    }));
+    
+    setProcessedQuestions(processedQuestions);
+    
+    // Create a new object with question IDs as keys
+    const questionsWithIds = processedQuestions.reduce((acc, curr) => {
+      acc[curr.id] = curr;
+      return acc;
+    }, {});
   }, [providedQuestions]);
   
   // Reset selected option when changing questions

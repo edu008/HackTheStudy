@@ -5,7 +5,6 @@ from flask_cors import CORS
 from openai import OpenAI
 from models import db
 from prometheus_flask_exporter import PrometheusMetrics
-import logging
 
 load_dotenv()
 
@@ -15,14 +14,9 @@ def create_app():
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
+    app.config['OPENAI_MODEL'] = os.getenv('OPENAI_MODEL', 'gpt-4o')
     app.config['CELERY_BROKER_URL'] = os.getenv('REDIS_URL', 'redis://redis:6379/0')
     app.config['CELERY_RESULT_BACKEND'] = os.getenv('REDIS_URL', 'redis://redis:6379/0')
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-        handlers=[logging.FileHandler('app.log'), logging.StreamHandler()]
-    )
 
     CORS(app, supports_credentials=True)
     db.init_app(app)

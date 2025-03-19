@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
@@ -135,7 +134,7 @@ const Navbar = () => {
                       <SheetHeader>
                         <SheetTitle>Your History</SheetTitle>
                         <SheetDescription>
-                          Your recent activities on ExamMaster
+                          Your recent activities on HackTheStudy
                         </SheetDescription>
                       </SheetHeader>
                       <UserHistory />
@@ -287,7 +286,7 @@ const Navbar = () => {
                     <SheetHeader>
                       <SheetTitle>Your History</SheetTitle>
                       <SheetDescription>
-                        Your recent activities on ExamMaster
+                        Your recent activities on HackTheStudy
                       </SheetDescription>
                     </SheetHeader>
                     <UserHistory />

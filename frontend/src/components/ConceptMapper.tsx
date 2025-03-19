@@ -88,6 +88,7 @@ const calculatePositionRelativeToParent = (
   centerY: number,
   connections: Connection[]
 ): { x: number, y: number } => {
+  // Finde bereits mit dem Elternkonzept verbundene Konzepte
   const connectedToParent = existingConcepts.filter(c => 
     connections.some(conn => 
       (conn.sourceId === parentConcept.id && conn.targetId === c.id) || 
@@ -95,45 +96,92 @@ const calculatePositionRelativeToParent = (
     )
   );
   
+  // Finde das Hauptthema
+  const mainTopic = existingConcepts.find(c => c.isMainTopic);
+  
   const parentX = parentConcept.x;
   const parentY = parentConcept.y;
   
-  const angleToCenter = Math.atan2(parentY - centerY, parentX - centerX);
+  // Berechne den Winkel vom Eltern-Topic zum Hauptthema
+  let angleToMain = 0;
+  if (mainTopic) {
+    angleToMain = Math.atan2(mainTopic.y - parentY, mainTopic.x - parentX);
+  }
   
-  const MAX_DISTANCE = -400;
+  // Parameter für Positionierung
+  const DISTANCE_FROM_PARENT = 400; // Deutlich erhöhter Abstand zum Eltern-Topic
+  const PARENT_ZONE_RADIUS = 150; // Radius der "verbotenen Zone" um das Eltern-Topic
+  
+  // Anzahl der bereits vorhandenen Kinder + das neue Kind
   const childCount = connectedToParent.length + 1;
-  const angleStep = (2 * Math.PI) / Math.max(childCount, 1);
+  
+  // Index des aktuellen Kindes
   const childIndex = connectedToParent.length;
-  const angleOffset = angleToCenter + (childIndex * angleStep);
   
-  let x = parentX + MAX_DISTANCE * Math.cos(angleOffset);
-  let y = parentY + MAX_DISTANCE * Math.sin(angleOffset);
+  // Definiere den "verbotenen Sektor": ±60 Grad in Richtung des Hauptthemas
+  const FORBIDDEN_ANGLE_RANGE = Math.PI / 3; // 60 Grad
   
-  const minDistanceX = 80;
-  const minDistanceY = 60;
+  // Berechne einen Kreiswinkel basierend auf dem Index
+  // Der Gesamtwinkelbereich ist jetzt 360° - 60° = 300° (wegen des verbotenen Sektors)
+  // Wir starten mit einem Offset, um den verbotenen Sektor zu vermeiden
+  const TOTAL_ANGLE_RANGE = 2 * Math.PI - FORBIDDEN_ANGLE_RANGE;
   
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const isFree = existingConcepts.every(concept => {
-      if (concept.id === parentConcept.id) return true;
+  // Berechne einen Basiswinkel für dieses Kind
+  let baseAngle = (childIndex * TOTAL_ANGLE_RANGE) / Math.max(childCount, 4);
+  
+  // Füge Offset hinzu, um den verbotenen Sektor zu umgehen
+  let angle = baseAngle + angleToMain + FORBIDDEN_ANGLE_RANGE / 2;
+  
+  // Stelle sicher, dass der Winkel zwischen 0 und 2π liegt
+  angle = angle % (2 * Math.PI);
+  
+  // Berechne die Position im Kreis um das Eltern-Topic mit erhöhtem Abstand
+  let x = parentX + DISTANCE_FROM_PARENT * Math.cos(angle);
+  let y = parentY + DISTANCE_FROM_PARENT * Math.sin(angle);
+  
+  // Stelle sicher, dass die Position innerhalb des Containers liegt
+  const padding = 50;
+  x = Math.max(padding, Math.min(containerWidth - padding, x));
+  y = Math.max(padding, Math.min(containerHeight - padding, y));
+  
+  // Überprüfe auf Überlappungen mit bereits vorhandenen Konzepten
+  // und deren "verbotenen Zonen"
+  const minDistanceToOtherNodes = 150; // Erhöhter Mindestabstand zu anderen Knoten
+  
+  // Versuche bis zu 5 mal, eine nicht überlappende Position zu finden
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let hasOverlap = false;
+    
+    // Prüfe Überlappungen mit anderen Konzepten
+    hasOverlap = existingConcepts.some(concept => {
+      if (concept.id === parentConcept.id) return false;
       
       const dx = Math.abs(concept.x - x);
       const dy = Math.abs(concept.y - y);
-      return dx >= minDistanceX || dy >= minDistanceY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      // Überprüfe, ob das neue Konzept in der verbotenen Zone eines Konzepts liegt
+      // Für Elternkonzepte verwenden wir einen größeren Radius (PARENT_ZONE_RADIUS)
+      // Für andere Konzepte verwenden wir minDistanceToOtherNodes
+      const conceptZoneRadius = connections.some(conn => 
+        (conn.sourceId === concept.id || conn.targetId === concept.id) && 
+        (conn.sourceId === mainTopic?.id || conn.targetId === mainTopic?.id)
+      ) ? PARENT_ZONE_RADIUS : minDistanceToOtherNodes;
+      
+      return distance < conceptZoneRadius;
     });
     
-    if (isFree) {
-      break;
-    }
+    if (!hasOverlap) break;
     
-    const newRadius = MAX_DISTANCE + (attempt + 1) * 20;
-    x = parentX + newRadius * Math.cos(angleOffset);
-    y = parentY + newRadius * Math.sin(angleOffset);
+    // Erhöhe den Abstand bei Überlappung, aber behalte die Richtung bei
+    const newDistance = DISTANCE_FROM_PARENT + (attempt + 1) * 70; // Noch größere Schritte
+    x = parentX + newDistance * Math.cos(angle);
+    y = parentY + newDistance * Math.sin(angle);
+    
+    // Stelle sicher, dass die Position innerhalb des Containers liegt
+    x = Math.max(padding, Math.min(containerWidth - padding, x));
+    y = Math.max(padding, Math.min(containerHeight - padding, y));
   }
-  
-  const cardWidth = 100;
-  const cardHeight = 40;
-  x = Math.max(cardWidth / 2, Math.min(containerWidth - cardWidth / 2, x));
-  y = Math.max(cardHeight / 2, Math.min(containerHeight - cardHeight / 2, y));
   
   return { x, y };
 };
@@ -160,11 +208,27 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
 
   useEffect(() => {
     if (sessionId) {
+      // Prüfe ob wir gerade einen Reset durchgeführt haben
+      const forceNewSession = sessionStorage.getItem('force_new_session');
+      
+      if (forceNewSession === 'true') {
+        // Wenn wir gerade einen Reset durchgeführt haben, ignoriere die alte sessionId
+        console.log('DEBUG: ConceptMapper - Ignoring old sessionId after reset');
+        return;
+      }
+      
       fetchInitialConcepts(sessionId);
     }
   }, [sessionId]);
 
   const fetchInitialConcepts = async (sessionId: string) => {
+    // Prüfe nochmals, ob wir in einem Reset-Zustand sind
+    const forceNewSession = sessionStorage.getItem('force_new_session');
+    if (forceNewSession === 'true') {
+      console.log('DEBUG: ConceptMapper - fetchInitialConcepts canceled due to reset state');
+      return;
+    }
+    
     try {
       // Get the token from localStorage
       const token = localStorage.getItem('exammaster_token');
@@ -179,14 +243,13 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       
       if (topicsData.success && topicsData.topics?.main_topic) {
         // If topics are available, use them
-        const containerWidth = 700;
-        const containerHeight = 500;
+        const containerWidth = 1200;
+        const containerHeight = 900;
         const centerX = containerWidth / 2;
         const centerY = containerHeight / 2;
         
         const mainTopic = topicsData.topics.main_topic;
         const subtopics = topicsData.topics.subtopics || [];
-        const childTopics = topicsData.topics.child_topics || [];
         const backendConnections = topicsData.connections || [];
         
         // Create concepts from topics
@@ -215,118 +278,49 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
           });
         });
         
-        const childConcepts: Concept[] = [];
-        childTopics.forEach((topic) => {
-          // Find parent subtopic
-          const parentTopic = subtopics.find(s => s.id === topic.parent_id);
-          if (!parentTopic) return;
-          
-          // Find parent concept
-          const parentConcept = subtopicConcepts.find(c => c.id === parentTopic.id.toString());
-          if (!parentConcept) return;
-          
-          // Calculate position relative to parent
-          const position = calculatePositionRelativeToParent(
-            parentConcept,
-            [mainConcept, ...subtopicConcepts, ...childConcepts],
-            containerWidth,
-            containerHeight,
-            centerX,
-            centerY,
-            []
-          );
-          
-          childConcepts.push({
-            id: topic.id.toString(),
-            text: topic.name,
-            x: position.x,
-            y: position.y,
-          });
-        });
-        
         // Create connections from backend connections
         const frontendConnections: Connection[] = backendConnections.map(conn => ({
           id: conn.id.toString(),
           sourceId: conn.source_id.toString(),
           targetId: conn.target_id.toString(),
-          label: conn.label,
+          label: conn.label || "verbunden mit" // Stelle sicher, dass es immer ein Label gibt
         }));
         
-        setConcepts([mainConcept, ...subtopicConcepts, ...childConcepts]);
+        // Setze Konzepte und Verbindungen
+        // Jetzt nur das Hauptkonzept und die direkten Unterkonzepte laden 
+        // (ohne childConcepts)
+        setConcepts([mainConcept, ...subtopicConcepts]);
         setConnections(frontendConnections);
         
-        toast({
-          title: "Topics geladen",
-          description: "Die Konzeptkarte wurde mit den analysierten Themen initialisiert.",
-        });
+        // Setze loading auf false
+        setIsGenerating(false);
       } else {
-        // If topics are not available, fall back to results endpoint
-        const resultsResponse = await fetch(`${API_URL}/api/v1/results/${sessionId}`, {
-          headers: {
-            'Authorization': token ? `Bearer ${token}` : ''
-          }
+        // Wenn keine Topics verfügbar sind, erstelle ein leeres Hauptthema
+        toast({
+          title: "Keine Themen gefunden",
+          description: "Es wurden keine Themen gefunden. Sie können ein neues Hauptthema hinzufügen.",
+          variant: "default",
         });
-        const resultsData = await resultsResponse.json();
-
         
-        if (resultsData.success && resultsData.data?.analysis?.main_topic && resultsData.data?.analysis?.subtopics) {
-          const containerWidth = 700;
-          const containerHeight = 500;
-          const centerX = containerWidth / 2;
-          const centerY = containerHeight / 2;
-          
-          // Since we can't create topics directly through the API, we'll create temporary frontend-only concepts
-          // with UUID IDs. These will be replaced with backend IDs when the user generates related topics.
-          const mainId = "main";
-          const initialConcepts: Concept[] = [{
-            id: mainId,
-            text: resultsData.data.analysis.main_topic,
-            x: centerX,
-            y: centerY,
-            isMainTopic: true,
-          }];
-          
-          const initialConnections: Connection[] = [];
-          const subtopicCount = resultsData.data.analysis.subtopics.length;
-          const radius = 250;
-          
-          resultsData.data.analysis.subtopics.forEach((topic: string, index: number) => {
-            const angle = (index * 2 * Math.PI) / subtopicCount;
-            const x = centerX + radius * Math.cos(angle);
-            const y = centerY + radius * Math.sin(angle);
-            const newId = generateUniqueId();
-            
-            initialConcepts.push({
-              id: newId,
-              text: topic,
-              x,
-              y,
-            });
-            
-            initialConnections.push({
-              id: generateUniqueId(),
-              sourceId: mainId,
-              targetId: newId,
-              label: "relates to"
-            });
-          });
-          
-          setConcepts(initialConcepts);
-          setConnections(initialConnections);
-          
-          toast({
-            title: "Topics geladen",
-            description: "Die Konzeptkarte wurde mit den analysierten Themen initialisiert.",
-          });
-        } else {
-          throw new Error("Keine Topics gefunden");
-        }
+        // Create empty main topic
+        const containerWidth = 1200;
+        const containerHeight = 900;
+        const centerX = containerWidth / 2;
+        const centerY = containerHeight / 2;
+        
+        setConcepts([{
+          id: generateUniqueId(),
+          text: "Hauptthema",
+          x: centerX,
+          y: centerY,
+          isMainTopic: true,
+        }]);
       }
     } catch (error) {
-      console.error("Fehler beim Laden der Topics:", error);
+      console.error("Error fetching topics:", error);
       toast({
-        title: "Fehler",
-        description: "Topics konnten nicht geladen werden.",
+        title: "Fehler beim Laden der Themen",
+        description: "Es ist ein Fehler beim Laden der Themen aufgetreten. Bitte versuchen Sie es später erneut.",
         variant: "destructive",
       });
     }
@@ -339,13 +333,14 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       setIsGenerating(true);
       
       // Define constants for positioning
-      const containerWidth = 700;
-      const containerHeight = 500;
+      const containerWidth = 1200;
+      const containerHeight = 900;
       const centerX = containerWidth / 2;
       const centerY = containerHeight / 2;
       
       // Get the token from localStorage
       const token = localStorage.getItem('exammaster_token');
+      console.log("Token verfügbar:", !!token);
       
       // First, check if we have backend IDs for the topics
       const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`, {
@@ -354,6 +349,7 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         }
       });
       const topicsData = await topicsResponse.json();
+      console.log("Topics-API-Antwort:", topicsData);
       
       // If we don't have backend IDs yet, we need to generate related topics first
       // to create the topics in the backend
@@ -373,128 +369,213 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
           }
         });
         const retryData = await retryResponse.json();
+        console.log("Retry Topics-API-Antwort:", retryData);
         
         if (!retryData.success || !retryData.topics?.main_topic) {
           throw new Error("Topics konnten nicht initialisiert werden. Bitte lade die Seite neu.");
         }
       }
       
-      // Now generate related topics
-      const response = await fetch(`${API_URL}/api/v1/generate-related-topics`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId }),
+      // Stelle sicher, dass wir das Hauptthema und Subtopics haben
+      if (!topicsData.topics?.main_topic || !topicsData.topics?.subtopics) {
+        throw new Error("Keine Topics gefunden. Bitte lade die Seite neu.");
+      }
+      
+      // Hole die aktuelle Konfiguration der Konzeptkarte
+      const mainTopic = topicsData.topics.main_topic;
+      const subtopics = topicsData.topics.subtopics;
+      
+      console.log("Hauptthema:", mainTopic);
+      console.log("Subtopics:", subtopics);
+      
+      // Create a mapping from topic name to position
+      const positionMap = {};
+      existingConcepts.forEach(concept => {
+        positionMap[concept.text] = { x: concept.x, y: concept.y };
       });
-      const data = await response.json();
-  
-      if (!data.success) throw new Error(data.error || "Generierung fehlgeschlagen");
       
-
+      // Sammle alle Konzepte und Verbindungen
+      let allNewConcepts = [];
+      let allNewConnections = [];
       
-      // Get the updated topics and connections from the backend
-      const updatedResponse = await fetch(`${API_URL}/api/v1/topics/${sessionId}`);
-      const updatedData = await updatedResponse.json();
+      // Hauptthema hinzufügen
+      const mainConceptObj = {
+        id: mainTopic.id.toString(),
+        text: mainTopic.name,
+        x: positionMap[mainTopic.name]?.x || centerX,
+        y: positionMap[mainTopic.name]?.y || centerY,
+        isMainTopic: true
+      };
+      allNewConcepts.push(mainConceptObj);
       
-      if (updatedData.success) {
+      // Subtopics hinzufügen
+      const subtopicObjects = subtopics.map((subtopic, index) => {
+        const angle = (index * 2 * Math.PI) / subtopics.length;
+        const radius = 250;
+        const x = positionMap[subtopic.name]?.x || (centerX + radius * Math.cos(angle));
+        const y = positionMap[subtopic.name]?.y || (centerY + radius * Math.sin(angle));
         
-        // Create a mapping from topic name to position
-        const positionMap = {};
-        existingConcepts.forEach(concept => {
-          positionMap[concept.text] = { x: concept.x, y: concept.y };
-        });
-        
-        // Create a mapping from backend ID to frontend ID
-        const idMap = {};
-        concepts.forEach(concept => {
-          // Try to find the corresponding backend topic
-          const backendTopic = 
-            (concept.text === updatedData.topics.main_topic.name) ? updatedData.topics.main_topic :
-            updatedData.topics.subtopics.find(t => t.name === concept.text) ||
-            updatedData.topics.child_topics.find(t => t.name === concept.text);
-          
-          if (backendTopic) {
-            idMap[backendTopic.id] = concept.id;
-          }
-        });
-        
-        // Process main topic
-        const mainTopic = {
-          id: updatedData.topics.main_topic.id,
-          text: updatedData.topics.main_topic.name,
-          x: positionMap[updatedData.topics.main_topic.name]?.x || centerX,
-          y: positionMap[updatedData.topics.main_topic.name]?.y || centerY,
-          isMainTopic: true
+        const subtopicObj = {
+          id: subtopic.id.toString(),
+          text: subtopic.name,
+          x: x,
+          y: y
         };
-        idMap[mainTopic.id] = mainTopic.id;
         
-        // Process subtopics
-        const subtopics = updatedData.topics.subtopics.map(s => {
-          const position = positionMap[s.name] || 
-            findFreePosition(existingConcepts, containerWidth, containerHeight, centerX, centerY);
-          const topic = {
-            id: s.id,
-            text: s.name,
-            x: position.x,
-            y: position.y
-          };
-          idMap[s.id] = topic.id;
-          return topic;
+        // Verbindung zum Hauptthema
+        allNewConnections.push({
+          id: generateUniqueId(),
+          sourceId: mainTopic.id.toString(),
+          targetId: subtopic.id.toString(),
+          label: `${mainTopic.name} enthält ${subtopic.name}`
         });
         
-        // Process child topics
-        const childTopics = updatedData.topics.child_topics.map(c => {
-          const parentTopic = updatedData.topics.subtopics.find(s => s.id === c.parent_id);
-          const parentPosition = positionMap[parentTopic?.name] || { x: centerX, y: centerY };
+        return subtopicObj;
+      });
+      
+      allNewConcepts.push(...subtopicObjects);
+      console.log("Subtopics hinzugefügt:", subtopicObjects);
+      
+      // Für jedes Subtopic (Eltern-Topic) generiere Kinder-Topics
+      for (const subtopic of subtopics) {
+        console.log("Verarbeite Subtopic:", subtopic);
+        
+        // Prüfe, ob bereits Kind-Topics für dieses Subtopic existieren
+        const existingChildTopics = allNewConcepts.filter(concept => 
+          allNewConnections.some(conn => 
+            conn.sourceId === subtopic.id.toString() && 
+            conn.targetId === concept.id
+          )
+        );
+        
+        console.log("Existierende Kind-Topics für", subtopic.name, ":", existingChildTopics);
+
+        // Falls bereits Kind-Topics existieren, überspringen
+        if (existingChildTopics.length > 0) {
+          console.log("Überspringe Subtopic, da bereits Kind-Topics existieren:", subtopic.name);
+          continue;
+        }
+
+        // Generiere Kinder-Topics für dieses Subtopic
+        console.log("Rufe API für Subtopic auf:", subtopic.name);
+        const suggestionsResponse = await fetch(`${API_URL}/api/v1/generate-concept-map-suggestions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : ''
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            parent_subtopics: [subtopic.name]
+          })
+        });
+        
+        const suggestionsData = await suggestionsResponse.json();
+        console.log("Suggestions-API-Antwort für", subtopic.name, ":", suggestionsData);
+        
+        if (suggestionsData.success && suggestionsData.data.suggestions) {
+          const suggestions = suggestionsData.data.suggestions;
+          const childTopics = suggestions[subtopic.name] || [];
           
-          // Calculate position relative to parent or use existing position
-          const position = positionMap[c.name] || 
-            calculatePositionRelativeToParent(
-              { id: parentTopic?.id, text: parentTopic?.name, x: parentPosition.x, y: parentPosition.y },
-              [...existingConcepts, ...subtopics],
+          console.log("Kind-Topics für", subtopic.name, ":", childTopics);
+          
+          // Die Beziehungslabels vom Backend holen
+          const relationshipKey = `${subtopic.name}_relationships`;
+          const relationshipLabels = suggestions[relationshipKey] || {};
+          
+          console.log("Beziehungslabels für", subtopic.name, ":", relationshipLabels);
+          
+          // Position für das aktuelle Subtopic finden
+          const parentConceptObj = subtopicObjects.find(c => c.id === subtopic.id.toString());
+          console.log("Eltern-Concept-Objekt:", parentConceptObj);
+          
+          // Prüfe, ob wir Kindthemen und ein Elternkonzept haben
+          if (parentConceptObj && childTopics.length > 0) {
+            // Wähle nur das erste Kind-Topic aus der Liste
+            const childTopic = childTopics[0]; // Nur das erste Kind-Topic verwenden
+            console.log("Ausgewähltes Kind-Topic:", childTopic);
+            
+            // Zusätzliche Validierung: Prüfe, ob das ausgewählte Kind-Topic existiert
+            if (!childTopic) {
+              console.error("Kind-Topic nicht gefunden für Subtopic:", subtopic.name);
+              continue;
+            }
+            
+            const childId = generateUniqueId();
+            
+            // Position relativ zum Elternkonzept berechnen
+            const position = calculatePositionRelativeToParent(
+              parentConceptObj,
+              [...allNewConcepts],
               containerWidth,
               containerHeight,
               centerX,
               centerY,
-              connections
+              allNewConnections
             );
-          
-          const topic = {
-            id: c.id,
-            text: c.name,
-            x: position.x,
-            y: position.y
-          };
-          idMap[c.id] = topic.id;
-          return topic;
-        });
-        
-        // Update concepts with all topics
-        const allTopics = [mainTopic, ...subtopics, ...childTopics];
-        setConcepts(allTopics);
-        
-        // Process connections using the ID mapping
-        const newConnections = updatedData.connections.map(c => ({
-          id: generateUniqueId(),
-          sourceId: idMap[c.source_id] || c.source_id,
-          targetId: idMap[c.target_id] || c.target_id,
-          label: c.label
-        }));
-        
-        // Set all connections
-        setConnections(newConnections);
-        
-
+            
+            console.log("Berechnete Position für Kind-Topic:", position);
+            
+            // Kind-Topic hinzufügen
+            const childConceptObj = {
+              id: childId,
+              text: childTopic,
+              x: position.x,
+              y: position.y
+            };
+            
+            console.log("Neues Kind-Concept-Objekt:", childConceptObj);
+            
+            allNewConcepts.push(childConceptObj);
+            
+            // Verbindungslabel aus den Beziehungslabels holen oder Fallback verwenden
+            let connectionLabel = relationshipLabels[childTopic] || `${subtopic.name} umfasst ${childTopic}`;
+            
+            // Verbindung erstellen
+            const newConnection = {
+              id: generateUniqueId(),
+              sourceId: subtopic.id.toString(),
+              targetId: childId,
+              label: connectionLabel
+            };
+            
+            console.log("Neue Verbindung:", newConnection);
+            
+            allNewConnections.push(newConnection);
+          } else {
+            console.log("Keine Kind-Topics oder Eltern-Concept gefunden für:", subtopic.name);
+          }
+        } else {
+          console.log("Fehler bei API-Anfrage oder keine Vorschläge für:", subtopic.name);
+        }
       }
-  
+      
+      console.log("Alle neuen Concepts:", allNewConcepts);
+      console.log("Alle neuen Verbindungen:", allNewConnections);
+      
+      // Vor dem Update der States
+      console.log("Vorher - Anzahl der Concepts:", concepts.length);
+      console.log("Vorher - Anzahl der Connections:", connections.length);
+      
+      // Aktualisiere das UI mit allen gesammelten Konzepten und Verbindungen
+      setConcepts(allNewConcepts);
+      setConnections(allNewConnections);
+      
+      // Nach dem Update der States verzögerte Überprüfung
+      setTimeout(() => {
+        console.log("Nachher - Anzahl der Concepts:", concepts.length);
+        console.log("Nachher - Anzahl der Connections:", connections.length);
+      }, 500);
+      
       toast({
         title: "KI-Vorschläge generiert",
-        description: "Neue Kind-Subtopics und Verbindungen wurden hinzugefügt.",
+        description: "Für jedes Eltern-Topic wurden Kind-Topics generiert.",
       });
     } catch (error) {
       console.error("Fehler beim Generieren der Verbindungen:", error);
       toast({
         title: "Fehler",
-        description: "Kind-Subtopics konnten nicht generiert werden.",
+        description: "Kind-Subtopics konnten nicht generiert werden: " + error.message,
         variant: "destructive",
       });
     } finally {
@@ -505,8 +586,8 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
   const handleAddConcept = () => {
     if (!newConceptText.trim()) return;
 
-    const containerWidth = 700;
-    const containerHeight = 500;
+    const containerWidth = 1200;
+    const containerHeight = 900;
     const centerX = containerWidth / 2;
     const centerY = containerHeight / 2;
     const newId = generateUniqueId();
@@ -670,6 +751,184 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
     setConnectionLabel("");
   };
 
+  // Erweitere die generateChildSuggestions-Funktion, um Kindkonzepte zu laden und mit Labels zu versehen
+  const generateChildSuggestions = async (parentId) => {
+    setIsGenerating(true);
+    
+    try {
+      const token = localStorage.getItem('exammaster_token');
+      const parentConcept = concepts.find(c => c.id === parentId);
+      
+      if (!parentConcept) {
+        toast({
+          title: "Fehler",
+          description: "Elternkonzept nicht gefunden.",
+          variant: "destructive",
+        });
+        setIsGenerating(false);
+        return;
+      }
+      
+      // Finde alle bereits existierenden Kind-Topics für dieses Eltern-Topic
+      const existingChildTopics = concepts.filter(concept => 
+        connections.some(conn => 
+          conn.sourceId === parentId && 
+          conn.targetId === concept.id
+        )
+      );
+      
+      // Anzahl der bereits existierenden Kind-Topics für dieses Eltern-Topic
+      const existingChildCount = existingChildTopics.length;
+      
+      console.log("Eltern-Topic:", parentConcept);
+      console.log("Existierende Kind-Topics:", existingChildTopics);
+      console.log("Existierende Kind-Topics Anzahl:", existingChildCount);
+      
+      const response = await fetch(`${API_URL}/api/v1/generate-concept-map-suggestions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          parent_subtopics: [parentConcept.text]
+        })
+      });
+      
+      const data = await response.json();
+      console.log("API-Antwort:", data);
+      
+      if (data.success && data.data.suggestions) {
+        const suggestions = data.data.suggestions;
+        const childTopics = suggestions[parentConcept.text] || [];
+        
+        console.log("Kind-Topics aus API:", childTopics);
+        
+        // Die Beziehungslabels vom Backend holen
+        const relationshipKey = `${parentConcept.text}_relationships`;
+        const relationshipLabels = suggestions[relationshipKey] || {};
+        
+        console.log("Beziehungslabels aus API:", relationshipLabels);
+        
+        // Container-Dimensionen
+        const containerWidth = 1200;
+        const containerHeight = 900;
+        const centerX = containerWidth / 2;
+        const centerY = containerHeight / 2;
+        
+        // Prüfe, ob wir weitere Kindthemen haben
+        if (existingChildCount < childTopics.length) {
+          // Wähle das nächste Kind-Topic aus der Liste basierend auf der Anzahl der bereits existierenden
+          const childTopic = childTopics[existingChildCount];
+          
+          console.log("Ausgewähltes Kind-Topic:", childTopic);
+          
+          // Zusätzliche Validierung: Prüfe, ob das ausgewählte Kind-Topic existiert
+          if (!childTopic) {
+            console.error("Kind-Topic nicht gefunden für Index:", existingChildCount);
+            toast({
+              title: "Fehler",
+              description: "Kind-Topic konnte nicht erstellt werden: Ungültiger Index.",
+              variant: "destructive",
+            });
+            setIsGenerating(false);
+            return;
+          }
+          
+          // Neue Konzepte erstellen
+          let newConcepts = [...concepts];
+          let newConnections = [...connections];
+          
+          const childId = generateUniqueId();
+          
+          // Position relativ zum Elternkonzept berechnen
+          const position = calculatePositionRelativeToParent(
+            parentConcept,
+            newConcepts,
+            containerWidth,
+            containerHeight,
+            centerX,
+            centerY,
+            newConnections
+          );
+          
+          console.log("Berechnete Position für Kind-Topic:", position);
+          
+          // Neues Kind-Topic hinzufügen
+          const childConceptObj = {
+            id: childId,
+            text: childTopic,
+            x: position.x,
+            y: position.y
+          };
+          
+          console.log("Neues Kind-Topic-Objekt:", childConceptObj);
+          
+          newConcepts.push(childConceptObj);
+          
+          // Verbindungslabel aus den Beziehungslabels holen oder Fallback verwenden
+          let connectionLabel = relationshipLabels[childTopic] || `${parentConcept.text} umfasst ${childTopic}`;
+          
+          // Verbindung mit Label erstellen
+          const newConnection = {
+            id: generateUniqueId(),
+            sourceId: parentId,
+            targetId: childId,
+            label: connectionLabel
+          };
+          
+          console.log("Neue Verbindung:", newConnection);
+          
+          newConnections.push(newConnection);
+          
+          // Vor dem Update der States
+          console.log("Vorher - Anzahl der Concepts:", concepts.length);
+          console.log("Vorher - Anzahl der Connections:", connections.length);
+          
+          // Update state
+          setConcepts(newConcepts);
+          setConnections(newConnections);
+          
+          // Nach dem Update der States verzögerte Überprüfung
+          setTimeout(() => {
+            console.log("Nachher - Anzahl der Concepts:", concepts.length);
+            console.log("Nachher - Anzahl der Connections:", connections.length);
+            console.log("Alle Concepts nach Update:", concepts);
+            console.log("Alle Connections nach Update:", connections);
+          }, 500);
+          
+          toast({
+            title: "Vorschlag generiert",
+            description: `Kind-Thema #${existingChildCount + 1} für "${parentConcept.text}" wurde hinzugefügt.`,
+            variant: "default",
+          });
+        } else {
+          toast({
+            title: "Keine weiteren Vorschläge",
+            description: `Alle verfügbaren Kind-Themen für "${parentConcept.text}" wurden bereits hinzugefügt.`,
+            variant: "default",
+          });
+        }
+      } else {
+        toast({
+          title: "Fehler",
+          description: "Fehler beim Generieren der Vorschläge.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error generating suggestions:", error);
+      toast({
+        title: "Fehler",
+        description: "Es ist ein Fehler beim Generieren der Vorschläge aufgetreten.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
     <section id="concept-mapper" className="section-container bg-secondary/30">
       <div className="max-w-5xl mx-auto">
@@ -796,14 +1055,14 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
             </div>
             <div
               ref={mapContainerRef}
-              className="w-full h-[500px] bg-white dark:bg-black/20 rounded-lg relative overflow-auto"
+              className="w-full h-[900px] bg-white dark:bg-black/20 rounded-lg relative overflow-auto"
               onMouseMove={handleDrag}
               onMouseUp={endDrag}
               onMouseLeave={endDrag}
             >
               {(() => {
-                const containerWidth = 700;
-                const containerHeight = 500;
+                const containerWidth = 1200;
+                const containerHeight = 900;
                 const centerX = containerWidth / 2;
                 const centerY = containerHeight / 2;
 
@@ -942,12 +1201,34 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
                             startDrag(concept.id, e);
                           }
                         }}
-                        onClick={() => isCreatingConnection && startConnection(concept.id)}
+                        onClick={(e) => {
+                          if (isCreatingConnection) {
+                            startConnection(concept.id);
+                          }
+                        }}
                       >
                         <div className="flex flex-col items-center">
                           <div className={`text-center ${concept.isMainTopic ? 'text-sm' : 'text-xs'} font-medium`}>
                             {concept.text}
                           </div>
+
+                          {/* Zeige den Add-Button nur für Nicht-Hauptthemen */}
+                          {!concept.isMainTopic && (
+                            <div className="mt-1 flex gap-1 items-center justify-center">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 w-6 p-0 bg-primary/10"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  generateChildSuggestions(concept.id);
+                                }}
+                                title="Kind-Topic hinzufügen"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
 
                           <div className="mt-1 flex gap-1 opacity-0 group-hover:opacity-100">
                             {!isCreatingConnection && (

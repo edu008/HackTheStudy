@@ -1,8 +1,8 @@
 # Verwende offizielles Python-Image als Basis
 FROM python:3.9-slim
 
-# Installiere netcat für Warte-Skripte
-RUN apt-get update && apt-get install -y netcat-openbsd
+# Installiere netcat für Warte-Skripte und poppler-utils für PDF-Verarbeitung
+RUN apt-get update && apt-get install -y netcat-openbsd poppler-utils
 
 # Erstelle einen nicht-root Benutzer
 RUN useradd -m -u 1000 appuser
@@ -17,6 +17,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Projekt-Dateien kopieren
 COPY . .
 
+# Stelle sicher, dass das docker_logs-Paket korrekt installiert ist
+RUN python -c "import sys; sys.path.insert(0, '/app'); import docker_logs" || echo "Docker-Logs werden beim Start initialisiert"
+
+# Mache die verbesserten Logging-Skripte ausführbar
+RUN chmod +x /app/start.sh
+RUN chmod +x /app/start-worker.sh
+RUN chmod +x /app/app_wrapper.py
+RUN chmod +x /app/docker_logs/test_logs.py
+
 # Ändere den Besitzer des Arbeitsverzeichnisses
 RUN chown -R appuser:appuser /app
 
@@ -29,10 +38,9 @@ EXPOSE 5000
 # Umgebungsvariablen für Flask setzen
 ENV FLASK_APP=app.py
 ENV FLASK_RUN_HOST=0.0.0.0
-
-# Skripte ausführbar machen
-RUN chmod +x /app/start.sh
-RUN chmod +x /app/start-worker.sh
+ENV USE_COLORED_LOGS=true
+ENV PYTHONUNBUFFERED=1
+ENV LOG_LEVEL=INFO
 
 # Standardmäßig start.sh ausführen (wird vom worker überschrieben)
 CMD ["/bin/bash", "/app/start.sh"]

@@ -19,9 +19,17 @@ class Upload(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     session_id = db.Column(db.String(36), unique=True, nullable=False)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=True)
-    file_name = db.Column(db.String(200))
+    file_name_1 = db.Column(db.String(200), nullable=True)
+    file_name_2 = db.Column(db.String(200), nullable=True)
+    file_name_3 = db.Column(db.String(200), nullable=True)
+    file_name_4 = db.Column(db.String(200), nullable=True)
+    file_name_5 = db.Column(db.String(200), nullable=True)
     upload_date = db.Column(db.DateTime, default=db.func.current_timestamp())
     content = db.Column(db.Text)
+    token_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    updated_at = db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    processing_status = db.Column(db.String(50), default="pending")  # pending, processing, completed, failed
 
 class Flashcard(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
@@ -42,7 +50,9 @@ class Topic(db.Model):
     upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
     name = db.Column(db.String(200), nullable=False)
     is_main_topic = db.Column(db.Boolean, default=False)
-    parent_id = db.Column(db.String(36), db.ForeignKey('topic.id'), nullable=True)
+    parent_id = db.Column(db.String(36), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    is_key_term = db.Column(db.Boolean, default=False)
 
 class Connection(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
@@ -56,6 +66,9 @@ class UserActivity(db.Model):
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
     activity_type = db.Column(db.String(50), nullable=False)
     title = db.Column(db.String(200), nullable=False)
+    main_topic = db.Column(db.String(200))
+    subtopics = db.Column(db.JSON)
+    session_id = db.Column(db.String(36), db.ForeignKey('upload.session_id'), nullable=True)
     details = db.Column(db.JSON)
     timestamp = db.Column(db.DateTime, default=db.func.current_timestamp())
 

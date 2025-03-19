@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from '@/components/ui/use-toast';
@@ -422,7 +421,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timeout: 5000 // 5 second timeout
       });
       setActivities(response.data.data?.activities || []);
-      console.log('Fetched activities:', response.data);
     } catch (error) {
       console.error('Fetch activities error:', error);
     }
@@ -438,7 +436,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       // Access the payments data from the correct nested structure
       setPayments(response.data.data?.payments || []);
-      console.log('Fetched payments:', response.data);
     } catch (error) {
       console.error('Fetch payments error:', error);
     }

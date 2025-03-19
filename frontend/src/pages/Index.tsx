@@ -13,7 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { FcGoogle } from "react-icons/fc";
-import { Github, Loader2 } from "lucide-react";
+import { Github, Loader2, BookOpen, Plus } from "lucide-react";
 import { v4 as uuidv4 } from 'uuid';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -69,61 +69,114 @@ const Index = () => {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
 
   useEffect(() => {
+    // Erkennen, ob wir mit einem nocache-Parameter geladen wurden, was ein komplettes Reset signalisiert
+    const urlParams = new URLSearchParams(location.search);
+    const nocache = urlParams.get('nocache');
+    
+    if (nocache) {
+      // Entferne alle URL-Parameter
+      window.history.replaceState({}, '', window.location.pathname);
+      
+      // Zeige eine Erfolgsmeldung
+      toast({
+        title: "Neue Session gestartet",
+        description: "Alle vorherigen Daten wurden gelöscht. Du kannst jetzt neue Dateien hochladen.",
+      });
+      
+      return;
+    }
+    
     if (!user) return;
 
-    const urlParams = new URLSearchParams(location.search);
+    // Prüfe, ob eine Session aus dem URL-Parameter geladen werden soll
     const sessionIdFromUrl = urlParams.get('session');
-    const locationState = location.state as any;
-    const sessionIdFromState = locationState?.sessionId;
-    const sessionToLoad = sessionIdFromUrl || sessionIdFromState;
+    const sessionDataFromState = location.state as {
+      sessionId?: string;
+      flashcards?: Flashcard[];
+      questions?: Question[];
+      analysis?: { main_topic: string; subtopics: string[] };
+      forceReload?: boolean;
+    };
 
-    if (sessionToLoad && sessionToLoad !== sessionId) {
-      loadSessionData(sessionToLoad);
+    // Wenn URL-Parameter und Session-ID unterschiedlich sind, priorisiere URL-Parameter
+    if (sessionIdFromUrl && sessionIdFromUrl !== sessionId) {
+      loadSessionData(sessionIdFromUrl);
+      return;
     }
-  }, [user, location, sessionId]);
 
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (hash && user) {
-      const id = hash.substring(1);
-      const element = document.getElementById(id);
-      if (element) {
-        setTimeout(() => {
-          element.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
+    // Wenn State-Daten vorhanden sind, nutze diese
+    if (sessionDataFromState?.sessionId) {
+      const stateSessionId = sessionDataFromState.sessionId;
+      
+      // Wenn sich die Session-ID geändert hat oder wir eine neue Session geladen haben
+      // oder wenn ein forceReload Flag gesetzt wurde
+      if (stateSessionId !== sessionId || sessionDataFromState.forceReload) {
+        setIsLoadingSession(true);
+        
+        // Wenn Daten im State vorhanden sind, verwende diese
+        if (sessionDataFromState.flashcards || sessionDataFromState.questions) {
+          // Immer die neuen Daten verwenden, alte verwerfen
+          setFlashcards(sessionDataFromState.flashcards || []);
+          setQuestions(sessionDataFromState.questions || []);
+          setSessionId(stateSessionId);
+          
+          const flashcardCount = sessionDataFromState.flashcards?.length || 0;
+          const questionCount = sessionDataFromState.questions?.length || 0;
+          
+          toast({
+            title: "Analyse geladen",
+            description: `Die Analyse "${sessionDataFromState.analysis?.main_topic || 'Unbenanntes Thema'}" wurde erfolgreich geladen mit ${flashcardCount} Karten und ${questionCount} Fragen.`,
+          });
+          setIsLoadingSession(false);
+        } else {
+          // Wenn keine Daten im State, lade sie vom Server
+          loadSessionData(stateSessionId);
+        }
       }
-    } else if (!hash) {
-      window.scrollTo(0, 0);
+      return;
     }
-  }, [user, location.hash]);
+
+    // Wenn keine spezifischen Parameter vorhanden sind, aber wir eine sessionId haben,
+    // leere den Zustand (dies passiert typischerweise bei Neuladen der Seite)
+    if (!sessionIdFromUrl && !sessionDataFromState?.sessionId && sessionId) {
+      setSessionId(undefined);
+      setFlashcards([]);
+      setQuestions([]);
+    }
+  }, [user, location.search, location.state]);
 
   const loadSessionData = async (sessionIdToLoad: string) => {
     if (isLoadingSession) return;
 
     setIsLoadingSession(true);
-
     try {
-      console.log('DEBUG: Loading session data for session ID:', sessionIdToLoad);
-      const response = await axios.get<{ success: boolean, data: SessionData }>(
-        `${API_URL}/api/v1/results/${sessionIdToLoad}`,
-        { withCredentials: true }
+      // Cache-busting Parameter hinzufügen, um sicherzustellen, dass wir frische Daten erhalten
+      const timestamp = new Date().getTime();
+      const response = await axios.get<{ success: boolean; data: SessionData }>(
+        `${API_URL}/api/v1/results/${sessionIdToLoad}?nocache=${timestamp}`,
+        { 
+          withCredentials: true,
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        }
       );
-
+      
       if (response.data.success && response.data.data) {
         const sessionData = response.data.data;
         console.log('DEBUG: Loaded session data:', sessionData);
-
+        
+        // Immer die neuen Daten verwenden, unabhängig von früheren Zuständen
         setFlashcards(sessionData.flashcards || []);
         setQuestions(sessionData.test_questions || []);
         setSessionId(sessionIdToLoad);
-
+        
         toast({
           title: "Analyse geladen",
-          description: `Die Analyse "${sessionData.analysis.main_topic}" wurde erfolgreich geladen.`,
+          description: `Die Analyse "${sessionData.analysis.main_topic}" wurde erfolgreich geladen mit ${sessionData.flashcards.length} Karteikarten und ${sessionData.test_questions.length} Fragen.`,
         });
-
-        const hash = window.location.hash;
-        navigate(hash, { replace: true });
       } else {
         throw new Error("Keine gültigen Daten für diese Session gefunden");
       }
@@ -140,26 +193,33 @@ const Index = () => {
   };
 
   const handleUploadSuccess = (data: UploadResponse) => {
-    console.log('DEBUG: Index received upload success data:', data);
-    setFlashcards(data.flashcards);
-    setQuestions(data.questions);
+    setFlashcards(data.flashcards || []);
+    setQuestions(data.questions || []);
     setSessionId(data.session_id);
     document.getElementById('flashcards')?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const generateMoreFlashcardsMutation = useMutation({
     mutationFn: async () => {
-      console.log('DEBUG: Requesting more flashcards from backend');
+      const token = localStorage.getItem('exammaster_token');
+      if (!token) {
+        throw new Error('Nicht eingeloggt. Bitte melde dich an, um diese Funktion zu nutzen.');
+      }
+      
       const response = await axios.post<UploadResponse>(
         `${API_URL}/api/v1/generate-more-flashcards`,
-        { session_id: sessionId, count: 5 }, // Hinzugefügt: count
-        { headers: { "Content-Type": "application/json" }, withCredentials: true } // withCredentials hinzugefügt
+        { session_id: sessionId, count: 5 },
+        { 
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          }, 
+          withCredentials: true 
+        }
       );
-      console.log('DEBUG: Received more flashcards response:', response.data);
       return response.data;
     },
     onSuccess: (data) => {
-      console.log('DEBUG: Adding new flashcards to state', data);
       const newFlashcardsArray = data.data?.flashcards || data.flashcards || [];
       const newFlashcardsWithUniqueIds = newFlashcardsArray.map(f => ({
         ...f,
@@ -186,57 +246,53 @@ const Index = () => {
       if (!sessionId) {
         throw new Error('Keine Session-ID vorhanden. Bitte lade zuerst eine Prüfung hoch.');
       }
+      
+      const token = localStorage.getItem('exammaster_token');
+      if (!token) {
+        throw new Error('Nicht eingeloggt. Bitte melde dich an, um diese Funktion zu nutzen.');
+      }
+      
       const response = await axios.post<UploadResponse>(
         `${API_URL}/api/v1/generate-more-questions`,
-        { session_id: sessionId, count: 5 }, // Hinzugefügt: count
-        { headers: { "Content-Type": "application/json" }, withCredentials: true } // withCredentials hinzugefügt
+        { session_id: sessionId, count: 5 },
+        { 
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          }, 
+          withCredentials: true 
+        }
       );
-      console.log('DEBUG: Raw response from generate-more-questions:', response.data);
       return response.data;
     },
     onSuccess: (data) => {
       console.log('DEBUG: Adding new questions to state', data);
       
-      // Extract questions from the response, handling different possible structures
       let newQuestionsArray = [];
       if (data.data && Array.isArray(data.data.questions)) {
-        console.log('DEBUG: Found questions in data.data.questions');
         newQuestionsArray = data.data.questions;
       } else if (data.data && typeof data.data === 'object' && 'questions' in data.data) {
-        console.log('DEBUG: Found questions in data.data.questions (object)');
         newQuestionsArray = data.data.questions;
       } else if (Array.isArray(data.questions)) {
-        console.log('DEBUG: Found questions in data.questions');
         newQuestionsArray = data.questions;
       } else {
         console.warn('DEBUG: Could not find questions in response:', data);
         newQuestionsArray = [];
       }
       
-      console.log('DEBUG: Extracted questions array:', newQuestionsArray);
-      
-      // Filter out invalid questions
       const validQuestionsArray = newQuestionsArray.filter(q => 
         q && q.text && !q.text.includes("Could not generate") && 
         q.options && Array.isArray(q.options) && q.options.length >= 2
       );
       
-      console.log('DEBUG: Valid questions after filtering:', validQuestionsArray);
-      
-      // Add unique IDs and normalize correctAnswer field
       const newQuestionsWithUniqueIds = validQuestionsArray.map(q => ({
         ...q,
         id: uuidv4(),
         correctAnswer: q.correctAnswer !== undefined ? q.correctAnswer : (q as any).correct !== undefined ? (q as any).correct : 0
       }));
       
-      console.log('DEBUG: Questions with unique IDs:', newQuestionsWithUniqueIds);
-      
-      // Filter out duplicates
       const existingTexts = new Set(questions.map(q => q.text.toLowerCase().trim()));
       const filteredNewQuestions = newQuestionsWithUniqueIds.filter(q => !existingTexts.has(q.text.toLowerCase().trim()));
-      
-      console.log('DEBUG: Final filtered questions:', filteredNewQuestions);
       
       if (filteredNewQuestions.length === 0) {
         toast({
@@ -247,11 +303,8 @@ const Index = () => {
         return;
       }
       
-      // Update state with new questions
       const updatedQuestions = [...questions, ...filteredNewQuestions];
-      console.log('DEBUG: Setting questions state with:', updatedQuestions);
       setQuestions(updatedQuestions);
-      
       toast({
         title: "Neue Testfragen generiert",
         description: `${filteredNewQuestions.length} neue Testfragen wurden erstellt.`,
@@ -266,9 +319,70 @@ const Index = () => {
     }
   });
 
+  // Mutation zum Zurücksetzen der Session und Laden neuer Themen
+  const loadTopicsMutation = useMutation({
+    mutationFn: async () => {
+      // Wir generieren eine temporäre ID für einen Redirect
+      const redirectId = uuidv4();
+      
+      // Setze einen temporären State im sessionStorage, um zu signalisieren, dass wir alles neu laden wollen
+      sessionStorage.setItem('force_new_session', 'true');
+      sessionStorage.setItem('redirect_time', Date.now().toString());
+      
+      // Navigiere zu einer sicheren Zwischen-URL ohne Sessions und erzwinge einen harten Refresh
+      window.location.href = `${window.location.pathname}?reset=${redirectId}`;
+      
+      // Rückgabewert wird nicht verwendet, da wir die Seite neuladen
+      return { success: true };
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Fehler",
+        description: error.message || "Beim Zurücksetzen der Session ist ein Fehler aufgetreten.",
+        variant: "destructive",
+      });
+    }
+  });
+
   const handleSignIn = async (provider: string) => {
     await signIn(provider);
   };
+
+  // Prüfe beim Laden der Seite, ob ein Reset erzwungen werden soll
+  useEffect(() => {
+    // Prüfe, ob wir gerade von einem Reset-Redirect kommen
+    const forceNewSession = sessionStorage.getItem('force_new_session');
+    const redirectTime = sessionStorage.getItem('redirect_time');
+    
+    if (forceNewSession === 'true') {
+      // Lösche die Reset-Flags
+      sessionStorage.removeItem('force_new_session');
+      sessionStorage.removeItem('redirect_time');
+      
+      // Lösche alle Session-bezogenen Daten
+      localStorage.removeItem('current_session_id');
+      localStorage.removeItem('session_id');
+      localStorage.removeItem('last_session_id');
+      
+      // Setze den lokalen Zustand zurück
+      setSessionId(undefined);
+      setFlashcards([]);
+      setQuestions([]);
+      
+      // Entferne alle URL-Parameter für ein sauberes Neuladen
+      if (window.location.search) {
+        window.history.replaceState({}, '', window.location.pathname);
+        
+        // Nach kurzer Verzögerung (um React-Rendering abzuwarten) einen Toast anzeigen
+        setTimeout(() => {
+          toast({
+            title: "Neue Session gestartet",
+            description: "Die alte Session wurde vollständig entfernt und eine neue Session ist bereit.",
+          });
+        }, 500);
+      }
+    }
+  }, []);
 
   if (isLoading) {
     return (
@@ -369,7 +483,52 @@ const Index = () => {
               </div>
             )}
             <section id="exam-uploader">
-              <ExamUploader onUploadSuccess={handleUploadSuccess} />
+              <ExamUploader 
+                onUploadSuccess={handleUploadSuccess} 
+                sessionId={sessionId}
+                loadTopicsMutation={loadTopicsMutation}
+                onResetSession={() => {
+                  // Setze den Session-Zustand in der übergeordneten Komponente zurück
+                  setSessionId(undefined);
+                  setFlashcards([]);
+                  setQuestions([]);
+                  
+                  // API-Aufruf zum Zurücksetzen der Session auf dem Server
+                  if (sessionId) {
+                    try {
+                      const token = localStorage.getItem('exammaster_token');
+                      axios.delete(`${API_URL}/api/v1/session/${sessionId}`, {
+                        headers: {
+                          "Authorization": token ? `Bearer ${token}` : '',
+                        },
+                        withCredentials: true,
+                      }).catch(error => {
+                        console.error('Failed to delete session on server:', error);
+                      });
+                    } catch (error) {
+                      console.error('Error deleting session:', error);
+                    }
+                  }
+                  
+                  // Explizit eine neue Session durch loadTopicsMutation starten
+                  setTimeout(() => {
+                    loadTopicsMutation.mutate();
+                  }, 500);
+                  
+                  // Entferne die Session-ID aus der URL, falls vorhanden
+                  const url = new URL(window.location.href);
+                  if (url.searchParams.has('session')) {
+                    url.searchParams.delete('session');
+                    window.history.replaceState({}, '', url.toString());
+                  }
+                  
+                  // Zeige eine Benachrichtigung
+                  toast({
+                    title: "Neue Session gestartet",
+                    description: "Die alte Session wurde entfernt und eine neue Session wird erstellt.",
+                  });
+                }}
+              />
             </section>
             <section id="flashcards">
               <FlashcardGenerator
@@ -397,3 +556,4 @@ const Index = () => {
 };
 
 export default Index;
+

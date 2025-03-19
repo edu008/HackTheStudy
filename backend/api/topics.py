@@ -1,11 +1,37 @@
 from flask import request, jsonify, current_app
 from . import api_bp
-from .utils import query_chatgpt, detect_language
+from .utils import query_chatgpt, detect_language, generate_concept_map_suggestions
 from models import db, Upload, Topic, UserActivity, Connection
 import logging
 from .auth import token_required
+import uuid
+from tasks import process_upload
 
 logger = logging.getLogger(__name__)
+
+@api_bp.route('/load-topics', methods=['POST'])
+@token_required
+def load_topics():
+    """
+    Endpoint zum Zurücksetzen der Session und Starten einer neuen Session.
+    Dieser Endpunkt wird aufgerufen, wenn der Benutzer auf "Neue Themen laden" klickt.
+    """
+    try:
+        # Generiere eine neue Session-ID
+        session_id = str(uuid.uuid4())
+        user_id = getattr(request, 'user_id', None)
+        
+        logger.info(f"Creating new session with ID: {session_id} for user: {user_id}")
+        
+        # Rückgabe der neuen Session-ID
+        return jsonify({
+            "success": True,
+            "message": "Session zurückgesetzt und neue Session erstellt",
+            "session_id": session_id
+        }), 200
+    except Exception as e:
+        logger.error(f"Error resetting session: {str(e)}")
+        return jsonify({"success": False, "message": f"Fehler beim Zurücksetzen der Session: {str(e)}"}), 500
 
 @api_bp.route('/generate-related-topics', methods=['POST'])
 @token_required
@@ -228,14 +254,24 @@ def generate_related_topics():
             else:
                 logger.error(f"Could not create connection: source or target topic not found. Source: {conn['source_text']}, Target: {conn['target_text']}")
         
-        if hasattr(request, 'user_id'):
-            activity = UserActivity(
-                user_id=request.user_id,
-                activity_type='concept',
-                title=f"Generated topics for {main_topic.name}",
-                details={"new_topics": new_topics, "new_connections": new_connections}
-            )
-            db.session.add(activity)
+        # Begrenze auf 5 Einträge
+        existing_activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.asc()).all()
+        if len(existing_activities) >= 5:
+            oldest_activity = existing_activities[0]
+            db.session.delete(oldest_activity)
+            logger.info(f"Deleted oldest activity: {oldest_activity.id}")
+        
+        # Speichere Benutzeraktivität
+        activity = UserActivity(
+            user_id=request.user_id,
+            activity_type='concept',
+            title=f"Generated topics for {main_topic.name}",
+            main_topic=main_topic.name,
+            subtopics=[s.name for s in subtopics],
+            session_id=session_id,
+            details={"new_topics": new_topics, "new_connections": new_connections}
+        )
+        db.session.add(activity)
         
         db.session.commit()
         logger.info(f"Committed {len(new_topics)} new topics and {len(new_connections)} connections to database")
@@ -264,42 +300,310 @@ def generate_related_topics():
 @api_bp.route('/topics/<session_id>', methods=['GET'])
 @token_required
 def get_topics(session_id):
+    """
+    Gibt das Hauptthema, die direkten Subtopics und die Verbindungen für eine Session zurück.
+    Child-Topics werden nicht zurückgegeben - diese werden erst bei explizitem Aufruf von
+    '/generate-concept-map-suggestions' generiert.
+    """
     try:
         upload = Upload.query.filter_by(session_id=session_id).first()
         if not upload:
             return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
         
+        # Hauptthema finden
         main_topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
         if not main_topic:
-            return jsonify({"success": False, "error": {"code": "MAIN_TOPIC_NOT_FOUND", "message": "Main topic not found"}}), 404
+            return jsonify({"success": False, "error": {"code": "NO_MAIN_TOPIC", "message": "No main topic found for this session"}}), 404
         
+        # Direkte Subtopics finden (keine Kinder-Topics)
         subtopics = Topic.query.filter_by(upload_id=upload.id, parent_id=main_topic.id).all()
-        child_topics = Topic.query.filter(Topic.upload_id == upload.id, Topic.parent_id.in_([t.id for t in subtopics])).all()
-        connections = Connection.query.filter_by(upload_id=upload.id).all()
-
+        
+        # Format für die Antwort
+        topics_data = {
+            "main_topic": {
+                "id": main_topic.id,
+                "name": main_topic.name
+            },
+            "subtopics": [
+                {
+                    "id": topic.id,
+                    "name": topic.name,
+                    "parent_id": topic.parent_id
+                } for topic in subtopics
+            ]
+            # Child-Topics werden absichtlich weggelassen, um sie erst bei Bedarf zu laden
+        }
+        
+        # Verbindungen zwischen den Topics finden
+        connections = []
+        topic_ids = [main_topic.id] + [topic.id for topic in subtopics]
+        
+        # Hole alle Verbindungen für die aktuellen Topics
+        db_connections = Connection.query.filter(
+            Connection.upload_id == upload.id,
+            Connection.source_id.in_(topic_ids),
+            Connection.target_id.in_(topic_ids)
+        ).all()
+        
+        # Stelle sicher, dass jede Verbindung ein aussagekräftiges Label hat
+        language = detect_language(upload.content)
+        default_label = "hängt zusammen mit" if language == 'de' else "related to"
+        
+        for conn in db_connections:
+            # Finde die Quell- und Zielthemen
+            source_topic = next((t for t in [main_topic] + subtopics if t.id == conn.source_id), None)
+            target_topic = next((t for t in [main_topic] + subtopics if t.id == conn.target_id), None)
+            
+            if source_topic and target_topic:
+                # Wenn das Label leer ist oder zu kurz, erstelle ein aussagekräftiges Label
+                label = conn.label
+                if not label or len(label.strip()) < 5:
+                    if source_topic.is_main_topic:
+                        label = f"{source_topic.name} umfasst {target_topic.name}"
+                    elif target_topic.is_main_topic:
+                        label = f"{source_topic.name} ist Teil von {target_topic.name}"
+                    else:
+                        label = f"{source_topic.name} {default_label} {target_topic.name}"
+                
+                connections.append({
+                    "id": conn.id,
+                    "source_id": conn.source_id,
+                    "target_id": conn.target_id,
+                    "label": label
+                })
+        
         return jsonify({
             "success": True,
-            "topics": {
-                "main_topic": {
-                    "id": main_topic.id,
-                    "name": main_topic.name,
-                    "is_main_topic": main_topic.is_main_topic,
-                    "parent_id": main_topic.parent_id
-                },
-                "subtopics": [
-                    {"id": t.id, "name": t.name, "parent_id": t.parent_id, "is_main_topic": t.is_main_topic}
-                    for t in subtopics
-                ],
-                "child_topics": [
-                    {"id": t.id, "name": t.name, "parent_id": t.parent_id, "is_main_topic": t.is_main_topic}
-                    for t in child_topics
-                ]
-            },
-            "connections": [
-                {"id": c.id, "source_id": c.source_id, "target_id": c.target_id, "label": c.label}
-                for c in connections
-            ]
+            "topics": topics_data,
+            "connections": connections
         }), 200
+        
     except Exception as e:
         logger.error(f"Error retrieving topics: {str(e)}")
         return jsonify({"success": False, "error": {"code": "RETRIEVAL_FAILED", "message": str(e)}}), 500
+
+@api_bp.route('/generate-concept-map-suggestions', methods=['POST'])
+@token_required
+def concept_map_suggestions():
+    """
+    Generiert KI-Vorschläge für Kinder-Unterthemen für eine Concept-Map.
+    Zeigt zunächst nur die übergeordneten Themen und generiert dann die Kinder-Unterthemen auf Anfrage.
+    """
+    data = request.json
+    session_id = data.get('session_id')
+    parent_subtopics = data.get('parent_subtopics', [])
+    
+    if not session_id:
+        return jsonify({"success": False, "error": {"code": "NO_SESSION_ID", "message": "Session ID required"}}), 400
+    
+    if not parent_subtopics:
+        return jsonify({"success": False, "error": {"code": "NO_PARENT_TOPICS", "message": "Parent subtopics required"}}), 400
+    
+    upload = Upload.query.filter_by(session_id=session_id).first()
+    if not upload:
+        return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+    
+    # Holen des Hauptthemas
+    main_topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
+    main_topic_name = "Unknown Topic"
+    if main_topic:
+        main_topic_name = main_topic.name
+    
+    # Ermittle die Sprache
+    language = detect_language(upload.content)
+    
+    # Initialisiere den OpenAI-Client
+    from openai import OpenAI
+    client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
+    
+    try:
+        # Generiere Vorschläge für Kinder-Unterthemen
+        suggestions = generate_concept_map_suggestions(
+            upload.content,
+            client,
+            main_topic=main_topic_name,
+            parent_subtopics=parent_subtopics,
+            language=language
+        )
+        
+        logger.info(f"Generated concept map suggestions: {suggestions}")
+        
+    except Exception as e:
+        logger.error(f"Error generating concept map suggestions: {str(e)}")
+        # Fallback: Generiere einfache Vorschläge, wenn die API fehlschlägt
+        suggestions = generate_fallback_suggestions(main_topic_name, parent_subtopics, language)
+        logger.info(f"Generated fallback suggestions: {suggestions}")
+    
+    return jsonify({
+        "success": True,
+        "data": {
+            "suggestions": suggestions
+        },
+        "message": "Concept map suggestions generated successfully"
+    }), 200
+
+def generate_fallback_suggestions(main_topic, parent_subtopics, language='en'):
+    """
+    Generiert einfache Fallback-Vorschläge für Concept-Map-Kinder-Unterthemen.
+    Wird verwendet, wenn die OpenAI-API nicht verfügbar ist.
+    Stellt sicher, dass für jedes Elternthema mindestens 3 einzigartige Kinder generiert werden.
+    
+    Args:
+        main_topic: Das Hauptthema der Concept-Map
+        parent_subtopics: Liste der übergeordneten Subtopics
+        language: Die erkannte Sprache
+        
+    Returns:
+        Ein Dictionary mit Elternthemen als Schlüssel und Listen von vorgeschlagenen Kindern als Werte
+    """
+    import random
+    
+    # Generische Kind-Themen zur Auswahl - kategorisiert für mehr thematische Konsistenz
+    if language == 'de':
+        generic_child_topics = {
+            "Grundlagen": [
+                "Definitionen", "Grundkonzepte", "Hauptprinzipien", "Kernelemente", 
+                "Grundlegende Theorien", "Fundamentale Strukturen", "Basiswissen", "Grundlagen",
+                "Konzeptueller Rahmen", "Theoretische Grundlagen", "Kernideen"
+            ],
+            "Anwendungen": [
+                "Anwendungsgebiete", "Praktische Umsetzungen", "Einsatzbereiche", "Nutzungskontexte",
+                "Reale Beispiele", "Industrielle Anwendungen", "Praxisrelevanz", "Implementierungen",
+                "Anwendungsszenarien", "Fallstudien", "Praktische Beispiele"
+            ],
+            "Methoden": [
+                "Methoden", "Techniken", "Verfahren", "Ansätze", "Strategien", "Prozesse",
+                "Vorgehensweisen", "Arbeitsabläufe", "Mechanismen", "Arbeitsweisen", "Praktiken"
+            ],
+            "Historisches": [
+                "Historische Entwicklung", "Entstehungsgeschichte", "Evolution", "Fortschritt",
+                "Historischer Kontext", "Zeitliche Entwicklung", "Meilensteine", "Historische Perspektive",
+                "Geschichtlicher Hintergrund", "Entwicklungsphasen", "Chronologie"
+            ],
+            "Bewertung": [
+                "Vorteile", "Nutzen", "Stärken", "Positive Aspekte", "Mehrwert", "Potenziale",
+                "Herausforderungen", "Schwächen", "Einschränkungen", "Probleme", "Grenzen",
+                "Kritische Betrachtung", "Evaluationsmethoden", "Qualitätskriterien"
+            ],
+            "Zukunft": [
+                "Zukunftsperspektiven", "Trends", "Entwicklungsrichtungen", "Innovationen",
+                "Zukünftige Anwendungen", "Weiterentwicklungen", "Forschungsbedarf", "Visionen",
+                "Zukünftige Herausforderungen", "Innovationspotenziale", "Perspektiven"
+            ],
+            "Beziehungen": [
+                "Beziehungen", "Verbindungen", "Schnittstellen", "Integrationen", "Vernetzungen",
+                "Interdependenzen", "Wechselwirkungen", "Zusammenhänge", "Korrelationen",
+                "Kontextuelle Einbettung", "Systemische Beziehungen"
+            ],
+            "Beispiele": [
+                "Beispiele", "Fallstudien", "Instanzen", "Anwendungsfälle", "Praxisbeispiele",
+                "Referenzmodelle", "Typische Fälle", "Musterbeispiele", "Exemplarische Fälle",
+                "Illustrationen", "Konkrete Beispiele"
+            ],
+            "Komponenten": [
+                "Komponenten", "Bausteine", "Elemente", "Strukturen", "Bestandteile",
+                "Teilaspekte", "Module", "Kernkomponenten", "Funktionale Einheiten",
+                "Strukturelle Elemente", "Architektur", "Aufbau"
+            ],
+            "Spezifisches": [
+                "Spezialgebiete", "Nischenanwendungen", "Spezifische Merkmale", "Besonderheiten",
+                "Differenzierungsmerkmale", "Spezialisierungen", "Domänenspezifische Aspekte",
+                "Fachspezifische Konzepte", "Besondere Eigenschaften"
+            ]
+        }
+    else:  # English
+        generic_child_topics = {
+            "Fundamentals": [
+                "Definitions", "Basic Concepts", "Main Principles", "Core Elements", 
+                "Fundamental Theories", "Fundamental Structures", "Basic Knowledge", "Foundations",
+                "Conceptual Framework", "Theoretical Foundations", "Core Ideas"
+            ],
+            "Applications": [
+                "Application Areas", "Practical Implementations", "Usage Areas", "Usage Contexts",
+                "Real Examples", "Industrial Applications", "Practical Relevance", "Implementations",
+                "Application Scenarios", "Case Studies", "Practical Examples"
+            ],
+            "Methods": [
+                "Methods", "Techniques", "Procedures", "Approaches", "Strategies", "Processes",
+                "Work Procedures", "Workflows", "Mechanisms", "Working Methods", "Practices"
+            ],
+            "Historical": [
+                "Historical Development", "Origin History", "Evolution", "Progress",
+                "Historical Context", "Timeline", "Milestones", "Historical Perspective",
+                "Historical Background", "Development Phases", "Chronology"
+            ],
+            "Evaluation": [
+                "Advantages", "Benefits", "Strengths", "Positive Aspects", "Added Value", "Potentials",
+                "Challenges", "Weaknesses", "Limitations", "Problems", "Boundaries",
+                "Critical Review", "Evaluation Methods", "Quality Criteria"
+            ],
+            "Future": [
+                "Future Perspectives", "Trends", "Development Directions", "Innovations",
+                "Future Applications", "Further Developments", "Research Needs", "Visions",
+                "Future Challenges", "Innovation Potentials", "Perspectives"
+            ],
+            "Relationships": [
+                "Relationships", "Connections", "Interfaces", "Integrations", "Networks",
+                "Interdependencies", "Interactions", "Correlations", "Interrelations",
+                "Contextual Embedding", "Systemic Relationships"
+            ],
+            "Examples": [
+                "Examples", "Case Studies", "Instances", "Use Cases", "Practical Examples",
+                "Reference Models", "Typical Cases", "Model Examples", "Exemplary Cases",
+                "Illustrations", "Concrete Examples"
+            ],
+            "Components": [
+                "Components", "Building Blocks", "Elements", "Structures", "Constituents",
+                "Subaspects", "Modules", "Core Components", "Functional Units",
+                "Structural Elements", "Architecture", "Structure"
+            ],
+            "Specifics": [
+                "Special Areas", "Niche Applications", "Specific Features", "Peculiarities",
+                "Differentiating Features", "Specializations", "Domain-Specific Aspects",
+                "Subject-Specific Concepts", "Special Properties"
+            ]
+        }
+    
+    # Erstelle das Ergebnis-Dictionary
+    result = {}
+    
+    # Stelle sicher, dass die Kategorienliste zufällig gemischt ist, um Variation zu gewährleisten
+    categories = list(generic_child_topics.keys())
+    random.shuffle(categories)
+    
+    # Generiere für jeden übergeordneten Subtopic mindestens 3 Kinder
+    for parent in parent_subtopics:
+        # Extrahiere Schlüsselwörter aus dem Elternthema, um thematisch passendere Kinder zu generieren
+        parent_keywords = parent.lower().split()
+        
+        # Wähle 3-5 Kategorien aus, die für dieses Elternthema relevant sein könnten
+        # Aber gewährleiste immer mindestens 3 verschiedene Kategorien
+        num_categories = random.randint(3, min(5, len(categories)))
+        selected_categories = random.sample(categories, num_categories)
+        
+        # Wähle aus jeder Kategorie ein Kind-Thema und stelle sicher, dass es thematisch zum Elternthema passt
+        children = []
+        for category in selected_categories:
+            category_topics = generic_child_topics[category]
+            topic = random.choice(category_topics)
+            
+            # Vermeide Duplikate
+            while topic in children and len(category_topics) > 1:
+                topic = random.choice(category_topics)
+                
+            children.append(topic)
+        
+        # Stelle sicher, dass wir mindestens 3 Kinder haben
+        while len(children) < 3:
+            # Wähle eine zufällige Kategorie
+            category = random.choice(categories)
+            topic = random.choice(generic_child_topics[category])
+            
+            # Vermeide Duplikate
+            if topic not in children:
+                children.append(topic)
+        
+        # Speichere die Kinder im Ergebnis
+        result[parent] = children
+    
+    return result
