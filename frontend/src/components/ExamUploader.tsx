@@ -323,15 +323,15 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
         
         // Option zum Extrahieren von nur Text hinzufügen (für PDFs mit Bildern)
         formData.append('extract_text_only', 'true');
-        formData.append('clean_pdf', 'true');
-        // Neue Optionen für verbessertes PDF-Parsing
-        formData.append('remove_null_bytes', 'true');
-        formData.append('strip_binary', 'true');
-        formData.append('force_plain_text', 'true');
+        formData.append('clean_pdf', 'false');  // Deaktiviere Reinigung
+        // Neue Optionen für verbessertes PDF-Parsing - DEAKTIVIERT
+        formData.append('remove_null_bytes', 'false');  // Deaktiviere Null-Byte-Entfernung
+        formData.append('strip_binary', 'false');  // Deaktiviere Binary-Stripping
+        formData.append('force_plain_text', 'true');  // Behalte Plain-Text Extraktion bei
         // Option hinzufügen, um Daten erst nach erfolgreicher Prüfung zu speichern
         formData.append('validate_before_save', 'true');
-        // Neue Option: Aggressives Bereinigen von problematischen Zeichen
-        formData.append('aggressive_cleaning', 'true');
+        // Neue Option: Aggressives Bereinigen von problematischen Zeichen - DEAKTIVIERT
+        formData.append('aggressive_cleaning', 'false');  // Deaktiviere aggressive Bereinigung
         
         try {
           console.log(`DEBUG: Uploading file: ${file.name}`);

@@ -10,20 +10,6 @@ MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-# Funktion für Ladeanimationen
-loading_animation() {
-  local message=$1
-  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-  local delay=0.1
-  local i=0
-  
-  while [ "$2" = "true" ]; do
-    i=$(( (i+1) % ${#frames[@]} ))
-    printf "\r${YELLOW}${frames[$i]} %s${NC}" "$message"
-    sleep $delay
-  done
-}
-
 # Funktion für horizontale Trennlinien
 divider() {
   echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -34,33 +20,9 @@ python -c "from docker_logs.docker_banner import print_banner; print_banner('WOR
 
 echo -e "\n${BOLD}${YELLOW}🔄 Initialisierung der Worker-Dienste...${NC}\n"
 
-# Warten auf PostgreSQL mit Animation
-echo -e "${CYAN}📊 Verbindung zu PostgreSQL herstellen...${NC}"
-connection_status=true
-loading_animation "Verbinde mit PostgreSQL..." "$connection_status" &
-LOADING_PID=$!
-
-while ! nc -z db 5432; do
-  sleep 0.5
-done
-
-connection_status=false
-wait $LOADING_PID 2>/dev/null
-echo -e "\r${GREEN}✅ PostgreSQL ist verbunden!     ${NC}"
-
-# Warten auf Redis mit Animation
-echo -e "\n${CYAN}🔄 Verbindung zu Redis herstellen...${NC}"
-connection_status=true
-loading_animation "Verbinde mit Redis..." "$connection_status" &
-LOADING_PID=$!
-
-while ! nc -z redis 6379; do
-  sleep 0.5
-done
-
-connection_status=false
-wait $LOADING_PID 2>/dev/null
-echo -e "\r${GREEN}✅ Redis ist verbunden!     ${NC}"
+# Überspringe Verbindungsprüfung
+echo -e "${GREEN}✅ Überspringe PostgreSQL-Verbindungsprüfung (zur Fehlerbehebung)${NC}"
+echo -e "${GREEN}✅ Überspringe Redis-Verbindungsprüfung (zur Fehlerbehebung)${NC}"
 
 # Setze Umgebungsvariablen für verbessertes Logging
 export PYTHONPATH=$PYTHONPATH:/app

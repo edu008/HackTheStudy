@@ -73,7 +73,7 @@ def upload_file():
         logger.info(f"Detected annotated PDF: {file_name}")
     
     # Aggressive Bereinigung für alle PDFs aktivieren
-    aggressive_cleaning = True
+    aggressive_cleaning = False  # Aggressive Bereinigung deaktiviert
     
     if aggressive_cleaning and file_name.lower().endswith('.pdf'):
         import re
@@ -81,25 +81,25 @@ def upload_file():
             # Speichere die originale Größe für Diagnose
             original_size = len(file_content)
             
-            # Entferne Null-Bytes und andere problematische Binärdaten
-            file_content = re.sub(b'\x00', b'', file_content)
+            # Entferne Null-Bytes und andere problematische Binärdaten - REDUZIERT
+            # file_content = re.sub(b'\x00', b'', file_content)
             
-            # Bei PDFs mit Anmerkungen, entferne weitere problematische Zeichen
-            if is_annotated_pdf:
-                # Problematische Bytefolgen, die oft in Anmerkungen vorkommen
-                for pattern in [b'\x0c', b'\xfe\xff', b'\xff\xfe']:
-                    try:
-                        file_content = re.sub(pattern, b' ', file_content)
-                    except:
-                        pass
+            # Bei PDFs mit Anmerkungen, entferne weitere problematische Zeichen - DEAKTIVIERT
+            # if is_annotated_pdf:
+            #     # Problematische Bytefolgen, die oft in Anmerkungen vorkommen
+            #     for pattern in [b'\x0c', b'\xfe\xff', b'\xff\xfe']:
+            #         try:
+            #             file_content = re.sub(pattern, b' ', file_content)
+            #         except:
+            #             pass
             
             cleaned_size = len(file_content)
             
             if original_size != cleaned_size:
                 bytes_removed = original_size - cleaned_size
-                logger.info(f"Aggressive cleaning applied to {file_name}, removed {bytes_removed} potentially problematic bytes")
+                logger.info(f"Minimal cleaning applied to {file_name}, removed {bytes_removed} potentially problematic bytes")
         except Exception as e:
-            logger.warning(f"Error during aggressive cleaning: {str(e)}")
+            logger.warning(f"Error during minimal cleaning: {str(e)}")
     
     logger.info(f"Received upload request: session_id={session_id}, file_name={file_name}, user_id={user_id}, file_size={len(file_content) // 1024}KB")
     

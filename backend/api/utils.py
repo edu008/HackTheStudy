@@ -7,6 +7,7 @@ import io  # Hinzugefügt für BytesIO
 from flask import current_app
 import logging
 from PyPDF2 import PdfReader
+import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,7 @@ def extract_text_from_file(file_data, file_name):
                 except UnicodeDecodeError:
                     text = file_data.decode('utf-8', errors='replace')
             
-            # Bereinige den Text für die Datenbank
-            return clean_text_for_database(text)
+            return text
         else:
             return "Nicht unterstütztes Dateiformat. Bitte lade PDF- oder TXT-Dateien hoch."
     except Exception as e:
@@ -89,309 +89,69 @@ def extract_text_from_file(file_data, file_name):
 
 def extract_text_from_pdf_safe(file_data):
     """
-    Extrahiert Text aus einer PDF-Datei mit maximaler Sicherheit gegen Fehler.
-    Verwendet ein mehrstufiges Fallback-System, um mit problematischen PDFs umzugehen.
+    Extrahiert Text aus einer PDF-Datei mit PyMuPDF (fitz).
+    PyMuPDF kann robuster mit verschiedenen PDF-Formaten umgehen.
     """
-    # Sammle extrahierten Text von allen Versuchen
-    all_extracted_text = []
-    
-    # Sammle Fehlermeldungen zur späteren Auswertung
-    error_messages = []
-    
     try:
-        # Zuerst versuche die problematischen Null-Bytes zu entfernen
-        import re
-        safe_data = re.sub(b'\x00', b'', file_data)
+        # Sammle extrahierten Text
+        all_text = []
         
-        # Versuche auch andere problematische Zeichen zu entfernen
-        # Besonders wichtig für annotierte PDFs
-        for pattern in [b'\x0c', b'\xfe\xff', b'\xff\xfe', b'\\*', b'\\(', b'\\)', b'\\.\\d+\\.']: 
+        # Öffne das PDF als Speicherobjekt
+        with io.BytesIO(file_data) as data:
             try:
-                safe_data = re.sub(pattern, b' ', safe_data)
-            except:
-                pass
-        
-        # 1. Versuch: PyPDF2 mit sicherem Modus
-        try:
-            import io
-            from PyPDF2 import PdfReader
-            
-            text = ""
-            with io.BytesIO(safe_data) as data:
-                try:
-                    reader = PdfReader(data, strict=False)  # strict=False für bessere Fehlertoleranz
-                    for i, page in enumerate(reader.pages):
-                        try:
-                            extracted = page.extract_text()
-                            if extracted:
-                                text += extracted + "\n\n"
-                                all_extracted_text.append(extracted)
-                        except Exception as page_error:
-                            error_msg = f"Fehler bei der Extraktion der Seite {i+1}: {str(page_error)}"
-                            logger.warning(error_msg)
-                            error_messages.append(error_msg)
-                            continue
-                except Exception as e:
-                    error_msg = f"Fehler bei der Extraktion mit PdfReader (1. Versuch): {str(e)}"
-                    logger.warning(error_msg)
-                    error_messages.append(error_msg)
-                    
-                    # Prüfe auf bestimmte kritische Fehlertypen, die auf eine korrupte PDF hindeuten
-                    if "PdfReadError" in str(e) or "Invalid Elementary Object" in str(e):
-                        logger.error(f"Kritischer PDF-Fehler erkannt: {str(e)}")
-                        return f"CORRUPTED_PDF: {str(e)}"
-        except Exception as e:
-            error_msg = f"Allgemeiner Fehler bei PDF-Extraktion (1. Versuch): {str(e)}"
-            logger.warning(error_msg)
-            error_messages.append(error_msg)
-            
-            # Prüfe auch hier auf kritische Fehler
-            if "PdfReadError" in str(e) or "Invalid Elementary Object" in str(e):
-                logger.error(f"Kritischer PDF-Fehler erkannt: {str(e)}")
+                # Öffne das PDF-Dokument ohne Änderungen an den Binärdaten
+                pdf_document = fitz.open(stream=data, filetype="pdf")
+                
+                # Extrahiere Text von jeder Seite mit sanften Einstellungen
+                for page_num in range(len(pdf_document)):
+                    try:
+                        page = pdf_document.load_page(page_num)
+                        # Verwende einfache Textextraktion ohne Formatierung oder Bereinigung
+                        text = page.get_text("text")
+                        if text:
+                            all_text.append(text)
+                    except Exception as page_error:
+                        logger.warning(f"Fehler bei der Extraktion der Seite {page_num+1} mit PyMuPDF: {str(page_error)}")
+                        continue
+                
+                # Schließe das Dokument
+                pdf_document.close()
+            except Exception as e:
+                logger.warning(f"Fehler bei der Extraktion mit PyMuPDF: {str(e)}")
                 return f"CORRUPTED_PDF: {str(e)}"
         
-        # Weitere Versuche nur durchführen, wenn keine kritischen Fehler aufgetreten sind
-        # und noch kein Text extrahiert wurde
-        
-        # 2. Versuch: PyPDF2 mit Seitenzugriff über Index
-        if not "".join(all_extracted_text).strip():
-            try:
-                import io
-                from PyPDF2 import PdfReader
-                
-                with io.BytesIO(safe_data) as data:
-                    try:
-                        reader = PdfReader(data, strict=False)
-                        page_count = len(reader.pages)
-                        
-                        for i in range(page_count):
-                            try:
-                                # Direkter Zugriff auf die Seite über den Index
-                                page = reader.pages[i]
-                                try:
-                                    extracted = page.extract_text()
-                                    if extracted:
-                                        all_extracted_text.append(extracted)
-                                except Exception as inner_error:
-                                    error_msg = f"Fehler beim Extrahieren des Textes der Seite {i+1}: {str(inner_error)}"
-                                    logger.warning(error_msg)
-                                    error_messages.append(error_msg)
-                                    continue
-                            except Exception as page_error:
-                                error_msg = f"Seite {i+1} konnte nicht geladen werden: {str(page_error)}"
-                                logger.warning(error_msg)
-                                error_messages.append(error_msg)
-                                continue
-                    except Exception as e:
-                        error_msg = f"Fehler beim Laden des PdfReaders (2. Versuch): {str(e)}"
-                        logger.warning(error_msg)
-                        error_messages.append(error_msg)
-                        
-                        # Nochmals auf kritische Fehler prüfen
-                        if "PdfReadError" in str(e) or "Invalid Elementary Object" in str(e):
-                            logger.error(f"Kritischer PDF-Fehler erkannt im 2. Versuch: {str(e)}")
-                            return f"CORRUPTED_PDF: {str(e)}"
-            except Exception as e:
-                error_msg = f"Allgemeiner Fehler bei PDF-Extraktion (2. Versuch): {str(e)}"
-                logger.warning(error_msg)
-                error_messages.append(error_msg)
-                
-                # Und auch hier nochmals auf kritische Fehler prüfen
-                if "PdfReadError" in str(e) or "Invalid Elementary Object" in str(e):
-                    logger.error(f"Kritischer PDF-Fehler erkannt im 2. Versuch (allgemein): {str(e)}")
-                    return f"CORRUPTED_PDF: {str(e)}"
-        
-        # Weitere Versuche mit anderen Methoden...
-        
-        # Kombiniere alle extrahierten Texte
-        final_text = "\n\n".join([text for text in all_extracted_text if text.strip()])
-        
-        # Prüfe auf Anzeichen einer korrupten PDF anhand der gesammelten Fehlermeldungen
-        critical_error_indicators = [
-            "PdfReadError", 
-            "Invalid Elementary Object", 
-            "Stream has ended unexpectedly",
-            "maximum recursion depth exceeded",
-            "FloatObject",
-            "incorrect startxref"
-        ]
-        
-        error_count = sum(1 for error in error_messages if any(indicator in error for indicator in critical_error_indicators))
-        
-        # Wenn zu viele kritische Fehler aufgetreten sind, betrachte die PDF als korrupt
-        if error_count >= 2:
-            logger.error(f"PDF als korrupt erkannt aufgrund von {error_count} kritischen Fehlern")
-        # 3. Versuch: Direkter Binärmodus für beschädigte PDFs
-        if not "".join(all_extracted_text).strip():
-            try:
-                import subprocess
-                import tempfile
-                import os
-                
-                # Speichere die PDF-Daten temporär
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                    temp_file.write(safe_data)
-                    temp_file_path = temp_file.name
-                
-                try:
-                    # Versuche pdftotext zu verwenden, falls installiert
-                    result = subprocess.run(['pdftotext', temp_file_path, '-'], 
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                           timeout=30, check=False, text=True)
-                    
-                    if result.returncode == 0 and result.stdout:
-                        all_extracted_text.append(result.stdout)
-                except (subprocess.SubprocessError, FileNotFoundError):
-                    logger.warning("pdftotext nicht verfügbar oder fehlgeschlagen")
-                
-                # Entferne die temporäre Datei
-                try:
-                    os.unlink(temp_file_path)
-                except:
-                    pass
-            except Exception as e:
-                logger.warning(f"Fehler bei der Extraktion mit direktem Binärmodus: {str(e)}")
-        
-        # 4. Versuch: Nutze PDFMiner bei Bedarf
-        if not "".join(all_extracted_text).strip():
-            try:
-                # Versuche PDFMiner zu importieren
-                import io
-                try:
-                    from pdfminer.high_level import extract_text_to_fp
-                    from pdfminer.layout import LAParams
-                    
-                    output = io.StringIO()
-                    with io.BytesIO(safe_data) as fp:
-                        laparams = LAParams(char_margin=10.0, line_margin=0.5, word_margin=0.1)
-                        extract_text_to_fp(fp, output, laparams=laparams, codec='utf-8')
-                        extracted_text = output.getvalue()
-                        if extracted_text:
-                            all_extracted_text.append(extracted_text)
-                except ImportError:
-                    logger.warning("PDFMiner nicht verfügbar")
-                except Exception as e:
-                    logger.warning(f"Fehler bei der Extraktion mit PDFMiner: {str(e)}")
-            except Exception as e:
-                logger.warning(f"Allgemeiner Fehler bei PDF-Extraktion mit PDFMiner: {str(e)}")
-        
-        # Kombiniere alle extrahierten Texte
-        final_text = "\n\n".join([text for text in all_extracted_text if text.strip()])
+        # Kombiniere den gesamten Text
+        final_text = "\n\n".join([text for text in all_text if text.strip()])
         
         # Wenn noch immer kein Text, gib einen klaren Hinweis zurück
         if not final_text.strip():
             return "Der Text konnte aus dieser PDF nicht extrahiert werden. Es könnte sich um eine gescannte PDF ohne OCR, eine beschädigte Datei oder eine stark gesicherte PDF handeln."
         
-        # Bereinige den Text für die Datenbank
-        return clean_text_for_database(final_text)
+        # Minimale Bereinigung - nur NUL-Bytes entfernen, da diese in Datenbanken Probleme verursachen können
+        final_text = final_text.replace('\x00', '')
+        
+        return final_text
     except Exception as e:
-        logger.error(f"Kritischer Fehler bei allen PDF-Extraktionsversuchen: {str(e)}")
-        return "Fehler beim Extrahieren des Textes aus der PDF-Datei: Die Datei könnte beschädigt sein oder ungewöhnliche Formatierungen enthalten."
+        logger.error(f"Kritischer Fehler bei PDF-Extraktionsversuch mit PyMuPDF: {str(e)}")
+        return f"CORRUPTED_PDF: {str(e)}"
 
 def extract_text_from_pdf(file_data):
-    """Extrahiert Text aus einer PDF-Datei mit maximaler Sicherheit."""
+    """Extrahiert Text aus einer PDF-Datei mit PyMuPDF."""
     try:
-        # Versuche erst die neue, sichere Methode
+        # Verwende PyMuPDF (fitz) ohne Bereinigung der Binärdaten
         text = extract_text_from_pdf_safe(file_data)
         
-        # Prüfe, ob die sichere Methode einen CORRUPTED_PDF Fehlercode zurückgegeben hat
+        # Prüfe, ob die Methode einen CORRUPTED_PDF Fehlercode zurückgegeben hat
         if isinstance(text, str) and text.startswith('CORRUPTED_PDF:'):
             return text
             
         if text and text.strip():
             return text
-            
-        # Wenn das nicht erfolgreich war, probiere die älteren Methoden
-        with io.BytesIO(file_data) as data:
-            try:
-                reader = PdfReader(data)
-                text = ""
-                
-                # Extrahiere Text aus allen Seiten
-                for page in reader.pages:
-                    text += page.extract_text() + "\n\n"
-                
-                # Wenn kein Text extrahiert werden konnte, versuche mit PyPDF2
-                if not text.strip():
-                    logger.warning("Kein Text mit PdfReader extrahiert, verwende PyPDF2 als Fallback.")
-                    text = extract_text_from_pdf_fallback(file_data)
-                
-                # Bereinige den Text für die Datenbank
-                return clean_text_for_database(text)
-            except Exception as e:
-                logger.error(f"Fehler bei der PDF-Textextraktion mit PyPDF2: {str(e)}")
-                
-                # Spezielle Behandlung für PdfReadError
-                error_str = str(e)
-                if "PdfReadError" in error_str or "Invalid Elementary Object" in error_str:
-                    return f"CORRUPTED_PDF: {error_str}"
-                    
-                # Versuche den Fallback-Mechanismus
-                return extract_text_from_pdf_fallback(file_data)
+        else:
+            return "Keine Textdaten konnten aus dieser PDF-Datei extrahiert werden. Es könnte sich um ein Scan-Dokument ohne OCR handeln."
     except Exception as e:
         logger.error(f"Kritischer Fehler bei der PDF-Extraktion: {str(e)}")
-        
-        # Auch hier spezielle Behandlung für PdfReadError
-        error_str = str(e)
-        if "PdfReadError" in error_str or "Invalid Elementary Object" in error_str:
-            return f"CORRUPTED_PDF: {error_str}"
-            
-        return "Die PDF-Datei konnte nicht verarbeitet werden. Mögliche Ursachen: beschädigte Datei, keine Textebene (Scan), oder nicht unterstütztes Format."
-
-def extract_text_from_pdf_fallback(file_data):
-    """
-    Extrahiert Text aus einer PDF-Datei, wenn die Standardmethode fehlschlägt.
-    Dies ist ein Fallback-Mechanismus mit mehreren Versuchen.
-    
-    Args:
-        file_data (bytes): Die PDF-Dateidaten
-        
-    Returns:
-        str: Der extrahierte Text
-    """
-    try:
-        # Methode 1: Mit BytesIO und direktem PdfReader
-        with io.BytesIO(file_data) as data:
-            reader = PdfReader(data)
-            text = ""
-            for page in reader.pages:
-                try:
-                    # Versuche Text zu extrahieren und fange spezifische Fehler ab
-                    extracted = page.extract_text()
-                    if extracted:
-                        text += extracted + "\n\n"
-                except Exception as e:
-                    logger.warning(f"Fehler bei der Textextraktion einer Seite: {str(e)}")
-                    continue
-        
-        # Wenn keine Textextraktion erfolgreich war, versuche andere Methoden
-        if not text.strip():
-            logger.warning("Fallback 1 konnte keinen Text extrahieren, versuche Fallback 2")
-            
-            # Methode 2: Direkter Binärzugriff - entferne explizit Null-Bytes
-            try:
-                import re
-                import binascii
-                
-                # Entferne alle Null-Bytes und andere nicht-druckbare Zeichen
-                cleaned_data = re.sub(b'[\x00]', b'', file_data)
-                
-                # Versuche erneut die Extraktion
-                with io.BytesIO(cleaned_data) as clean_data:
-                    reader = PdfReader(clean_data)
-                    for page in reader.pages:
-                        extracted = page.extract_text()
-                        if extracted:
-                            text += extracted + "\n\n"
-            except Exception as e:
-                logger.warning(f"Fallback 2 fehlgeschlagen: {str(e)}")
-        
-        # Bereinige den resultierenden Text
-        return clean_text_for_database(text)
-    
-    except Exception as e:
-        logger.error(f"Alle PDF-Extraktionsversuche fehlgeschlagen: {str(e)}")
-        return f"Text konnte nicht extrahiert werden: {str(e)}"
+        return f"CORRUPTED_PDF: {str(e)}"
 
 def detect_language(text):
     try:

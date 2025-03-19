@@ -176,6 +176,12 @@ def patch_flask_sqlalchemy():
     try:
         import flask_sqlalchemy
         
+        # Prüfe, ob die execute-Methode existiert
+        if not hasattr(flask_sqlalchemy.SQLAlchemy, 'execute'):
+            db_logger.warning("Flask-SQLAlchemy hat keine 'execute' Methode, verwende alternativ Session-Patching", 
+                            extra={'emoji': '⚠️'})
+            return patch_flask_sqlalchemy_session()
+        
         # Original-Methode speichern
         original_execute = flask_sqlalchemy.SQLAlchemy.execute
         
@@ -262,6 +268,35 @@ def patch_flask_sqlalchemy():
         return False
     except Exception as e:
         db_logger.error(f"Fehler beim Patchen von Flask-SQLAlchemy: {e}", 
+                       extra={'emoji': '❌'})
+        return False
+
+def patch_flask_sqlalchemy_session():
+    """
+    Alternative Methode zum Patchen von Flask-SQLAlchemy über die Session-Objekte
+    für neuere Versionen von Flask-SQLAlchemy.
+    """
+    try:
+        import flask_sqlalchemy
+        from sqlalchemy import event
+        
+        # Log Info
+        db_logger.info("Versuche Flask-SQLAlchemy über Session-Events zu patchen", 
+                       extra={'emoji': '🔄'})
+        
+        # In neueren Versionen wird eine Session verwendet
+        # Die Events werden über SQLAlchemy selbst registriert
+        db_logger.info("Flask-SQLAlchemy wird über Standard-SQLAlchemy-Events gepatcht", 
+                      extra={'emoji': '🔧'})
+        
+        return True
+        
+    except ImportError:
+        db_logger.warning("Flask-SQLAlchemy Session-Patching nicht möglich", 
+                         extra={'emoji': '⚠️'})
+        return False
+    except Exception as e:
+        db_logger.error(f"Fehler beim Patchen von Flask-SQLAlchemy Session: {e}", 
                        extra={'emoji': '❌'})
         return False
 

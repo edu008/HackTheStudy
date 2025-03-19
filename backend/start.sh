@@ -45,17 +45,6 @@ while ! nc -z db 5432; do
 done
 echo -e "${GREEN}✅ PostgreSQL ist bereit!${NC}"
 
-# Datenbank-Tabellen löschen
-echo -e "\n${YELLOW}🗑️  Entferne alte Datenbank-Tabellen...${NC}"
-python -c "from app import create_app; app = create_app(); from models import db; app.app_context().push(); db.drop_all()" > /dev/null 2>&1 &
-PID=$!
-spinner $PID
-wait $PID
-if [ $? -eq 0 ]; then
-  echo -e "${GREEN}✅ Alte Tabellen erfolgreich entfernt${NC}"
-else
-  echo -e "${RED}❌ Fehler beim Entfernen alter Tabellen${NC}"
-fi
 
 # Neue Datenbank-Tabellen erstellen
 echo -e "\n${YELLOW}📝 Erstelle neue Datenbank-Struktur...${NC}"
