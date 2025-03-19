@@ -1,0 +1,14 @@
+{
+  "Elasticity": [
+    "Price Elasticity of Demand",
+    "Income Elasticity of Demand",
+    "Cross Price Elasticity",
+    "Price Elasticity of Supply"
+  ],
+  "Elasticity_relationships": {
+    "Price Elasticity of Demand": "measures responsiveness to price change",
+    "Income Elasticity of Demand": "measures demand change with income",
+    "Cross Price Elasticity": "measures demand change with other goods' price",
+    "Price Elasticity of Supply": "measures responsiveness of supply to price"
+  }
+}

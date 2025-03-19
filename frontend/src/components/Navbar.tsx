@@ -75,21 +75,14 @@ const Navbar = () => {
               {user && (
                 <>
                   <Link 
-                    to="/dashboard" 
-                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate('/dashboard', { replace: true });
-                    }}
-                  >
-                    Dashboard
-                  </Link>
-                  <Link 
                     to="/#flashcards" 
                     className="text-muted-foreground hover:text-foreground transition-colors duration-200"
                     onClick={(e) => {
                       e.preventDefault();
-                      window.location.href = '/#flashcards';
+                      const flashcardsElement = document.getElementById('flashcards');
+                      if (flashcardsElement) {
+                        flashcardsElement.scrollIntoView({ behavior: 'smooth' });
+                      }
                     }}
                   >
                     Flashcards
@@ -99,7 +92,10 @@ const Navbar = () => {
                     className="text-muted-foreground hover:text-foreground transition-colors duration-200"
                     onClick={(e) => {
                       e.preventDefault();
-                      window.location.href = '/#test-simulator';
+                      const testSimulatorElement = document.getElementById('test-simulator');
+                      if (testSimulatorElement) {
+                        testSimulatorElement.scrollIntoView({ behavior: 'smooth' });
+                      }
                     }}
                   >
                     Test Simulator
@@ -109,7 +105,10 @@ const Navbar = () => {
                     className="text-muted-foreground hover:text-foreground transition-colors duration-200"
                     onClick={(e) => {
                       e.preventDefault();
-                      window.location.href = '/#concept-mapper';
+                      const conceptMapperElement = document.getElementById('concept-mapper');
+                      if (conceptMapperElement) {
+                        conceptMapperElement.scrollIntoView({ behavior: 'smooth' });
+                      }
                     }}
                   >
                     Mindmap
@@ -215,7 +214,10 @@ const Navbar = () => {
                   onClick={(e) => {
                     e.preventDefault();
                     setIsMenuOpen(false);
-                    window.location.href = '/#flashcards';
+                    const flashcardsElement = document.getElementById('flashcards');
+                    if (flashcardsElement) {
+                      flashcardsElement.scrollIntoView({ behavior: 'smooth' });
+                    }
                   }}
                 >
                   Flashcards
@@ -226,7 +228,10 @@ const Navbar = () => {
                   onClick={(e) => {
                     e.preventDefault();
                     setIsMenuOpen(false);
-                    window.location.href = '/#test-simulator';
+                    const testSimulatorElement = document.getElementById('test-simulator');
+                    if (testSimulatorElement) {
+                      testSimulatorElement.scrollIntoView({ behavior: 'smooth' });
+                    }
                   }}
                 >
                   Test Simulator
@@ -237,7 +242,10 @@ const Navbar = () => {
                   onClick={(e) => {
                     e.preventDefault();
                     setIsMenuOpen(false);
-                    window.location.href = '/#concept-mapper';
+                    const conceptMapperElement = document.getElementById('concept-mapper');
+                    if (conceptMapperElement) {
+                      conceptMapperElement.scrollIntoView({ behavior: 'smooth' });
+                    }
                   }}
                 >
                   Mindmap

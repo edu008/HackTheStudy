@@ -29,6 +29,7 @@ class Upload(db.Model):
     token_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
     updated_at = db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
+    last_used_at = db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
     processing_status = db.Column(db.String(50), default="pending")  # pending, processing, completed, failed
 
 class Flashcard(db.Model):

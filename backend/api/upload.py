@@ -5,7 +5,7 @@ from models import db, Upload, Question, Topic
 from models import Flashcard
 from tasks import process_upload
 import uuid
-from .utils import allowed_file, extract_text_from_file
+from .utils import allowed_file, extract_text_from_file, check_and_manage_user_sessions, update_session_timestamp
 import logging
 from .auth import token_required
 import time
@@ -24,7 +24,13 @@ def upload_file():
     
     # Verwende die übergebene session_id, falls vorhanden, sonst generiere eine neue
     session_id = request.form.get('session_id')
+    user_id = getattr(request, 'user_id', None)  # Falls Authentifizierung aktiviert ist
+    
+    # Wenn keine Session-ID übergeben wird, erstellen wir eine neue und prüfen die Begrenzung
     if not session_id:
+        # Überprüfe und verwalte die Anzahl der Sessions des Benutzers
+        if user_id:
+            check_and_manage_user_sessions(user_id)
         session_id = str(uuid.uuid4())
     
     logger.info(f"Using session_id: {session_id} ({'provided by request' if request.form.get('session_id') else 'newly generated'})")
@@ -43,7 +49,6 @@ def upload_file():
         }), 400
     
     file_name = file.filename
-    user_id = getattr(request, 'user_id', None)  # Falls Authentifizierung aktiviert ist
     
     # Prüfe auf leere Datei
     if len(file_content) == 0:
@@ -349,6 +354,9 @@ def get_results(session_id):
     if not upload:
         return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404, response_headers
     
+    # Aktualisiere den last_used_at-Timestamp
+    update_session_timestamp(session_id)
+    
     # Direkte Datenbankabfrage verwenden, um sicherzustellen, dass wir aktuelle Daten bekommen
     db.session.refresh(upload)
     
@@ -410,6 +418,9 @@ def get_session_info(session_id):
     if not upload:
         return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
     
+    # Aktualisiere den last_used_at-Timestamp
+    update_session_timestamp(session_id)
+    
     # Sammle alle Dateinamen
     files = []
     if upload.file_name_1: files.append(upload.file_name_1)
@@ -435,6 +446,7 @@ def get_session_info(session_id):
             "user_id": upload.user_id,
             "created_at": upload.created_at.isoformat() if upload.created_at else None,
             "updated_at": upload.updated_at.isoformat() if upload.updated_at else None,
+            "last_used_at": upload.last_used_at.isoformat() if upload.last_used_at else None,
             "processing_status": "waiting" if token_count > 0 and not main_topic else ("completed" if main_topic else "pending")
         }
     }), 200

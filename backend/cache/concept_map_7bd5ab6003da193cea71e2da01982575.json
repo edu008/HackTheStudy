@@ -1,0 +1,14 @@
+{
+  "Subsidies": [
+    "Consumer Benefit",
+    "Producer Benefit",
+    "Market Price Impact",
+    "Government Expenditure"
+  ],
+  "Subsidies_relationships": {
+    "Consumer Benefit": "enhances consumer welfare by",
+    "Producer Benefit": "increases producer revenue through",
+    "Market Price Impact": "alters market prices by",
+    "Government Expenditure": "requires government funding for"
+  }
+}

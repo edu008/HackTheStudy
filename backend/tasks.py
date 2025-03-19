@@ -314,6 +314,37 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                 questions = result.get('questions', [])
                 key_terms = result.get('key_terms', [])
                 
+                # Logging der Struktur zum Debuggen
+                logger.info(f"Main topic: {main_topic}")
+                logger.info(f"Subtopics: {subtopics}")
+                logger.info(f"Key terms count: {len(key_terms)}")
+                logger.info(f"Flashcards count: {len(flashcards)}")
+                logger.info(f"Questions count: {len(questions)}")
+                
+                # Stelle sicher, dass subtopics die richtige Struktur haben
+                processed_subtopics = []
+                if subtopics:
+                    for item in subtopics:
+                        if isinstance(item, dict) and 'name' in item:
+                            processed_subtopics.append(item)
+                        elif isinstance(item, str):
+                            # Konvertiere String zu Dictionary
+                            processed_subtopics.append({'name': item, 'child_topics': []})
+                    
+                    # Falls keine gültigen Subtopics gefunden wurden, erstelle Standardsubtopics
+                    if not processed_subtopics:
+                        logger.warning("Keine gültigen Subtopics gefunden, erstelle Standardsubtopics")
+                        processed_subtopics = [
+                            {'name': 'Topic 1', 'child_topics': []},
+                            {'name': 'Topic 2', 'child_topics': []},
+                            {'name': 'Topic 3', 'child_topics': []},
+                            {'name': 'Topic 4', 'child_topics': []}
+                        ]
+                    
+                    # Aktualisiere die subtopics Variable
+                    subtopics = processed_subtopics
+                    logger.info(f"Processed subtopics: {subtopics}")
+                
                 # Speichere Hauptthema
                 logger.info(f"Saving main topic: {main_topic}")
                 main_topic_entity = Topic(
@@ -332,6 +363,18 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                     if isinstance(subtopic_item, dict) and 'name' in subtopic_item:
                         subtopic_name = subtopic_item.get('name')
                         child_topics = subtopic_item.get('child_topics', [])
+                        
+                        # Überprüfen, ob ein Unterthema mit diesem Namen bereits existiert
+                        existing_topic = None
+                        for st in saved_subtopics:
+                            if st.name == subtopic_name:
+                                existing_topic = st
+                                break
+                                
+                        # Wenn es bereits existiert, überspringen
+                        if existing_topic:
+                            logger.warning(f"Skipping duplicate subtopic: {subtopic_name}")
+                            continue
                         
                         # Erstelle Unterthema
                         subtopic_entity = Topic(
@@ -428,9 +471,8 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                     
                     # Flache Liste der Unterthemen für die Aktivitätsaufzeichnung
                     flat_subtopics = []
-                    for sub in subtopics:
-                        if isinstance(sub, dict) and 'name' in sub:
-                            flat_subtopics.append(sub.get('name'))
+                    for sub in saved_subtopics:
+                        flat_subtopics.append(sub.name)
                     
                     db.session.add(UserActivity(
                         user_id=user_id,

@@ -1,0 +1,14 @@
+{
+  "Taxation": [
+    "Direct Taxes",
+    "Indirect Taxes",
+    "Tax Incidence",
+    "Elasticity"
+  ],
+  "Taxation_relationships": {
+    "Direct Taxes": "includes types such as",
+    "Indirect Taxes": "includes types such as",
+    "Tax Incidence": "determines who bears the burden of",
+    "Elasticity": "influences the effect of"
+  }
+}

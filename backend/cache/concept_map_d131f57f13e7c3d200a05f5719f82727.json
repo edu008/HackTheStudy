@@ -1,0 +1,14 @@
+{
+  "Market Interventions": [
+    "Price Floors",
+    "Price Ceilings",
+    "Minimum Wages",
+    "Subsidies"
+  ],
+  "Market Interventions_relationships": {
+    "Price Floors": "include as a tool for",
+    "Price Ceilings": "utilized to control",
+    "Minimum Wages": "affect labor market by",
+    "Subsidies": "encourage production through"
+  }
+}

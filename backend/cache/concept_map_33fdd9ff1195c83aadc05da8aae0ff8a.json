@@ -1,0 +1,14 @@
+{
+  "Planung und Budgetierung": [
+    "Kostenanalyse",
+    "Ressourcenzuweisung",
+    "Zielvorgaben",
+    "Abweichungsanalyse"
+  ],
+  "Planung und Budgetierung_relationships": {
+    "Kostenanalyse": "ermöglicht die Bewertung von",
+    "Ressourcenzuweisung": "optimiert die Verteilung von",
+    "Zielvorgaben": "definiert Erwartungen für",
+    "Abweichungsanalyse": "identifiziert Differenzen in"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "Ressourcenzuweisung": [
+    "Budgetplanung",
+    "Kapazitätsmanagement",
+    "Kostenkontrolle"
+  ],
+  "Ressourcenzuweisung_relationships": {
+    "Budgetplanung": "ist entscheidend für",
+    "Kapazitätsmanagement": "optimiert die Nutzung von",
+    "Kostenkontrolle": "überwacht die Effizienz von"
+  }
+}

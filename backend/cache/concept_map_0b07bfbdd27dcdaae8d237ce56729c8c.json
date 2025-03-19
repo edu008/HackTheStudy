@@ -1,0 +1,14 @@
+{
+  "Kostenartenanalyse": [
+    "Materialkosten",
+    "Personalkosten",
+    "Betriebskosten",
+    "Abschreibungen"
+  ],
+  "Kostenartenanalyse_relationships": {
+    "Materialkosten": "umfasst direkte Ausgaben für Materialien",
+    "Personalkosten": "beinhaltet Gehälter und Löhne",
+    "Betriebskosten": "erfasst laufende Ausgaben für den Betrieb",
+    "Abschreibungen": "bezieht sich auf die Wertminderung von Anlagen"
+  }
+}

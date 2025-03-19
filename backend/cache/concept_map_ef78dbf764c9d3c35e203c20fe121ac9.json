@@ -1,0 +1,12 @@
+{
+  "Price Discrimination": [
+    "First Degree",
+    "Second Degree",
+    "Third Degree"
+  ],
+  "Price Discrimination_relationships": {
+    "First Degree": "involves individual pricing for",
+    "Second Degree": "based on quantity purchased by",
+    "Third Degree": "involves group-based pricing for"
+  }
+}

@@ -1,6 +1,6 @@
 from flask import request, jsonify, current_app
 from . import api_bp
-from .utils import query_chatgpt, detect_language, generate_concept_map_suggestions
+from .utils import query_chatgpt, detect_language, generate_concept_map_suggestions, check_and_manage_user_sessions
 from models import db, Upload, Topic, UserActivity, Connection
 import logging
 from .auth import token_required
@@ -17,9 +17,14 @@ def load_topics():
     Dieser Endpunkt wird aufgerufen, wenn der Benutzer auf "Neue Themen laden" klickt.
     """
     try:
+        user_id = getattr(request, 'user_id', None)
+        
+        # Überprüfe und verwalte die Anzahl der Sessions des Benutzers
+        if user_id:
+            check_and_manage_user_sessions(user_id)
+        
         # Generiere eine neue Session-ID
         session_id = str(uuid.uuid4())
-        user_id = getattr(request, 'user_id', None)
         
         logger.info(f"Creating new session with ID: {session_id} for user: {user_id}")
         

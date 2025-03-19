@@ -1,0 +1,14 @@
+{
+  "Standardkostenrechnung": [
+    "Kostenartenanalyse",
+    "Abweichungsanalyse",
+    "Budgetierung",
+    "Kostenkontrolle"
+  ],
+  "Standardkostenrechnung_relationships": {
+    "Kostenartenanalyse": "ermöglicht die Identifikation von",
+    "Abweichungsanalyse": "unterstützt die Bewertung von",
+    "Budgetierung": "dient zur Planung von",
+    "Kostenkontrolle": "sichert die Einhaltung von"
+  }
+}

@@ -252,6 +252,20 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         const subtopics = topicsData.topics.subtopics || [];
         const backendConnections = topicsData.connections || [];
         
+        // Deduplizieren der Subtopics, um Wiederholungen zu vermeiden
+        const uniqueSubtopics = [];
+        const seenSubtopicNames = new Set();
+        
+        for (const subtopic of subtopics) {
+          if (!seenSubtopicNames.has(subtopic.name)) {
+            uniqueSubtopics.push(subtopic);
+            seenSubtopicNames.add(subtopic.name);
+          }
+        }
+        
+        // Alle Subtopics verwenden, ohne Begrenzung
+        const allSubtopics = uniqueSubtopics;
+        
         // Create concepts from topics
         const mainConcept: Concept = {
           id: mainTopic.id.toString(),
@@ -263,9 +277,9 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         
         const subtopicConcepts: Concept[] = [];
         const radius = 250;
-        const subtopicCount = subtopics.length;
+        const subtopicCount = allSubtopics.length;
         
-        subtopics.forEach((topic, index) => {
+        allSubtopics.forEach((topic, index) => {
           const angle = (index * 2 * Math.PI) / subtopicCount;
           const x = centerX + radius * Math.cos(angle);
           const y = centerY + radius * Math.sin(angle);
@@ -385,8 +399,22 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       const mainTopic = topicsData.topics.main_topic;
       const subtopics = topicsData.topics.subtopics;
       
+      // Deduplizieren der Subtopics, um Wiederholungen zu vermeiden
+      const uniqueSubtopics = [];
+      const seenSubtopicNames = new Set();
+      
+      for (const subtopic of subtopics) {
+        if (!seenSubtopicNames.has(subtopic.name)) {
+          uniqueSubtopics.push(subtopic);
+          seenSubtopicNames.add(subtopic.name);
+        }
+      }
+      
+      // Alle Subtopics verwenden, ohne Begrenzung
+      const allSubtopics = uniqueSubtopics;
+      
       console.log("Hauptthema:", mainTopic);
-      console.log("Subtopics:", subtopics);
+      console.log("Subtopics nach Deduplizierung:", allSubtopics);
       
       // Create a mapping from topic name to position
       const positionMap = {};
@@ -409,8 +437,8 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       allNewConcepts.push(mainConceptObj);
       
       // Subtopics hinzufügen
-      const subtopicObjects = subtopics.map((subtopic, index) => {
-        const angle = (index * 2 * Math.PI) / subtopics.length;
+      const subtopicObjects = allSubtopics.map((subtopic, index) => {
+        const angle = (index * 2 * Math.PI) / allSubtopics.length;
         const radius = 250;
         const x = positionMap[subtopic.name]?.x || (centerX + radius * Math.cos(angle));
         const y = positionMap[subtopic.name]?.y || (centerY + radius * Math.sin(angle));
@@ -437,7 +465,7 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       console.log("Subtopics hinzugefügt:", subtopicObjects);
       
       // Für jedes Subtopic (Eltern-Topic) generiere Kinder-Topics
-      for (const subtopic of subtopics) {
+      for (const subtopic of allSubtopics) {
         console.log("Verarbeite Subtopic:", subtopic);
         
         // Prüfe, ob bereits Kind-Topics für dieses Subtopic existieren
@@ -491,57 +519,59 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
           
           // Prüfe, ob wir Kindthemen und ein Elternkonzept haben
           if (parentConceptObj && childTopics.length > 0) {
-            // Wähle nur das erste Kind-Topic aus der Liste
-            const childTopic = childTopics[0]; // Nur das erste Kind-Topic verwenden
-            console.log("Ausgewähltes Kind-Topic:", childTopic);
-            
-            // Zusätzliche Validierung: Prüfe, ob das ausgewählte Kind-Topic existiert
-            if (!childTopic) {
-              console.error("Kind-Topic nicht gefunden für Subtopic:", subtopic.name);
-              continue;
+            // Alle Kind-Topics verarbeiten, nicht nur das erste
+            for (let i = 0; i < Math.min(childTopics.length, 3); i++) { // Maximal 3 Kind-Topics pro Subtopic
+              const childTopic = childTopics[i];
+              console.log(`Verarbeite Kind-Topic ${i+1}/${Math.min(childTopics.length, 3)}:`, childTopic);
+              
+              // Zusätzliche Validierung: Prüfe, ob das ausgewählte Kind-Topic existiert
+              if (!childTopic) {
+                console.error("Kind-Topic nicht gefunden für Subtopic:", subtopic.name);
+                continue;
+              }
+              
+              const childId = generateUniqueId();
+              
+              // Position relativ zum Elternkonzept berechnen
+              const position = calculatePositionRelativeToParent(
+                parentConceptObj,
+                [...allNewConcepts],
+                containerWidth,
+                containerHeight,
+                centerX,
+                centerY,
+                allNewConnections
+              );
+              
+              console.log("Berechnete Position für Kind-Topic:", position);
+              
+              // Kind-Topic hinzufügen
+              const childConceptObj = {
+                id: childId,
+                text: childTopic,
+                x: position.x,
+                y: position.y
+              };
+              
+              console.log("Neues Kind-Concept-Objekt:", childConceptObj);
+              
+              allNewConcepts.push(childConceptObj);
+              
+              // Verbindungslabel aus den Beziehungslabels holen oder Fallback verwenden
+              let connectionLabel = relationshipLabels[childTopic] || `${subtopic.name} umfasst ${childTopic}`;
+              
+              // Verbindung erstellen
+              const newConnection = {
+                id: generateUniqueId(),
+                sourceId: subtopic.id.toString(),
+                targetId: childId,
+                label: connectionLabel
+              };
+              
+              console.log("Neue Verbindung:", newConnection);
+              
+              allNewConnections.push(newConnection);
             }
-            
-            const childId = generateUniqueId();
-            
-            // Position relativ zum Elternkonzept berechnen
-            const position = calculatePositionRelativeToParent(
-              parentConceptObj,
-              [...allNewConcepts],
-              containerWidth,
-              containerHeight,
-              centerX,
-              centerY,
-              allNewConnections
-            );
-            
-            console.log("Berechnete Position für Kind-Topic:", position);
-            
-            // Kind-Topic hinzufügen
-            const childConceptObj = {
-              id: childId,
-              text: childTopic,
-              x: position.x,
-              y: position.y
-            };
-            
-            console.log("Neues Kind-Concept-Objekt:", childConceptObj);
-            
-            allNewConcepts.push(childConceptObj);
-            
-            // Verbindungslabel aus den Beziehungslabels holen oder Fallback verwenden
-            let connectionLabel = relationshipLabels[childTopic] || `${subtopic.name} umfasst ${childTopic}`;
-            
-            // Verbindung erstellen
-            const newConnection = {
-              id: generateUniqueId(),
-              sourceId: subtopic.id.toString(),
-              targetId: childId,
-              label: connectionLabel
-            };
-            
-            console.log("Neue Verbindung:", newConnection);
-            
-            allNewConnections.push(newConnection);
           } else {
             console.log("Keine Kind-Topics oder Eltern-Concept gefunden für:", subtopic.name);
           }
@@ -784,6 +814,13 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       console.log("Existierende Kind-Topics:", existingChildTopics);
       console.log("Existierende Kind-Topics Anzahl:", existingChildCount);
       
+      // API-Aufruf zum Generieren von Vorschlägen
+      console.log(`API-Anfrage an ${API_URL}/api/v1/generate-concept-map-suggestions mit sessionId: ${sessionId}`);
+      console.log("Request Body:", {
+        session_id: sessionId,
+        parent_subtopics: [parentConcept.text]
+      });
+      
       const response = await fetch(`${API_URL}/api/v1/generate-concept-map-suggestions`, {
         method: 'POST',
         headers: {
@@ -796,12 +833,37 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         })
       });
       
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("API request failed:", response.status, errorText);
+        throw new Error(`API-Anfrage fehlgeschlagen: ${response.status} ${errorText}`);
+      }
+      
       const data = await response.json();
       console.log("API-Antwort:", data);
       
       if (data.success && data.data.suggestions) {
         const suggestions = data.data.suggestions;
-        const childTopics = suggestions[parentConcept.text] || [];
+        
+        // Prüfen, ob der Eltern-Topic-Name im suggestions-Objekt existiert
+        if (!suggestions[parentConcept.text]) {
+          console.error("Keine Vorschläge für das Eltern-Topic gefunden:", parentConcept.text);
+          console.log("Verfügbare Schlüssel in suggestions:", Object.keys(suggestions));
+          
+          // Versuche den ersten verfügbaren Schlüssel zu verwenden, falls vorhanden
+          const firstKey = Object.keys(suggestions).find(key => 
+            !key.endsWith('_relationships') && Array.isArray(suggestions[key])
+          );
+          
+          if (firstKey) {
+            console.log("Verwende alternativen Schlüssel:", firstKey);
+            var childTopics = suggestions[firstKey] || [];
+          } else {
+            throw new Error(`Keine Vorschläge gefunden für "${parentConcept.text}"`);
+          }
+        } else {
+          var childTopics = suggestions[parentConcept.text] || [];
+        }
         
         console.log("Kind-Topics aus API:", childTopics);
         
@@ -809,13 +871,39 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
         const relationshipKey = `${parentConcept.text}_relationships`;
         const relationshipLabels = suggestions[relationshipKey] || {};
         
-        console.log("Beziehungslabels aus API:", relationshipLabels);
+        // Fallback: Wenn keine Beziehungslabels für den genauen Schlüssel gefunden werden,
+        // versuche den ersten verfügbaren *_relationships-Schlüssel
+        let usedRelationshipLabels = relationshipLabels;
+        if (Object.keys(relationshipLabels).length === 0) {
+          const firstRelKey = Object.keys(suggestions).find(key => key.endsWith('_relationships'));
+          if (firstRelKey) {
+            console.log("Verwende alternativen Relationship-Key:", firstRelKey);
+            usedRelationshipLabels = suggestions[firstRelKey] || {};
+          }
+        }
+        
+        console.log("Beziehungslabels aus API:", usedRelationshipLabels);
         
         // Container-Dimensionen
         const containerWidth = 1200;
         const containerHeight = 900;
         const centerX = containerWidth / 2;
         const centerY = containerHeight / 2;
+        
+        // Handle cases where childTopics might not be an array
+        if (!Array.isArray(childTopics)) {
+          console.error("childTopics ist kein Array:", childTopics);
+          
+          // Versuche zu konvertieren, wenn es ein Objekt ist
+          if (typeof childTopics === 'object' && childTopics !== null) {
+            childTopics = Object.values(childTopics);
+            console.log("Konvertierte childTopics:", childTopics);
+          } else {
+            // Erstelle ein Dummy-Topic
+            childTopics = [`${parentConcept.text} Component ${existingChildCount + 1}`];
+            console.log("Erstelltes Dummy-Topic:", childTopics);
+          }
+        }
         
         // Prüfe, ob wir weitere Kindthemen haben
         if (existingChildCount < childTopics.length) {
@@ -824,16 +912,20 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
           
           console.log("Ausgewähltes Kind-Topic:", childTopic);
           
+          // Wenn childTopic ein Objekt ist, extrahiere den topic-Wert
+          let childTopicText;
+          if (typeof childTopic === 'object' && childTopic !== null && 'topic' in childTopic) {
+            childTopicText = childTopic.topic;
+          } else {
+            childTopicText = childTopic;
+          }
+          
           // Zusätzliche Validierung: Prüfe, ob das ausgewählte Kind-Topic existiert
-          if (!childTopic) {
+          if (!childTopicText) {
             console.error("Kind-Topic nicht gefunden für Index:", existingChildCount);
-            toast({
-              title: "Fehler",
-              description: "Kind-Topic konnte nicht erstellt werden: Ungültiger Index.",
-              variant: "destructive",
-            });
-            setIsGenerating(false);
-            return;
+            // Erstelle ein Dummy-Topic - nur ein einzelnes Kind pro Klick
+            childTopicText = `${parentConcept.text} Component ${existingChildCount + 1}`;
+            console.log("Erstelltes Dummy-Topic:", childTopicText);
           }
           
           // Neue Konzepte erstellen
@@ -858,7 +950,7 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
           // Neues Kind-Topic hinzufügen
           const childConceptObj = {
             id: childId,
-            text: childTopic,
+            text: childTopicText,
             x: position.x,
             y: position.y
           };
@@ -868,7 +960,15 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
           newConcepts.push(childConceptObj);
           
           // Verbindungslabel aus den Beziehungslabels holen oder Fallback verwenden
-          let connectionLabel = relationshipLabels[childTopic] || `${parentConcept.text} umfasst ${childTopic}`;
+          let connectionLabel;
+          
+          // Wenn childTopic ein Objekt ist mit relationship-Feld, verwende dieses
+          if (typeof childTopic === 'object' && childTopic !== null && 'relationship' in childTopic) {
+            connectionLabel = childTopic.relationship;
+          } else {
+            // Sonst versuche in relationshipLabels zu finden oder verwende Fallback
+            connectionLabel = usedRelationshipLabels[childTopicText] || `${parentConcept.text} umfasst ${childTopicText}`;
+          }
           
           // Verbindung mit Label erstellen
           const newConnection = {
@@ -911,9 +1011,10 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
           });
         }
       } else {
+        console.error("API-Antwort ungültig:", data);
         toast({
           title: "Fehler",
-          description: "Fehler beim Generieren der Vorschläge.",
+          description: "Fehler beim Generieren der Vorschläge: " + (data.message || "Ungültige Antwort"),
           variant: "destructive",
         });
       }
@@ -921,7 +1022,7 @@ const ConceptMapper = ({ sessionId }: { sessionId?: string }) => {
       console.error("Error generating suggestions:", error);
       toast({
         title: "Fehler",
-        description: "Es ist ein Fehler beim Generieren der Vorschläge aufgetreten.",
+        description: "Es ist ein Fehler beim Generieren der Vorschläge aufgetreten: " + error.message,
         variant: "destructive",
       });
     } finally {

@@ -1,0 +1,12 @@
+{
+  "Bilanzierungsvorschriften": [
+    "IFRS",
+    "Swiss GAAP FER",
+    "HGB"
+  ],
+  "Bilanzierungsvorschriften_relationships": {
+    "IFRS": "definiert internationale Standards für",
+    "Swiss GAAP FER": "bietet nationale Richtlinien für",
+    "HGB": "regelt deutsche Rechnungslegung für"
+  }
+}

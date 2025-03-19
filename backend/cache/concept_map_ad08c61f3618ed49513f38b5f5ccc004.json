@@ -1,0 +1,14 @@
+{
+  "Mahngeschäft": [
+    "Zahlungserinnerung",
+    "Mahnstufen",
+    "Verzugszinsen",
+    "Rechtsfolgen"
+  ],
+  "Mahngeschäft_relationships": {
+    "Zahlungserinnerung": "initiiert den Prozess durch",
+    "Mahnstufen": "strukturiert den Prozess in",
+    "Verzugszinsen": "verstärkt den Druck durch",
+    "Rechtsfolgen": "führt zu Konsequenzen bei"
+  }
+}
