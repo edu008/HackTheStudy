@@ -1,0 +1,12 @@
+{
+  "Price Elasticity of Demand": [
+    "Price Elasticity of Demand Component 1",
+    "Price Elasticity of Demand Component 2",
+    "Price Elasticity of Demand Application"
+  ],
+  "Price Elasticity of Demand_relationships": {
+    "Price Elasticity of Demand Component 1": "is a component of Price Elasticity of Demand",
+    "Price Elasticity of Demand Component 2": "is a component of Price Elasticity of Demand",
+    "Price Elasticity of Demand Application": "is a component of Price Elasticity of Demand"
+  }
+}

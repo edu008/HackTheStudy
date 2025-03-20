@@ -1,0 +1,12 @@
+{
+  "GINI Coefficient": [
+    "GINI Coefficient Component 1",
+    "GINI Coefficient Component 2",
+    "GINI Coefficient Application"
+  ],
+  "GINI Coefficient_relationships": {
+    "GINI Coefficient Component 1": "is a component of GINI Coefficient",
+    "GINI Coefficient Component 2": "is a component of GINI Coefficient",
+    "GINI Coefficient Application": "is a component of GINI Coefficient"
+  }
+}

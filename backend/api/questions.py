@@ -1,10 +1,13 @@
-from flask import request, jsonify, current_app
+from flask import request, jsonify, current_app, g
 from . import api_bp
 from .utils import generate_additional_questions, detect_language
-from models import db, Upload, Question, UserActivity, Topic
+from models import db, Upload, Question, UserActivity, Topic, User
 from marshmallow import Schema, fields, ValidationError
 import logging
 from .auth import token_required
+from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
+import tiktoken
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,21 @@ def generate_more_questions():
     upload = Upload.query.filter_by(session_id=session_id).first()
     if not upload:
         return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+    
+    # Import der Credit-Service-Funktionen
+    from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
+    from flask import g
+    import tiktoken
+    
+    # Helper-Funktion für die Tokenzählung
+    def count_tokens(text, model="gpt-4o"):
+        """Zählt die Anzahl der Tokens in einem Text für ein bestimmtes Modell"""
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+            return len(encoding.encode(text))
+        except:
+            # Fallback: Ungefähre Schätzung (1 Token ≈ 4 Zeichen)
+            return len(text) // 4
     
     # Hole alle bestehenden Fragen für diese Upload-ID
     existing_questions = [
@@ -57,11 +75,75 @@ def generate_more_questions():
     }
     logger.info(f"Analysis for session_id {session_id}: Main topic={analysis['main_topic']}, Subtopics={analysis['subtopics']}")
     
+    # Schätze die maximalen Tokenkosten für diesen Aufruf
+    # Dies ist nur eine Schätzung für die Prüfung vor der Generierung
+    # Fragen haben mehr Token als Flashcards wegen Optionen und Erklärungen
+    estimated_input_tokens = 2000 + (count * 200)  # Kontext + Prompt + Eingabe pro Frage
+    estimated_output_tokens = count * 300  # ca. 300 Tokens Ausgabe pro Frage
+    max_estimated_cost = calculate_token_cost(estimated_input_tokens, estimated_output_tokens)
+    
+    # Verdopple die geschätzten Kosten für den Gewinn
+    max_estimated_cost = max_estimated_cost * 2
+    
+    # Überprüfe, ob genügend Credits vorhanden sind
+    if not check_credits_available(max_estimated_cost):
+        # Hole den aktuellen Benutzer und seine Credits
+        user = User.query.get(g.user.id)
+        current_credits = user.credits if user else 0
+        
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "INSUFFICIENT_CREDITS",
+                "message": f"Nicht genügend Credits. Sie benötigen maximal {max_estimated_cost} Credits für {count} neue Testfragen, haben aber nur {current_credits} Credits.",
+                "credits_required": max_estimated_cost,
+                "credits_available": current_credits
+            }
+        }), 402  # 402 Payment Required
+    
     # Die Anzahl der zu generierenden Fragen erhöhen, um sicherzustellen, dass nach der Duplikatfilterung 
     # noch genügend übrig bleiben
     generation_count = max(count * 2, 10)  # Erhöhte Anzahl zur Generation
     
     try:
+        # Generiere den Prompt für die Fragen
+        prompt_template = f"""
+        Ich benötige {generation_count} ZUSÄTZLICHE, EINZIGARTIGE Testfragen mit Multiple-Choice-Optionen, die sich VÖLLIG von den vorhandenen unterscheiden.
+        
+        Hauptthema: {analysis['main_topic']}
+        Unterthemen: {', '.join(analysis['subtopics'])}
+        
+        VORHANDENE TESTFRAGEN (DIESE NICHT DUPLIZIEREN ODER UMFORMULIEREN):
+        """
+        
+        # Füge die vorhandenen Fragen zum Prompt hinzu
+        for i, q in enumerate(existing_questions[:5]):
+            options_text = str(q.get('options', []))
+            correct_answer = q.get('correct', 0)
+            prompt_template += f"\n{i+1}. Frage: {q.get('text', '')}\nOptionen: {options_text}\nRichtige Antwort: {correct_answer}"
+        
+        # Füge Format-Anforderungen hinzu
+        prompt_template += """
+        
+        FORMATANFORDERUNGEN:
+        - Jede Frage sollte einen klaren Fragetext, 4 Optionen und die richtige Antwort haben
+        - Die richtige Antwort sollte als Index der Option (0-3) angegeben werden
+        - Füge eine kurze Erklärung für die richtige Antwort hinzu
+        
+        GEBEN SIE NUR DIE FRAGEN IN DIESEM JSON-FORMAT ZURÜCK:
+        [
+          {
+            "text": "Ihre Frage hier",
+            "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+            "correct": 0,
+            "explanation": "Erklärung, warum Option 1 richtig ist"
+          }
+        ]
+        """
+        
+        # Zähle die Tokens für den Prompt
+        input_tokens = count_tokens(prompt_template)
+        
         # Verwende die Funktion aus utils.py für einzigartige, zusätzliche Fragen
         new_questions = generate_additional_questions(
             upload.content,
@@ -77,7 +159,24 @@ def generate_more_questions():
             q for q in new_questions
             if not any(q['text'].lower() == ex['text'].lower() for ex in existing_questions)
         ]
+        
+        # Begrenze auf die angeforderte Anzahl
+        limited_questions = filtered_questions[:count]
         logger.info(f"Generated {len(filtered_questions)} new questions before limiting to {count}")
+        
+        # Berechne die tatsächlichen Tokens für die Antwort
+        response_text = json.dumps(limited_questions)
+        output_tokens = count_tokens(response_text)
+        
+        # Berechne die tatsächlichen Kosten basierend auf den verwendeten Tokens
+        actual_cost = calculate_token_cost(input_tokens, output_tokens)
+        
+        # Verdopple die tatsächlichen Kosten für den Gewinn
+        actual_cost = actual_cost * 2
+        
+        # Ziehe die Credits vom Benutzer ab
+        deduct_credits(g.user.id, actual_cost)
+        logger.info(f"Deducted {actual_cost} credits from user {g.user.id} for generating {count} questions")
         
     except Exception as e:
         logger.error(f"Error calling generate_additional_questions: {str(e)}")
@@ -203,7 +302,7 @@ def generate_fallback_questions(analysis, count, existing_questions, language='e
         
         contexts = ["Bildung", "Forschung", "Wirtschaft", "Technologie", "Wissenschaft", "Medizin", "Gesellschaft"]
         applications = ["praktische Anwendung", "theoretische Analyse", "konzeptionelle Entwicklung", "strategische Planung"]
-        advantages = ["verbesserte Effizienz", "höhere Genauigkeit", "größere Flexibilität", "bessere Integration"]
+        advantages = ["verbesserte Effizienz", "höhere Genauigkeit", "grössere Flexibilität", "bessere Integration"]
         
     else:  # English
         question_templates = [
@@ -436,3 +535,49 @@ def generate_fallback_questions(analysis, count, existing_questions, language='e
             existing_texts.add(question_text.lower())
     
     return questions
+
+@api_bp.route('/questions/generate/<session_id>', methods=['POST'])
+@token_required
+def generate_questions_route(session_id):
+    # Parameter aus der Anfrage extrahieren
+    count = request.json.get('count', 10)  # Standardmäßig 10 Fragen generieren
+    
+    upload = Upload.query.filter_by(session_id=session_id).first()
+    if not upload:
+        return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+    
+    # Prüfen, ob der Text zu lang ist
+    content = upload.content or ""
+    content_length = len(content)
+    
+    if content_length > 100000:
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "CONTENT_TOO_LARGE",
+                "message": "Der Text ist zu lang. Bitte versuchen Sie es mit einem kürzeren Text."
+            }
+        }), 400
+        
+    # Schätze die Kosten basierend auf der Länge des Inhalts
+    estimated_prompt_tokens = min(content_length // 3, 100000)  # Ungefähre Schätzung: 1 Token pro 3 Zeichen
+    estimated_output_tokens = 3000  # Geschätzte Ausgabe für Fragen (mehr als Flashcards)
+    
+    # Berechne die ungefähren Kosten
+    estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens)
+    
+    # Prüfe, ob der Benutzer genügend Credits hat
+    if not check_credits_available(estimated_cost):
+        # Hole die aktuellen Credits des Benutzers
+        user = User.query.get(g.user.id)
+        current_credits = user.credits if user else 0
+        
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "INSUFFICIENT_CREDITS",
+                "message": f"Nicht genügend Credits. Sie benötigen {estimated_cost} Credits für diese Anfrage, haben aber nur {current_credits} Credits.",
+                "credits_required": estimated_cost,
+                "credits_available": current_credits
+            }
+        }), 402

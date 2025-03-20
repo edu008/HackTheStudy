@@ -1,154 +1,112 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { CreditCard, CheckCircle, XCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { toast } from 'sonner';
 
-const PaymentHistory = () => {
-  const { user, payments, fetchPayments } = useAuth();
-  const [isLoading, setIsLoading] = useState(false);
+// API Endpunkt
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const PAYMENT_API_URL = import.meta.env.VITE_PAYMENT_API_URL || 'http://localhost:5001';
+
+interface Payment {
+  id: string;
+  amount: number;
+  credits: number;
+  status: string;
+  created_at: string;
+}
+
+export default function PaymentHistory() {
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const loadPayments = async () => {
-      if (user) {
-        setIsLoading(true);
-        await fetchPayments();
-        setIsLoading(false);
-      }
-    };
-    
-    loadPayments();
-  }, [user, fetchPayments]);
+    fetchPaymentHistory();
+  }, []);
 
+  const fetchPaymentHistory = async () => {
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('exammaster_token');
+      if (!token) {
+        setIsLoading(false);
+        return;
+      }
+
+      const response = await axios.get(
+        `${PAYMENT_API_URL}/api/payment/payment-history`,
+        {
+          withCredentials: true,
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      if (response.data.history) {
+        setPayments(response.data.history);
+      }
+    } catch (error) {
+      console.error('Fehler beim Abrufen der Zahlungshistorie:', error);
+      toast.error('Fehler beim Laden der Zahlungshistorie');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="text-center py-4">Zahlungshistorie wird geladen...</div>;
+  }
+
+  if (payments.length === 0) {
+    return (
+      <div className="text-center py-4 text-muted-foreground">
+        Keine Zahlungen gefunden
+      </div>
+    );
+  }
+
+  // Hilfsfunktion zum Formatieren des Datums
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return new Intl.DateTimeFormat('de-DE', {
+      day: '2-digit',
+      month: '2-digit',
       year: 'numeric',
-      month: 'short',
-      day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     }).format(date);
   };
 
-  const formatAmount = (amount: number) => {
-    return new Intl.NumberFormat('de-DE', {
-      style: 'currency',
-      currency: 'EUR'
-    }).format(amount);
-  };
-
-  const getPaymentMethodIcon = (method: string) => {
-    return <CreditCard className="h-5 w-5 text-blue-500" />;
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return (
-          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-            <CheckCircle className="h-3 w-3 mr-1" /> Completed
-          </Badge>
-        );
-      case 'pending':
-        return (
-          <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-            Processing
-          </Badge>
-        );
-      case 'failed':
-        return (
-          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-            <XCircle className="h-3 w-3 mr-1" /> Failed
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="outline">
-            {status}
-          </Badge>
-        );
-    }
-  };
-
-  const handleRefresh = async () => {
-    setIsLoading(true);
-    await fetchPayments();
-    setIsLoading(false);
-  };
-
   return (
-    <div className="py-6">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-medium">Payment History</h3>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={handleRefresh}
-          disabled={isLoading}
-        >
-          Refresh
-        </Button>
-      </div>
+    <div className="space-y-4">
+      <h3 className="text-lg font-medium">Zahlungshistorie</h3>
       
-      {!user ? (
-        <div className="text-center py-10 text-muted-foreground">
-          Please sign in to view your payment history
-        </div>
-      ) : isLoading ? (
-        <div className="space-y-6 pr-4">
-          {Array(3).fill(0).map((_, i) => (
-            <div key={i} className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <Skeleton className="h-5 w-5 rounded-full" />
-                  <div className="space-y-1">
-                    <Skeleton className="h-4 w-40" />
-                    <Skeleton className="h-3 w-24" />
-                  </div>
-                </div>
-                <Skeleton className="h-6 w-20" />
-              </div>
-              <Separator />
+      {payments.map((payment) => (
+        <Card key={payment.id} className="bg-card">
+          <CardHeader className="pb-2">
+            <div className="flex justify-between items-center">
+              <CardTitle className="text-base">{payment.credits} Credits</CardTitle>
+              <CardDescription>
+                {formatDate(payment.created_at)}
+              </CardDescription>
             </div>
-          ))}
-        </div>
-      ) : payments.length === 0 ? (
-        <div className="text-center py-10 text-muted-foreground">
-          No payment history available yet
-        </div>
-      ) : (
-        <ScrollArea className="h-[400px]">
-          <div className="space-y-6 pr-4">
-            {payments.map((payment) => (
-              <div key={payment.id} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    {getPaymentMethodIcon(payment.payment_method)}
-                    <div>
-                      <h4 className="text-sm font-medium">
-                        {payment.credits} Credits ({formatAmount(payment.amount)})
-                      </h4>
-                      <p className="text-xs text-muted-foreground">
-                        {formatDate(payment.created_at)}
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    {getStatusBadge(payment.status)}
-                  </div>
-                </div>
-                <Separator />
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-      )}
+          </CardHeader>
+          <CardContent>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Betrag:</span>
+              <span className="font-medium">{payment.amount.toFixed(2)} CHF</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Status:</span>
+              <span className={`font-medium ${
+                payment.status === 'completed' ? 'text-green-600' : 'text-yellow-600'
+              }`}>
+                {payment.status === 'completed' ? 'Abgeschlossen' : payment.status}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
-};
-
-export default PaymentHistory;
+}

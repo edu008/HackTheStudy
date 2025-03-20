@@ -47,7 +47,7 @@ def print_banner(container_type="API"):
     print(LOGO)
     print(horizontal_line())
     
-    # Containertyp in Großbuchstaben
+    # Containertyp in Grossbuchstaben
     container_type = container_type.upper()
     
     # Zeige Emoji basierend auf Container-Typ

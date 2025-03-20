@@ -10,9 +10,13 @@ from .questions import generate_more_questions
 from .topics import generate_related_topics, get_topics
 from .user import get_user_uploads, get_user_history, update_activity_timestamp
 from .auth import auth_bp, setup_oauth
+from .payment import payment_bp
 
 # Registriere den auth Blueprint
 api_bp.register_blueprint(auth_bp, url_prefix='/auth')
+
+# Registriere den payment Blueprint
+api_bp.register_blueprint(payment_bp, url_prefix='/payment')
 
 # Füge eine Umleitung für /api/v1/ hinzu
 @api_bp.route('/v1/<path:path>')

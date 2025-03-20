@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { useMutation } from "@tanstack/react-query";
 import { v4 as uuidv4 } from 'uuid';
+import { Button } from "@/components/ui/button";
 
 // UI Components
 import Navbar from '@/components/Navbar';
@@ -81,6 +82,13 @@ const Index = () => {
   const heroSectionRef = useRef<HTMLDivElement>(null);
   const aboutSectionRef = useRef<HTMLDivElement>(null);
   const loginSectionRef = useRef<HTMLDivElement>(null);
+
+  // Neuen State-Eintrag für 402-Fehlerstatus hinzufügen
+  const [insufficientCredits, setInsufficientCredits] = useState<{
+    area: 'flashcards' | 'questions';
+    creditsRequired: number;
+    creditsAvailable: number;
+  } | null>(null);
 
   // Scroll to the appropriate section when view changes
   useEffect(() => {
@@ -262,9 +270,54 @@ const Index = () => {
     document.getElementById('flashcards')?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Add code to save session ID to localStorage whenever it changes
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem('current_session_id', sessionId);
+      console.log('DEBUG: Saved sessionId to localStorage:', sessionId);
+    }
+  }, [sessionId]);
+
+  // Zurücksetzen des insufficientCredits-Status, wenn sich die Credits des Benutzers ändern
+  useEffect(() => {
+    if (user?.credits && insufficientCredits) {
+      // Wenn der Benutzer nun mehr Credits hat als erforderlich, setze den Status zurück
+      if (user.credits >= insufficientCredits.creditsRequired) {
+        setInsufficientCredits(null);
+        toast({
+          title: "Credits aufgeladen",
+          description: "Du hast nun genügend Credits, um fortzufahren.",
+        });
+      }
+    }
+  }, [user?.credits, insufficientCredits]);
+
+  // Function to get the current session ID from state or localStorage
+  const getCurrentSessionId = (): string | undefined => {
+    if (sessionId) {
+      return sessionId;
+    }
+    
+    const storedSessionId = localStorage.getItem('current_session_id');
+    if (storedSessionId) {
+      console.log('DEBUG: Using stored sessionId from localStorage:', storedSessionId);
+      setSessionId(storedSessionId);
+      return storedSessionId;
+    }
+    
+    return undefined;
+  };
+
   // Mutation to generate more flashcards
   const generateMoreFlashcardsMutation = useMutation({
     mutationFn: async () => {
+      const currentSessionId = getCurrentSessionId();
+      console.log('DEBUG: Using session ID for flashcards:', currentSessionId);
+      
+      if (!currentSessionId) {
+        throw new Error('Keine Session-ID vorhanden. Bitte lade zuerst eine Prüfung hoch.');
+      }
+      
       const token = localStorage.getItem('exammaster_token');
       if (!token) {
         throw new Error('Nicht eingeloggt. Bitte melde dich an, um diese Funktion zu nutzen.');
@@ -272,7 +325,7 @@ const Index = () => {
       
       const response = await axios.post<UploadResponse>(
         `${API_URL}/api/v1/generate-more-flashcards`,
-        { session_id: sessionId, count: 5 },
+        { session_id: currentSessionId, count: 5 },
         { 
           headers: { 
             "Content-Type": "application/json",
@@ -295,7 +348,32 @@ const Index = () => {
         description: `${newFlashcardsWithUniqueIds.length} neue Karteikarten wurden erstellt.`,
       });
     },
-    onError: () => {
+    onError: (error: any) => {
+      // Spezielle Behandlung für 402 Payment Required (nicht genügend Credits)
+      if (error.response?.status === 402) {
+        const errorData = error.response.data?.error || {};
+        const message = errorData.message || "Nicht genügend Credits für diese Aktion.";
+        const creditsRequired = errorData.credits_required || 0;
+        const creditsAvailable = errorData.credits_available || 0;
+        
+        toast({
+          title: "Credits nicht ausreichend",
+          description: `${message} Benötigt: ${creditsRequired}, Verfügbar: ${creditsAvailable}`,
+          variant: "destructive",
+          duration: 8000,
+        });
+        
+        // Setze den Status für den Kauf-Button
+        setInsufficientCredits({
+          area: 'flashcards',
+          creditsRequired,
+          creditsAvailable
+        });
+        
+        return;
+      }
+      
+      // Standard-Fehlerbehandlung für andere Fehler
       toast({
         title: "Fehler",
         description: "Beim Generieren neuer Karteikarten ist ein Fehler aufgetreten.",
@@ -307,8 +385,10 @@ const Index = () => {
   // Mutation to generate more questions
   const generateMoreQuestionsMutation = useMutation({
     mutationFn: async () => {
-      console.log('DEBUG: Requesting more test questions from backend');
-      if (!sessionId) {
+      const currentSessionId = getCurrentSessionId();
+      console.log('DEBUG: Using session ID for questions:', currentSessionId);
+      
+      if (!currentSessionId) {
         throw new Error('Keine Session-ID vorhanden. Bitte lade zuerst eine Prüfung hoch.');
       }
       
@@ -319,7 +399,7 @@ const Index = () => {
       
       const response = await axios.post<UploadResponse>(
         `${API_URL}/api/v1/generate-more-questions`,
-        { session_id: sessionId, count: 5 },
+        { session_id: currentSessionId, count: 5 },
         { 
           headers: { 
             "Content-Type": "application/json",
@@ -376,6 +456,30 @@ const Index = () => {
       });
     },
     onError: (error: any) => {
+      // Spezielle Behandlung für 402 Payment Required (nicht genügend Credits)
+      if (error.response?.status === 402) {
+        const errorData = error.response.data?.error || {};
+        const message = errorData.message || "Nicht genügend Credits für diese Aktion.";
+        const creditsRequired = errorData.credits_required || 0;
+        const creditsAvailable = errorData.credits_available || 0;
+        
+        toast({
+          title: "Credits nicht ausreichend",
+          description: `${message} Benötigt: ${creditsRequired}, Verfügbar: ${creditsAvailable}`,
+          variant: "destructive",
+          duration: 8000,
+        });
+        
+        // Setze den Status für den Kauf-Button
+        setInsufficientCredits({
+          area: 'questions',
+          creditsRequired,
+          creditsAvailable
+        });
+        
+        return;
+      }
+      
       toast({
         title: "Fehler",
         description: error.message || "Beim Generieren neuer Testfragen ist ein Fehler aufgetreten.",
@@ -386,7 +490,42 @@ const Index = () => {
 
   // Mutation to reset session and load new topics
   const loadTopicsMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (existingSessionId?: string) => {
+      // Wenn eine Session-ID übergeben wurde, lade nur die Daten für diese Session
+      if (existingSessionId) {
+        console.log('DEBUG: Loading data for existing session:', existingSessionId);
+        
+        // Token für die Authentifizierung abrufen
+        const token = localStorage.getItem('exammaster_token');
+        if (!token) {
+          throw new Error('Nicht eingeloggt. Bitte melde dich an, um diese Funktion zu nutzen.');
+        }
+        
+        // Cache-busting Parameter hinzufügen, um aktuelle Daten zu erhalten
+        const timestamp = new Date().getTime();
+        const response = await axios.get<{ success: boolean; data: SessionData }>(
+          `${API_URL}/api/v1/results/${existingSessionId}?nocache=${timestamp}`,
+          { 
+            withCredentials: true,
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0',
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        );
+        
+        if (response.data.success && response.data.data) {
+          // Speichere die Session-ID im localStorage für spätere Verwendung
+          localStorage.setItem('current_session_id', existingSessionId);
+          return response.data.data;
+        }
+        
+        throw new Error("Keine gültigen Daten für diese Session gefunden");
+      }
+      
+      // Wenn keine Session-ID übergeben wurde, starte eine völlig neue Session
       // Wir generieren eine temporäre ID für einen Redirect
       const redirectId = uuidv4();
       
@@ -400,10 +539,23 @@ const Index = () => {
       // Rückgabewert wird nicht verwendet, da wir die Seite neuladen
       return { success: true };
     },
+    onSuccess: (data) => {
+      // Wenn Daten zurückgegeben wurden (bei bestehender Session), aktualisiere den State
+      if (data && (data as any).flashcards) {
+        const sessionData = data as SessionData;
+        console.log('DEBUG: Successfully loaded session data:', sessionData);
+        
+        // Aktualisiere den State mit den neuen Daten
+        setFlashcards(sessionData.flashcards || []);
+        setQuestions(sessionData.test_questions || []);
+        
+        // Zeige keine Toast-Meldung, um den Benutzer nicht zu verwirren
+      }
+    },
     onError: (error: any) => {
       toast({
         title: "Fehler",
-        description: error.message || "Beim Zurücksetzen der Session ist ein Fehler aufgetreten.",
+        description: error.message || "Beim Laden der Daten ist ein Fehler aufgetreten.",
         variant: "destructive",
       });
     }
@@ -519,11 +671,6 @@ const Index = () => {
                     }
                   }
                   
-                  // Explizit eine neue Session durch loadTopicsMutation starten
-                  setTimeout(() => {
-                    loadTopicsMutation.mutate();
-                  }, 500);
-                  
                   // Entferne die Session-ID aus der URL, falls vorhanden
                   const url = new URL(window.location.href);
                   if (url.searchParams.has('session')) {
@@ -539,19 +686,105 @@ const Index = () => {
                 }}
               />
             </section>
-            <section id="flashcards">
-              <FlashcardGenerator
-                flashcards={flashcards}
-                onGenerateMore={() => generateMoreFlashcardsMutation.mutate()}
-                isGenerating={generateMoreFlashcardsMutation.isPending}
-              />
+            <section id="flashcards" className="section-container">
+              <div className="max-w-5xl mx-auto">
+                <div className="text-center mb-12 space-y-4">
+                  <h2 className="text-3xl md:text-4xl font-bold animate-fade-in">
+                    Interaktive Karteikarten
+                  </h2>
+                  <p className="text-lg text-muted-foreground max-w-2xl mx-auto animate-fade-in">
+                    Erstelle personalisierte Karteikarten und lerne mit deinem eigenen Tempo.
+                  </p>
+                </div>
+                
+                {/* Credits-Fehlerbox anzeigen, wenn nicht genügend Credits vorhanden sind */}
+                {insufficientCredits && insufficientCredits.area === 'flashcards' && (
+                  <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-md flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div className="flex items-start gap-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-destructive flex-shrink-0 mt-0.5">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                      <div>
+                        <h3 className="font-medium">Nicht genügend Credits</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Für neue Karteikarten benötigst du {insufficientCredits.creditsRequired} Credits.
+                          Aktuell verfügbar: {insufficientCredits.creditsAvailable} Credits.
+                        </p>
+                      </div>
+                    </div>
+                    <Button 
+                      onClick={() => {
+                        window.location.href = "/payment";
+                      }}
+                      className="whitespace-nowrap"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+                        <line x1="1" y1="10" x2="23" y2="10" />
+                      </svg>
+                      Credits aufladen
+                    </Button>
+                  </div>
+                )}
+                
+                <FlashcardGenerator
+                  flashcards={flashcards}
+                  onGenerateMore={() => generateMoreFlashcardsMutation.mutate()}
+                  isGenerating={generateMoreFlashcardsMutation.isPending}
+                />
+              </div>
             </section>
-            <section id="test-simulator">
-              <TestSimulator
-                questions={questions}
-                onGenerateMore={() => generateMoreQuestionsMutation.mutate()}
-                isGenerating={generateMoreQuestionsMutation.isPending}
-              />
+            <section id="test-simulator" className="section-container bg-secondary/30">
+              <div className="max-w-5xl mx-auto">
+                <div className="text-center mb-12 space-y-4">
+                  <h2 className="text-3xl md:text-4xl font-bold animate-fade-in">
+                    Simulations-Test
+                  </h2>
+                  <p className="text-lg text-muted-foreground max-w-2xl mx-auto animate-fade-in">
+                    Überprüfe dein Wissen mit einer Sammlung von Übungsfragen.
+                  </p>
+                </div>
+                
+                {/* Credits-Fehlerbox anzeigen, wenn nicht genügend Credits vorhanden sind */}
+                {insufficientCredits && insufficientCredits.area === 'questions' && (
+                  <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-md flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div className="flex items-start gap-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-destructive flex-shrink-0 mt-0.5">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                      <div>
+                        <h3 className="font-medium">Nicht genügend Credits</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Für neue Testfragen benötigst du {insufficientCredits.creditsRequired} Credits.
+                          Aktuell verfügbar: {insufficientCredits.creditsAvailable} Credits.
+                        </p>
+                      </div>
+                    </div>
+                    <Button 
+                      onClick={() => {
+                        window.location.href = "/payment";
+                      }}
+                      className="whitespace-nowrap"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+                        <line x1="1" y1="10" x2="23" y2="10" />
+                      </svg>
+                      Credits aufladen
+                    </Button>
+                  </div>
+                )}
+                
+                <TestSimulator
+                  questions={questions}
+                  onGenerateMore={() => generateMoreQuestionsMutation.mutate()}
+                  isGenerating={generateMoreQuestionsMutation.isPending}
+                />
+              </div>
             </section>
             <section id="concept-mapper">
               <ConceptMapper sessionId={sessionId} />

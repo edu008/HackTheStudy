@@ -1,4 +1,3 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -11,7 +10,10 @@ import NotFound from "./pages/NotFound";
 import Dashboard from "./pages/Dashboard";
 import SignIn from "./pages/SignIn";
 import PaymentPage from "./pages/PaymentPage";
+import PaymentSuccessPage from "./pages/PaymentSuccess";
 import AuthCallback from "./pages/AuthCallback";
+import Impressum from "./pages/Impressum";
+import Datenschutz from "./pages/Datenschutz";
 import { useAuth } from "./contexts/AuthContext";
 
 // Wrapper components for protected routes
@@ -62,7 +64,13 @@ const App = () => {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/signin" element={<SignIn />} />
               <Route path="/payment" element={<PaymentPage />} />
+              <Route path="/payment/success" element={<PaymentSuccessPage />} />
+              <Route path="/payment/cancel" element={<PaymentPage />} />
               <Route path="/auth-callback" element={<AuthCallback />} />
+              
+              {/* Legal Pages */}
+              <Route path="/impressum" element={<Impressum />} />
+              <Route path="/datenschutz" element={<Datenschutz />} />
               
               {/* New routes for Flashcards and Test Simulator */}
               <Route path="/flashcards" element={<FlashcardsPage />} />

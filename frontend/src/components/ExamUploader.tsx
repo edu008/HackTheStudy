@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { FileText, Upload, CheckCircle, Loader2, X, AlertCircle, BookOpen } from 'lucide-react';
+import { FileText, Upload, CheckCircle, Loader2, X, AlertCircle, BookOpen, CreditCard } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from '@tanstack/react-query';
 import axios from 'axios';
 import { Progress } from "@/components/ui/progress";
+import { useAuth } from "@/contexts/AuthContext";
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 // Maximum context size in tokens
-const MAX_CONTEXT_SIZE = 128000; // GPT-4o Kontextgröße
+const MAX_CONTEXT_SIZE = 128000; // GPT-4o Kontextgrösse
 // Reserviert für Systemprompt und Antwort
 const RESERVED_TOKENS = 8000;
 // Effektiv nutzbare Tokens für den Eingabetext
@@ -74,10 +75,10 @@ interface UploadResponse {
   session_id: string;
 }
 
-// Eine Funktion zur Schätzung der Token-Anzahl basierend auf der Dateigröße
+// Eine Funktion zur Schätzung der Token-Anzahl basierend auf der Dateigrösse
 const estimateTokensFromFile = async (file: File): Promise<number> => {
   // Kalibrierungsfaktor (empirisch ermittelt) - reduziert die Schätzung, da wir überschätzen
-  const CALIBRATION_FACTOR = 0.2; // Reduziert auf 20% für GPT-4o, da wir einen größeren Kontext haben
+  const CALIBRATION_FACTOR = 0.2; // Reduziert auf 20% für GPT-4o, da wir einen grösseren Kontext haben
   
   // Für PDF-Dateien
   if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
@@ -128,6 +129,7 @@ interface ExamUploaderProps {
 
 const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetSession }: ExamUploaderProps) => {
   const { toast } = useToast();
+  const { refreshUserCredits } = useAuth();
   const [files, setFiles] = useState<File[]>([]);
   const [isUploaded, setIsUploaded] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -140,6 +142,13 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
   const [lastUpdateTime, setLastUpdateTime] = useState<number>(0);
   const [sessionFiles, setSessionFiles] = useState<string[]>([]);
   const [isProcessingNotified, setIsProcessingNotified] = useState<boolean>(false);
+  // Neue State-Variable für den Upload-Fehlerstatus
+  const [uploadError, setUploadError] = useState<{
+    title: string;
+    message: string;
+    code?: number;
+    type?: string;
+  } | null>(null);
 
   // Funktion zum Abrufen von Informationen über eine bestehende Session
   const fetchExistingSessionTokens = async (sessionId: string | undefined) => {
@@ -219,7 +228,7 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
     }
   };
 
-  // Aktualisiere die Session-Informationen in regelmäßigen Abständen
+  // Aktualisiere die Session-Informationen in regelmässigen Abständen
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
     let retryCount = 0;
@@ -422,7 +431,7 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
       
       // Poll the results endpoint until the data is available
       let retries = 0;
-      const maxRetries = 90; // Erhöht auf 90 (ca. 3 Minuten Wartezeit)
+      const maxRetries = 120; // Erhöht auf 120 (ca. 4 Minuten Wartezeit)
       const retryInterval = 2000; // 2 Sekunden
       
       // Tracking für den letzten bekannten Status
@@ -430,6 +439,7 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
       let lastFlashcardCount = 0;
       let lastQuestionCount = 0;
       let statusChangeTime = Date.now();
+      let consecutiveRateLimitErrors = 0; // Zähler für aufeinanderfolgende Rate-Limit-Fehler
       
       // Wenn es sich um eine annotierte PDF handelt, zeige einen Hinweis auf längere Verarbeitungszeit
       const hasAnnotatedPDF = filesToUpload.some(file => 
@@ -463,9 +473,13 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
                 'Pragma': 'no-cache',
                 'Expires': '0'
               },
-              withCredentials: true 
+              withCredentials: true,
+              timeout: 30000 // Erhöhtes Timeout auf 30 Sekunden
             }
           );
+          
+          // Zurücksetzen des Rate-Limit-Zählers, da die Anfrage erfolgreich war
+          consecutiveRateLimitErrors = 0;
           
           // Wenn die Antwort einen Fehler enthält, diesen entsprechend anzeigen
           if (!resultsResponse.data.success) {
@@ -479,33 +493,39 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
               duration: 8000,
             });
             
-            // Wenn der Fehler aufgrund der Dateigröße auftritt
-            if (resultsResponse.data.error_type === 'token_limit') {
-              return {
-                success: false,
-                message: "Die Datei ist zu groß für die Verarbeitung",
-                session_id: currentSessionId,
-                flashcards: [],
-                questions: []
-              };
-            }
-            
-            // Bei beschädigten Dateien
-            if (resultsResponse.data.error_type === 'corrupted_file') {
-              return {
-                success: false,
-                message: "Die Datei scheint beschädigt zu sein",
-                session_id: currentSessionId,
-                flashcards: [],
-                questions: []
-              };
-            }
-            
             // Bei API-Ratenlimits
-            if (resultsResponse.data.error_type === 'rate_limit') {
+            if (resultsResponse.data.error_type === 'rate_limit' || 
+                (resultsResponse.data.error_type === 'api_error' && 
+                 (resultsResponse.data.error?.message?.toLowerCase().includes('rate limit') ||
+                  resultsResponse.data.error?.message?.includes('429')))) {
+              
+              // Bei OpenAI Rate Limit (429) speziellen Toast anzeigen
+              if (resultsResponse.data.error?.error_code === 'openai_429' ||
+                  resultsResponse.data.error?.message?.includes('429') ||
+                  resultsResponse.data.error?.message?.toLowerCase().includes('tokens per min') ||
+                  resultsResponse.data.error?.message?.toLowerCase().includes('tpm') ||
+                  resultsResponse.data.error?.original_error?.includes('429')) {
+                
+                // Detaillierte Fehlermeldung anzeigen mit direktem Hinweis auf den 429-Fehler
+                toast({
+                  title: "OpenAI-Anfragelimit überschritten (429)",
+                  description: "Die Datei ist zu groß für die Verarbeitung in einem Durchgang. Teile die Datei in kleinere Abschnitte auf oder versuche es später erneut.",
+                  variant: "destructive",
+                  duration: 15000,
+                });
+                
+                // Setze den Fehler, um ihn im UI anzuzeigen
+                setError("OpenAI-Anfragelimit überschritten (Error 429): Die Datei ist zu groß für die Verarbeitung in einem Durchgang. Teile die Datei in kleinere Abschnitte auf oder versuche es später erneut.");
+                
+                // Setze den Upload-Zustand zurück
+                setIsUploaded(false);
+                setUploadProgress(0);
+              }
+              
+              // Polling-Prozess beenden - sofort aus der Schleife ausbrechen
               return {
                 success: false,
-                message: "API-Anfragelimit erreicht. Bitte versuchen Sie es später erneut",
+                message: "API-Anfragelimit erreicht. Die Verarbeitung wurde abgebrochen.",
                 session_id: currentSessionId,
                 flashcards: [],
                 questions: []
@@ -529,6 +549,33 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
             const processingStatus = resultsResponse.data.data.analysis?.processing_status || "";
             
             console.log(`DEBUG: Poll ${retries}/${maxRetries} - Status: ${processingStatus}, Flashcards: ${flashcards.length}, Questions: ${questions.length}`);
+            
+            // Prüfen auf spezielle Fehlertypen im Processing-Status
+            if (processingStatus === "rate_limit_error" || processingStatus === "failed") {
+              console.error('DEBUG: Processing failed with status:', processingStatus);
+              
+              // Bei Rate-Limit-Fehler
+              if (processingStatus === "rate_limit_error") {
+                toast({
+                  title: "OpenAI-Anfragelimit überschritten",
+                  description: "Die Datei ist zu groß für die Verarbeitung in einem Durchgang. Teile die Datei in kleinere Abschnitte auf oder versuche es später erneut.",
+                  variant: "destructive",
+                  duration: 15000,
+                });
+                
+                setError("OpenAI-Anfragelimit überschritten: Die Datei ist zu groß für die Verarbeitung in einem Durchgang. Teile die Datei in kleinere Abschnitte auf oder versuche es später erneut.");
+                setIsUploaded(false);
+                setUploadProgress(0);
+                
+                return {
+                  success: false,
+                  message: "OpenAI-Anfragelimit überschritten",
+                  session_id: currentSessionId,
+                  flashcards: [],
+                  questions: []
+                };
+              }
+            }
             
             // Status-Änderung erkennen
             if (processingStatus !== lastStatus || 
@@ -598,6 +645,71 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
           }
         } catch (error) {
           console.error(`DEBUG: Error checking results (attempt ${retries+1}):`, error);
+          
+          // Spezielle Behandlung für 429-Fehler (Too Many Requests)
+          const axiosError = error as any;
+          if (axiosError.response?.status === 429) {
+            console.error("429 Rate Limit Fehler beim Polling:", axiosError.response.data);
+            
+            // Erhöhe den Zähler für aufeinanderfolgende Rate-Limit-Fehler
+            consecutiveRateLimitErrors++;
+            
+            // Wenn 3 oder mehr aufeinanderfolgende 429-Fehler auftreten, breche ab
+            if (consecutiveRateLimitErrors >= 3) {
+              const errorData = axiosError.response?.data;
+              const message = errorData?.error?.message || "Die Dateien überschreiten das Tokenlimit von OpenAI. Bitte teile die Dateien in kleinere Abschnitte auf oder versuche es später erneut.";
+              
+              toast({
+                title: "API-Limit wiederholt erreicht",
+                description: message,
+                variant: "destructive",
+                duration: 15000,
+              });
+              
+              // Setze den Fehlerstatus für die UI-Anzeige
+              setUploadError({
+                title: "Dateien zu groß für die Verarbeitung",
+                message: message,
+                code: 429,
+                type: "rate_limit"
+              });
+              
+              setError("Die Anfrage wurde vom Server mit einem Rate-Limit-Fehler (429) abgelehnt. Bitte warte einige Minuten und versuche es mit kleineren Dateien erneut.");
+              setIsUploaded(true); // Set to true to show error screen
+              setUploadProgress(0);
+              
+              return {
+                success: false,
+                message: "API-Anfragelimit wiederholt erreicht. Die Verarbeitung wurde abgebrochen.",
+                session_id: currentSessionId,
+                flashcards: [],
+                questions: []
+              };
+            }
+            
+            // Bei einzelnen 429-Fehlern: längere Pause einlegen (10 Sekunden)
+            console.log(`Rate-Limit-Fehler #${consecutiveRateLimitErrors}, warte 10 Sekunden vor dem nächsten Versuch`);
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            continue; // Mit dem nächsten Durchlauf fortfahren ohne retries zu erhöhen
+          }
+          
+          // WICHTIG: Weitere Fehler nicht ignorieren
+          if (retries >= maxRetries / 2) {
+            // Nach der Hälfte der Versuche: bei jedem Fehler abbrechen statt weiterzumachen
+            toast({
+              title: "Fehler beim Abfragen der Ergebnisse",
+              description: "Es gab mehrere Probleme beim Abrufen der Verarbeitungsergebnisse. Die Verarbeitung wird abgebrochen.",
+              variant: "destructive",
+            });
+            
+            return {
+              success: false,
+              message: "Fehler beim Abfragen der Ergebnisse. Bitte versuchen Sie es später erneut.",
+              session_id: currentSessionId,
+              flashcards: [],
+              questions: []
+            };
+          }
         }
         
         // Wait before retrying
@@ -617,6 +729,9 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
     onSuccess: (data) => {
       setIsUploaded(true);
       
+      // Aktualisiere den Creditstand im Frontend nach erfolgreichem Upload
+      refreshUserCredits();
+      
       if (data.flashcards.length === 0 && data.questions.length === 0) {
         // Show a warning toast if no flashcards or questions were generated
         toast({
@@ -632,6 +747,20 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
         });
       }
       
+      // Anstatt eine neue Session zu starten, laden wir nur die Daten für die aktuelle Session neu
+      if (loadTopicsMutation && data.session_id) {
+        console.log('DEBUG: Reloading topics data for current session:', data.session_id);
+        setTimeout(() => {
+          // Stelle sicher, dass keine Navigation oder Session-Reset passiert
+          loadTopicsMutation.mutate(data.session_id, {
+            onSuccess: () => {
+              // Stelle sicher, dass die aktuelle Session-ID beibehalten wird
+              localStorage.setItem('current_session_id', data.session_id);
+            }
+          });
+        }, 1000);
+      }
+      
       if (onUploadSuccess) {
         console.log('DEBUG: Calling onUploadSuccess with data');
         onUploadSuccess(data);
@@ -642,6 +771,31 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
       console.error('DEBUG: Error response:', error.response?.data);
       setError(error.message);
       
+      // Rate-Limit-Fehler (429) direkt behandeln
+      if (error.response?.status === 429) {
+        const errorData = error.response.data;
+        const message = errorData?.error?.message || "Die Dateien überschreiten das Tokenlimit von OpenAI. Bitte teile die Dateien in kleinere Abschnitte auf oder versuche es später erneut.";
+        
+        toast({
+          title: "Dateien zu groß für die Verarbeitung",
+          description: message,
+          variant: "destructive",
+          duration: 15000,
+        });
+        
+        setUploadError({
+          title: "Dateien zu groß für die Verarbeitung",
+          message: message,
+          code: 429,
+          type: error.response.data?.error_type || "rate_limit"
+        });
+        
+        // Upload-Status zurücksetzen, aber Dateien beibehalten
+        setIsUploaded(true); // Wichtig: true setzen, um den Fehlerbildschirm anzuzeigen
+        setUploadProgress(0);
+        return;
+      }
+      
       // Prüfen, ob ein strukturierter Fehler vom Backend vorliegt
       if (error.response?.data?.error_type) {
         const errorData = error.response.data;
@@ -650,7 +804,7 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
         switch (errorData.error_type) {
           case 'token_limit':
             toast({
-              title: "Datei zu groß",
+              title: "Datei zu gross",
               description: errorData.message || "Die Datei überschreitet das Tokensize-Limit. Bitte teilen Sie die Datei in kleinere Abschnitte auf.",
               variant: "destructive",
             });
@@ -661,6 +815,48 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
               description: errorData.message || "Das API-Anfragelimit wurde erreicht. Bitte versuchen Sie es später erneut.",
               variant: "destructive",
             });
+            
+            // Setze den Fehlerstatus für die UI-Anzeige
+            setUploadError({
+              title: "Dateien zu groß für die Verarbeitung",
+              message: errorData.message || "Die Dateien überschreiten das Tokenlimit von OpenAI. Bitte teile die Dateien in kleinere Abschnitte auf oder versuche es später erneut.",
+              code: 429,
+              type: "rate_limit"
+            });
+            
+            setIsUploaded(true); // Set to true to show error screen
+            break;
+          case 'api_error':
+            // Überprüfe auf OpenAI Rate Limit (429)
+            if (errorData.message?.includes('429') || 
+                errorData.message?.toLowerCase().includes('tokens per min') ||
+                errorData.message?.toLowerCase().includes('tpm')) {
+              
+              toast({
+                title: "OpenAI-Anfragelimit überschritten",
+                description: "Die Anfrage überschreitet das OpenAI-Tokenlimit pro Minute. Versuche es in einigen Minuten erneut oder teile die Datei in kleinere Abschnitte auf.",
+                variant: "destructive",
+                duration: 15000,
+              });
+              
+              // Setze den Fehlerstatus für die UI-Anzeige
+              setUploadError({
+                title: "Dateien zu groß für die Verarbeitung",
+                message: "Die Dateien überschreiten das Tokenlimit von OpenAI. Bitte teile die Dateien in kleinere Abschnitte auf oder versuche es später erneut.",
+                code: 429,
+                type: "rate_limit"
+              });
+              
+              // Setze den Upload-Zustand zurück
+              setIsUploaded(true); // Set to true to show error screen
+              setFiles([]);
+            } else {
+              toast({
+                title: "API-Fehler",
+                description: errorData.message || "Bei der Verarbeitung ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut.",
+                variant: "destructive",
+              });
+            }
             break;
           case 'corrupted_file':
             toast({
@@ -677,6 +873,28 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
               variant: "destructive",
             });
         }
+      } 
+      // Spezielle Behandlung für 402 Payment Required (nicht genügend Credits)
+      else if (error.response?.status === 402) {
+        const errorData = error.response.data?.error || {};
+        const message = errorData.message || "Nicht genügend Credits für diese Aktion.";
+        const creditsRequired = errorData.credits_required || 0;
+        const creditsAvailable = errorData.credits_available || 0;
+        
+        // Aktualisiere den Creditstand im Frontend
+        refreshUserCredits();
+        
+        toast({
+          title: "Credits nicht ausreichend",
+          description: `${message} Bitte laden Sie Ihre Credits auf, um fortzufahren.`,
+          variant: "destructive",
+          duration: 8000,
+        });
+        
+        // Fehlermeldung mit Credits-Informationen und direktem Button zum Aufladen setzen
+        setError(`Nicht genügend Credits für diese Aktion. Benötigt: ${creditsRequired}, Verfügbar: ${creditsAvailable}. Bitte laden Sie Ihre Credits auf, um fortzufahren.`);
+        
+        // Credit-Button wird im UI in der Fehlermeldung angezeigt (siehe unten)
       } else {
         // Fallback für andere Fehler
         toast({
@@ -848,11 +1066,11 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
     const totalTokens = tokenEstimate; // Dies umfasst bereits bestehende + neue Tokens
     if (totalTokens > USABLE_TOKENS) {
       toast({
-        title: "Dateien zu groß",
-        description: `Die Gesamtgröße überschreitet das maximale Tokenlimit (${totalTokens.toLocaleString()} von max. ${USABLE_TOKENS.toLocaleString()}). Bitte verwenden Sie kleinere Dateien.`,
+        title: "Dateien zu gross",
+        description: `Die Gesamtgrösse überschreitet das maximale Tokenlimit (${totalTokens.toLocaleString()} von max. ${USABLE_TOKENS.toLocaleString()}). Bitte verwenden Sie kleinere Dateien.`,
         variant: "destructive",
       });
-      setError(`Die Dateien sind zu groß für die Verarbeitung. Maximale Kontextgröße: ${USABLE_TOKENS.toLocaleString()} Tokens, Geschätzte Gesamtgröße: ${totalTokens.toLocaleString()} Tokens.`);
+      setError(`Die Dateien sind zu gross für die Verarbeitung. Maximale Kontextgrösse: ${USABLE_TOKENS.toLocaleString()} Tokens, Geschätzte Gesamtgrösse: ${totalTokens.toLocaleString()} Tokens.`);
       return;
     }
     
@@ -1068,7 +1286,7 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
                             {files.length === 1 ? "1 Datei ausgewählt" : `${files.length} Dateien ausgewählt`}
                           </p>
                           <span className="text-xs text-muted-foreground">
-                            Gesamtgröße: {isEstimating ? "Wird berechnet..." : getTokensDisplay()}
+                            Gesamtgrösse: {isEstimating ? "Wird berechnet..." : getTokensDisplay()}
                           </span>
                         </div>
                       </div>
@@ -1166,9 +1384,21 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
                       />
                       
                       {error && (
-                        <div className="mt-4 p-3 bg-destructive/10 rounded-md border border-destructive/20 text-destructive flex items-start gap-2">
-                          <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
-                          <p className="text-sm">{error}</p>
+                        <div className="mt-4 p-3 bg-destructive/10 rounded-md border border-destructive/20 text-destructive flex flex-col items-start gap-2">
+                          <div className="flex items-start gap-2 w-full">
+                            <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm">{error}</p>
+                          </div>
+                          {error.includes("Nicht genügend Credits") && (
+                            <Button 
+                              variant="default" 
+                              className="mt-2 self-end" 
+                              onClick={() => window.location.href = "/payment"}
+                            >
+                              <CreditCard className="mr-2 h-4 w-4" />
+                              Credits aufladen
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>

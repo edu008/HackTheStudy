@@ -1,11 +1,17 @@
-from flask import request, jsonify, current_app
+from flask import request, jsonify, current_app, g
 from . import api_bp
 from .utils import query_chatgpt, detect_language, generate_concept_map_suggestions, check_and_manage_user_sessions
-from models import db, Upload, Topic, UserActivity, Connection
+from models import db, Upload, Topic, UserActivity, Connection, User
 import logging
 from .auth import token_required
 import uuid
 from tasks import process_upload
+from flask_cors import cross_origin
+from datetime import datetime
+import tiktoken
+import json
+import time
+from api.credit_service import check_credits_available, calculate_token_cost
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +92,7 @@ def generate_related_topics():
         - If a description is missing, infer a logical relationship based on the context (e.g., 'relates to' with a brief explanation).
         """ if language != 'de' else
         f"""
-        Basierend auf den folgenden Themen, schlage für jedes Subthema (außer dem Hauptthema) genau ein neues verwandtes Thema vor und erstelle Verbindungen zwischen diesen Themen. Analysiere die inhaltlichen Zusammenhänge und gib für jede Verbindung eine präzise, detaillierte Beschreibung als Label an. Das Hauptthema sollte ebenfalls mit mindestens einem der neuen Themen verknüpft werden.
+        Basierend auf den folgenden Themen, schlage für jedes Subthema (ausser dem Hauptthema) genau ein neues verwandtes Thema vor und erstelle Verbindungen zwischen diesen Themen. Analysiere die inhaltlichen Zusammenhänge und gib für jede Verbindung eine präzise, detaillierte Beschreibung als Label an. Das Hauptthema sollte ebenfalls mit mindestens einem der neuen Themen verknüpft werden.
 
         Hauptthema: {main_topic.name}
         Subthemen: {', '.join([s.name for s in subtopics])}
@@ -102,7 +108,7 @@ def generate_related_topics():
         - source_text:Wirtschaft:target_text:Marktversagen:label:Wirtschaft erklärt das Konzept des Marktversagens, bei dem der freie Markt Ressourcen nicht effizient zuteilen kann.
 
         Regeln:
-        - Generiere für jedes Subthema (außer dem Hauptthema) genau 1 neues verwandtes Thema.
+        - Generiere für jedes Subthema (ausser dem Hauptthema) genau 1 neues verwandtes Thema.
         - Verwende KEINE generischen Namen wie "Verwandtes Thema X".
         - Verwende KEINE Nummerierung oder Aufzählungszeichen bei den neuen Themen.
         - Jedes neue Thema muss einen spezifischen, beschreibenden Namen haben, der den Inhalt klar widerspiegelt.
@@ -612,3 +618,48 @@ def generate_fallback_suggestions(main_topic, parent_subtopics, language='en'):
         result[parent] = children
     
     return result
+
+@api_bp.route('/generate/<session_id>', methods=['POST'])
+@token_required
+def generate_topics(session_id):
+    upload = Upload.query.filter_by(session_id=session_id).first()
+    if not upload:
+        return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+    
+    # Prüfen, ob der Text zu lang ist
+    content = upload.content or ""
+    content_length = len(content)
+    
+    if content_length > 100000:
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "CONTENT_TOO_LARGE",
+                "message": "Der Text ist zu lang. Bitte versuchen Sie es mit einem kürzeren Text."
+            }
+        }), 400
+        
+    # Schätze die Kosten basierend auf der Länge des Inhalts
+    estimated_prompt_tokens = min(content_length // 3, 100000)  # Ungefähre Schätzung: 1 Token pro 3 Zeichen
+    estimated_output_tokens = 4000  # Geschätzte Ausgabe für Topics und Verbindungen (mehr als Fragen)
+    
+    # Berechne die ungefähren Kosten
+    estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens)
+    
+    # Prüfe, ob der Benutzer genügend Credits hat
+    if not check_credits_available(estimated_cost):
+        # Hole die aktuellen Credits des Benutzers
+        user = User.query.get(g.user.id)
+        current_credits = user.credits if user else 0
+        
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "INSUFFICIENT_CREDITS",
+                "message": f"Nicht genügend Credits. Sie benötigen {estimated_cost} Credits für diese Anfrage, haben aber nur {current_credits} Credits.",
+                "credits_required": estimated_cost,
+                "credits_available": current_credits
+            }
+        }), 402
+    
+    # ... existing code ...

@@ -2,14 +2,16 @@
 from flask import request, jsonify
 from . import api_bp
 from models import db, Upload, Question, Topic
-from models import Flashcard
+from models import Flashcard, User
 from tasks import process_upload
 import uuid
-from .utils import allowed_file, extract_text_from_file, check_and_manage_user_sessions, update_session_timestamp
+from .utils import allowed_file, extract_text_from_file, check_and_manage_user_sessions, update_session_timestamp, count_tokens
 import logging
 from .auth import token_required
+from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
 import time
 import json
+from tasks import redis_client, cleanup_processing_for_session
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +63,77 @@ def upload_file():
             }
         }), 400
     
-    # Prüfe auf zu große Datei (z.B. > 20 MB)
+    # Extrahiere Text aus der Datei
+    try:
+        text_content = extract_text_from_file(file_content, file_name)
+    except Exception as e:
+        logger.error(f"Fehler beim Extrahieren des Textes: {str(e)}")
+        return jsonify({
+            "success": False, 
+            "error": {
+                "code": "TEXT_EXTRACTION_ERROR", 
+                "message": f"Der Text konnte nicht aus der Datei extrahiert werden: {str(e)}"
+            }
+        }), 400
+    
+    # Schätze die Tokenanzahl und Kosten für die Verarbeitung
+    estimated_token_count = count_tokens(text_content)
+    
+    # Größere Dateien kosten mehr (linear mit der Anzahl der Token, plus Ausgabetoken, die etwa 30% der Eingabetoken ausmachen)
+    estimated_output_tokens = max(1000, int(estimated_token_count * 0.3))  # Mindestens 1000 Tokens für die Ausgabe
+    estimated_cost = calculate_token_cost(estimated_token_count, estimated_output_tokens)
+    
+    # Überprüfe, ob der Benutzer genügend Credits hat
+    if user_id:
+        user = User.query.get(user_id)
+        if user:
+            if user.credits < estimated_cost:
+                return jsonify({
+                    "success": False,
+                    "error": {
+                        "code": "INSUFFICIENT_CREDITS",
+                        "message": f"Nicht genügend Credits für die Verarbeitung dieser Datei. Benötigt: {estimated_cost} Credits. Verfügbar: {user.credits} Credits.",
+                        "credits_required": estimated_cost,
+                        "credits_available": user.credits
+                    }
+                }), 402
+        else:
+            logger.error(f"Benutzer mit ID {user_id} wurde nicht gefunden.")
+            return jsonify({
+                "success": False,
+                "error": {
+                    "code": "USER_NOT_FOUND",
+                    "message": "Der angegebene Benutzer existiert nicht."
+                }
+            }), 404
+    
+    # Speichere die Upload-Informationen
+    try:
+        # Versuche, Informationen über existierende Uploads für die angegebene Session_id abzurufen
+        upload_session = Upload.query.filter_by(session_id=session_id).first()
+        
+        # Wenn die Sitzung bereits für einen anderen Benutzer verwendet wird, lehne die Anfrage ab
+        if upload_session and upload_session.user_id and user_id and upload_session.user_id != user_id:
+            logger.error(f"Session {session_id} already belongs to a different user: {upload_session.user_id}")
+            return jsonify({
+                "success": False, 
+                "error": {
+                    "code": "SESSION_CONFLICT", 
+                    "message": "Diese Session gehört bereits zu einem anderen Benutzer."
+                }
+            }), 403
+    except Exception as e:
+        logger.error(f"Error checking session ownership: {str(e)}")
+        # Wir setzen den Vorgang fort, auch wenn es einen Fehler gibt
+    
+    # Prüfe auf zu grosse Datei (z.B. > 20 MB)
     max_file_size = 20 * 1024 * 1024  # 20 MB
     if len(file_content) > max_file_size:
         return jsonify({
             "success": False, 
             "error": {
                 "code": "FILE_TOO_LARGE", 
-                "message": f"Die Datei ist zu groß ({len(file_content) // (1024*1024)} MB). Maximale Größe: 20 MB."
+                "message": f"Die Datei ist zu gross ({len(file_content) // (1024*1024)} MB). Maximale Grösse: 20 MB."
             }
         }), 400
     
@@ -84,7 +149,7 @@ def upload_file():
     if aggressive_cleaning and file_name.lower().endswith('.pdf'):
         import re
         try:
-            # Speichere die originale Größe für Diagnose
+            # Speichere die originale Grösse für Diagnose
             original_size = len(file_content)
             
             # Entferne Null-Bytes und andere problematische Binärdaten - REDUZIERT
@@ -139,7 +204,7 @@ def upload_file():
         # Umfassende Textextraktion mit Fehlerbehandlung
         try:
             # Extrahiere den aktuellen Inhalt
-            from .utils import extract_text_from_file, clean_text_for_database
+            from .utils import clean_text_for_database
             
             # Bei annotierten PDFs spezielle Behandlung
             if is_annotated_pdf:
@@ -323,6 +388,11 @@ def upload_file():
             logger.info(f"No new task started for session {session_id}, file added to existing processing")
             task_id = "no_task_needed"
         
+        # Nach erfolgreicher Verarbeitung die Credits abziehen
+        if user_id and user:
+            deduct_credits(user_id, estimated_cost)
+            logger.info(f"Deducted {estimated_cost} credits from user {user_id} for file processing")
+        
         return jsonify({
             "success": True,
             "message": "Upload processing started. If multiple files are uploaded simultaneously, only one will be analyzed at a time.",
@@ -361,13 +431,48 @@ def get_results(session_id):
     # Direkte Datenbankabfrage verwenden, um sicherzustellen, dass wir aktuelle Daten bekommen
     db.session.refresh(upload)
     
+    # Prüfe auf spezielle Statuswerte in Redis
+    processing_status_key = f"processing_status:{session_id}"
+    special_status = redis_client.get(processing_status_key)
+    
+    # Wenn ein spezieller Status gefunden wurde, diesen berücksichtigen
+    if special_status:
+        special_status = special_status.decode('utf-8')
+        logger.info(f"Special status found for session {session_id}: {special_status}")
+        
+        # Bei Rate-Limit-Fehlern
+        if special_status == "rate_limit_error" or special_status.startswith("failed:rate_limit"):
+            error_key = f"error_details:{session_id}"
+            stored_error = redis_client.get(error_key)
+            error_data = {"code": "RATE_LIMIT", "message": "API-Anfragelimit erreicht"}
+            
+            if stored_error:
+                try:
+                    parsed_error = json.loads(stored_error)
+                    error_data.update(parsed_error)
+                except:
+                    pass
+            
+            # Stelle sicher, dass alle Ressourcen freigegeben werden
+            from tasks import cleanup_processing_for_session as cleanup_session
+            cleanup_session(session_id, "rate_limit_from_api")
+            
+            # Markiere die Verarbeitung als beendet
+            update_processing_status(session_id, "failed")
+            
+            return jsonify({
+                "success": False,
+                "error": error_data,
+                "error_type": "rate_limit",
+                "upload_aborted": True
+            }), 429, response_headers
+    
     # Überprüfe den Verarbeitungsstatus und gib bei Fehlern entsprechende Informationen zurück
     if upload.processing_status == "failed":
         error_message = "Bei der Verarbeitung ist ein Fehler aufgetreten"
         error_type = "processing_failed"
         
         # Versuche, aus Redis eventuell gespeicherte detailliertere Fehlerinformationen zu bekommen
-        from tasks import redis_client
         error_key = f"error_details:{session_id}"
         
         stored_error = redis_client.get(error_key)
@@ -376,6 +481,24 @@ def get_results(session_id):
                 error_data = json.loads(stored_error)
                 error_type = error_data.get("error_type", error_type)
                 error_message = error_data.get("message", error_message)
+                
+                # Spezielle Behandlung für Rate-Limit-Fehler
+                if error_type == "rate_limit" and "429" in error_message:
+                    # Stelle sicher, dass die Session als abgebrochen markiert ist
+                    from tasks import cleanup_processing_for_session
+                    cleanup_processing_for_session(session_id, "openai_429_explicit_abort")
+                    
+                    return jsonify({
+                        "success": False,
+                        "error": {
+                            "code": "OPENAI_429",
+                            "message": "Das OpenAI-Tokenlimit pro Minute wurde überschritten. Bitte teilen Sie die Datei in kleinere Abschnitte auf oder versuchen Sie es später erneut.",
+                            "original_error": error_message
+                        },
+                        "error_type": "rate_limit",
+                        "error_code": "openai_429",
+                        "upload_aborted": True  # Explizites Flag, dass der Upload abgebrochen wurde
+                    }), 429, response_headers
             except:
                 pass  # Bei Parsing-Fehlern verwenden wir die Standardnachricht
         
@@ -416,6 +539,11 @@ def get_results(session_id):
     # Ermittle die Token-Anzahl
     token_count = len(upload.content) // 4 if upload.content else 0
     
+    # Verarbeite spezielle Redis-Status auch für erfolgreich verarbeitete Uploads
+    processing_status = upload.processing_status
+    if special_status:
+        processing_status = special_status
+    
     # Log die zurückgegebenen Daten für Debugging-Zwecke
     print(f"DEBUG: Returning data for session {session_id}: {len(flashcards_data)} flashcards, {len(questions_data)} questions")
     
@@ -427,11 +555,10 @@ def get_results(session_id):
             "analysis": {
                 "main_topic": main_topic,
                 "subtopics": subtopics,
-                "content_type": "unknown",
-                "language": "de",  # Default to German for this application
+                "language": detect_language(upload.content),
+                "processing_status": processing_status,
                 "files": file_list,
-                "token_count": token_count,
-                "processing_status": upload.processing_status
+                "token_count": token_count
             },
             "session_id": session_id
         },
@@ -478,3 +605,25 @@ def get_session_info(session_id):
             "processing_status": "waiting" if token_count > 0 and not main_topic else ("completed" if main_topic else "pending")
         }
     }), 200
+
+def update_processing_status(session_id, status):
+    """
+    Aktualisiert den Verarbeitungsstatus einer Session in der Datenbank
+    
+    Args:
+        session_id: Die ID der Session
+        status: Der neue Status ("completed", "processing", "failed", etc.)
+    """
+    try:
+        upload = Upload.query.filter_by(session_id=session_id).first()
+        if upload:
+            upload.processing_status = status
+            db.session.commit()
+            logger.info(f"Updated processing status for session {session_id} to {status}")
+            return True
+        else:
+            logger.warning(f"Could not update processing status for session {session_id}: Session not found")
+            return False
+    except Exception as e:
+        logger.error(f"Error updating processing status for session {session_id}: {str(e)}")
+        return False

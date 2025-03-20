@@ -40,6 +40,7 @@ interface AuthContextType {
   recordActivity: (type: string, title: string, details?: any) => Promise<void>;
   fetchActivities: () => Promise<void>;
   fetchPayments: () => Promise<void>;
+  refreshUserCredits: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -62,6 +63,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://localhost:8080';
+  const PAYMENT_API_URL = import.meta.env.VITE_PAYMENT_API_URL || 'http://localhost:5001';
 
   // Check for auth callback
   useEffect(() => {
@@ -335,58 +337,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addCredits = async (amount: number, paymentMethod: string): Promise<boolean> => {
-    if (!user) return false;
-    
     try {
-      const response = await axios.post(
-        `${API_URL}/api/v1/auth/payment`,
-        {
-          amount: getAmountForCredits(amount),
-          credits: amount,
-          payment_method: paymentMethod
-        },
-        { 
-          withCredentials: true,
-          timeout: 5000 // 5 second timeout
+      // Wenn wir in einem Demo-Modus sind, fügen wir direkt Credits hinzu
+      if (user && user.id.includes('mock') || localStorage.getItem('exammaster_token') === 'mock_token') {
+        const newCredits = (user?.credits || 0) + amount;
+        setUser(prev => prev ? { ...prev, credits: newCredits } : null);
+        
+        // Auch den gespeicherten Benutzer aktualisieren
+        const storedUser = localStorage.getItem('exammaster_user');
+        if (storedUser) {
+          try {
+            const parsedUser = JSON.parse(storedUser);
+            parsedUser.credits = newCredits;
+            localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
+          } catch (parseError) {
+            console.error('Error updating stored user credits:', parseError);
+          }
         }
-      );
-      
-      if (response.data.success) {
-        setUser(prev => prev ? {
-          ...prev,
-          credits: response.data.user.credits
-        } : null);
         
         toast({
-          title: "Payment successful",
-          description: `${amount} credits have been added to your account.`
+          title: "Credits hinzugefügt",
+          description: `${amount} Credits wurden Ihrem Konto gutgeschrieben. (Demo-Modus)`,
         });
-        
-        // Refresh payments
-        fetchPayments();
         
         return true;
       }
-      return false;
+      
+      // In einer echten Umgebung verwenden wir Stripe
+      // Beachten Sie, dass der tatsächliche Kreditgutschrift über den Webhook erfolgt
+      // Wir leiten nur zur Checkout-Seite weiter, die addCredits-Funktion ist daher
+      // ein Platzhalter für die Demo-Umgebung
+      return true;
     } catch (error) {
-      console.error('Payment error:', error);
+      console.error('Error adding credits:', error);
       toast({
-        title: "Payment failed",
-        description: "Could not process your payment.",
+        title: "Fehler beim Hinzufügen von Credits",
+        description: "Es gab ein Problem beim Hinzufügen von Credits. Bitte versuchen Sie es später erneut.",
         variant: "destructive"
       });
       return false;
     }
   };
-  
-  // Helper function to calculate amount based on credits
-  const getAmountForCredits = (credits: number): number => {
-    switch (credits) {
-      case 100: return 9.99;
-      case 250: return 19.99;
-      case 500: return 34.99;
-      case 1000: return 59.99;
-      default: return credits * 0.1; // Fallback calculation
+
+  // Funktion, um die Kredite des Benutzers zu aktualisieren (nach erfolgreicher Zahlung)
+  const refreshUserCredits = async () => {
+    if (!user) return;
+    
+    try {
+      const token = localStorage.getItem('exammaster_token');
+      if (!token) return;
+      
+      const response = await axios.get(`${PAYMENT_API_URL}/api/payment/get-credits`, {
+        withCredentials: true,
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      if (response.data) {
+        setUser(prev => prev ? { ...prev, credits: response.data.credits } : null);
+        
+        // Auch den gespeicherten Benutzer aktualisieren
+        const storedUser = localStorage.getItem('exammaster_user');
+        if (storedUser) {
+          try {
+            const parsedUser = JSON.parse(storedUser);
+            parsedUser.credits = response.data.credits;
+            localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
+          } catch (parseError) {
+            console.error('Error updating stored user credits:', parseError);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error refreshing user credits:', error);
     }
   };
   
@@ -452,7 +476,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       addCredits,
       recordActivity,
       fetchActivities,
-      fetchPayments
+      fetchPayments,
+      refreshUserCredits
     }}>
       {children}
     </AuthContext.Provider>

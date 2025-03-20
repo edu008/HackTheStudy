@@ -1,0 +1,12 @@
+{
+  "Asymmetric Information": [
+    "Asymmetric Information Component 1",
+    "Asymmetric Information Component 2",
+    "Asymmetric Information Application"
+  ],
+  "Asymmetric Information_relationships": {
+    "Asymmetric Information Component 1": "is a component of Asymmetric Information",
+    "Asymmetric Information Component 2": "is a component of Asymmetric Information",
+    "Asymmetric Information Application": "is a component of Asymmetric Information"
+  }
+}

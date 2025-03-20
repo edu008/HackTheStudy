@@ -1,10 +1,13 @@
-from flask import request, jsonify, current_app
+from flask import request, jsonify, current_app, g
 from . import api_bp
 from .utils import generate_additional_flashcards, detect_language
 from models import db, Upload, Flashcard, UserActivity, Topic
 from marshmallow import Schema, fields, ValidationError
 import logging
 from .auth import token_required
+from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
+import json
+import tiktoken
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,20 @@ def generate_more_flashcards():
     upload = Upload.query.filter_by(session_id=session_id).first()
     if not upload:
         return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+    
+    # Import der Credit-Service-Funktionen
+    from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
+    from flask import g
+    
+    # Helper-Funktion für die Tokenzählung
+    def count_tokens(text, model="gpt-4o"):
+        """Zählt die Anzahl der Tokens in einem Text für ein bestimmtes Modell"""
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+            return len(encoding.encode(text))
+        except:
+            # Fallback: Ungefähre Schätzung (1 Token ≈ 4 Zeichen)
+            return len(text) // 4
     
     # Hole alle bestehenden Flashcards für diese Upload-ID
     existing_flashcards = [
@@ -57,11 +74,68 @@ def generate_more_flashcards():
     }
     logger.info(f"Analysis for session_id {session_id}: Main topic={analysis['main_topic']}, Subtopics={analysis['subtopics']}")
     
+    # Schätze die maximalen Tokenkosten für diesen Aufruf
+    # Dies ist nur eine Schätzung für die Prüfung vor der Generierung
+    estimated_input_tokens = 2000 + (count * 150)  # Kontext + Prompt + Eingabe pro Flashcard
+    estimated_output_tokens = count * 200  # ca. 200 Tokens Ausgabe pro Flashcard
+    max_estimated_cost = calculate_token_cost(estimated_input_tokens, estimated_output_tokens)
+    
+    # Verdopple die geschätzten Kosten für den Gewinn
+    max_estimated_cost = max_estimated_cost * 2
+    
+    # Überprüfe, ob genügend Credits vorhanden sind
+    if not check_credits_available(max_estimated_cost):
+        # Hole den aktuellen Benutzer und seine Credits
+        user = User.query.get(g.user.id)
+        current_credits = user.credits if user else 0
+        
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "INSUFFICIENT_CREDITS",
+                "message": f"Nicht genügend Credits. Sie benötigen maximal {max_estimated_cost} Credits für {count} neue Flashcards, haben aber nur {current_credits} Credits.",
+                "credits_required": max_estimated_cost,
+                "credits_available": current_credits
+            }
+        }), 402  # 402 Payment Required
+    
     # Die Anzahl der zu generierenden Flashcards erhöhen, um sicherzustellen, dass nach der Duplikatfilterung 
     # noch genügend übrig bleiben
     generation_count = max(count * 2, 10)  # Erhöhte Anzahl zur Generation
     
     try:
+        # Generiere den Prompt für die Flashcards
+        prompt_template = f"""
+        Ich benötige {generation_count} ZUSÄTZLICHE, EINZIGARTIGE Karteikarten, die sich VÖLLIG von den vorhandenen unterscheiden.
+        
+        Hauptthema: {analysis['main_topic']}
+        Unterthemen: {', '.join(analysis['subtopics'])}
+        
+        VORHANDENE KARTEIKARTEN (DIESE NICHT DUPLIZIEREN ODER UMFORMULIEREN):
+        """
+        
+        # Füge die vorhandenen Flashcards zum Prompt hinzu
+        for i, fc in enumerate(existing_flashcards[:10]):
+            prompt_template += f"\n{i+1}. F: {fc.get('question', '')} A: {fc.get('answer', '')}"
+        
+        # Füge Format-Anforderungen hinzu
+        prompt_template += """
+        
+        FORMATANFORDERUNGEN:
+        - Jede Karteikarte sollte im Format "F: [Frage] A: [Antwort]" sein
+        - Fragen sollten klar, spezifisch und zum Nachdenken anregend sein
+        - Antworten sollten umfassend aber prägnant sein, etwa 2-3 Sätze
+        
+        GEBEN SIE NUR DIE KARTEIKARTEN IN DIESEM JSON-FORMAT ZURÜCK:
+        [
+          {"question": "Ihre Frage hier", "answer": "Ihre Antwort hier"},
+          {"question": "Ihre Frage hier", "answer": "Ihre Antwort hier"}
+        ]
+        """
+        
+        # Zähle die Tokens für den Prompt
+        input_tokens = count_tokens(prompt_template)
+        
         # Verwende die Funktion aus utils.py für einzigartige, zusätzliche Flashcards
         new_flashcards = generate_additional_flashcards(
             upload.content,
@@ -77,7 +151,24 @@ def generate_more_flashcards():
             f for f in new_flashcards
             if not any(f['question'].lower() == ex['question'].lower() for ex in existing_flashcards)
         ]
+        
+        # Begrenze auf die angeforderte Anzahl
+        limited_flashcards = filtered_flashcards[:count]
         logger.info(f"Generated {len(filtered_flashcards)} new flashcards before limiting to {count}")
+        
+        # Berechne die tatsächlichen Tokens für die Antwort
+        response_text = json.dumps(limited_flashcards)
+        output_tokens = count_tokens(response_text)
+        
+        # Berechne die tatsächlichen Kosten basierend auf den verwendeten Tokens
+        actual_cost = calculate_token_cost(input_tokens, output_tokens)
+        
+        # Verdopple die tatsächlichen Kosten für den Gewinn
+        actual_cost = actual_cost * 2
+        
+        # Ziehe die Credits vom Benutzer ab
+        deduct_credits(g.user.id, actual_cost)
+        logger.info(f"Deducted {actual_cost} credits from user {g.user.id} for generating {count} flashcards")
         
     except Exception as e:
         logger.error(f"Error calling generate_additional_flashcards: {str(e)}")
@@ -357,3 +448,186 @@ def generate_fallback_flashcards(analysis, count, existing_flashcards, language=
             existing_questions.add(question.lower())
     
     return flashcards
+
+@api_bp.route('/generate/<session_id>', methods=['POST'])
+@token_required
+def generate_flashcards_route(session_id):
+    # Parameter aus der Anfrage extrahieren
+    count = request.json.get('count', 10)  # Standardmäßig 10 Flashcards generieren
+    
+    upload = Upload.query.filter_by(session_id=session_id).first()
+    if not upload:
+        return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+    
+    # Prüfen, ob der Text zu lang ist
+    content = upload.content or ""
+    content_length = len(content)
+    
+    if content_length > 100000:
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "CONTENT_TOO_LARGE",
+                "message": "Der Text ist zu lang. Bitte versuchen Sie es mit einem kürzeren Text."
+            }
+        }), 400
+        
+    # Schätze die Kosten basierend auf der Länge des Inhalts
+    estimated_prompt_tokens = min(content_length // 3, 100000)  # Ungefähre Schätzung: 1 Token pro 3 Zeichen
+    estimated_output_tokens = 2000  # Geschätzte Ausgabe für Flashcards
+    
+    # Berechne die ungefähren Kosten
+    estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens)
+    
+    # Prüfe, ob der Benutzer genügend Credits hat
+    if not check_credits_available(estimated_cost):
+        # Hole die aktuellen Credits des Benutzers
+        user = User.query.get(g.user.id)
+        current_credits = user.credits if user else 0
+        
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "INSUFFICIENT_CREDITS",
+                "message": f"Nicht genügend Credits. Sie benötigen {estimated_cost} Credits für diese Anfrage, haben aber nur {current_credits} Credits.",
+                "credits_required": estimated_cost,
+                "credits_available": current_credits
+            }
+        }), 402
+    
+    try:
+        # Hole alle bestehenden Flashcards für diese Upload-ID
+        existing_flashcards = [
+            {"question": f.question, "answer": f.answer}
+            for f in Flashcard.query.filter_by(upload_id=upload.id).all()
+        ]
+        logger.info(f"Found {len(existing_flashcards)} existing flashcards for session_id: {session_id}")
+        
+        # Initialisiere den OpenAI-Client
+        from openai import OpenAI
+        client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
+        
+        # Ermittle die Sprache und analysiere den Inhalt
+        language = detect_language(upload.content)
+        main_topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
+        
+        # Fallback, falls kein Hauptthema gefunden wird
+        main_topic_name = "Unknown Topic"
+        subtopics = []
+        
+        if main_topic:
+            main_topic_name = main_topic.name
+            subtopics = [topic.name for topic in Topic.query.filter_by(upload_id=upload.id, is_main_topic=False).all()]
+        
+        analysis = {
+            "main_topic": main_topic_name,
+            "subtopics": subtopics
+        }
+        logger.info(f"Analysis for session_id {session_id}: Main topic={analysis['main_topic']}, Subtopics={analysis['subtopics']}")
+        
+        # Die Anzahl der zu generierenden Flashcards erhöhen, um sicherzustellen, dass nach der Duplikatfilterung 
+        # noch genügend übrig bleiben
+        generation_count = max(count * 2, 10)  # Erhöhte Anzahl zur Generation
+        
+        try:
+            # Verwende die Funktion aus utils.py für einzigartige, zusätzliche Flashcards
+            new_flashcards = generate_additional_flashcards(
+                upload.content,
+                client,
+                analysis=analysis,
+                existing_flashcards=existing_flashcards,
+                num_to_generate=generation_count,  # Erhöhte Anzahl
+                language=language
+            )
+            
+            # Filtere Duplikate basierend auf der Frage
+            filtered_flashcards = [
+                f for f in new_flashcards
+                if not any(f['question'].lower() == ex['question'].lower() for ex in existing_flashcards)
+            ]
+            logger.info(f"Generated {len(filtered_flashcards)} new flashcards before limiting to {count}")
+            
+        except Exception as e:
+            logger.error(f"Error calling generate_additional_flashcards: {str(e)}")
+            # Generiere einfache Fallback-Flashcards, wenn die OpenAI-API fehlschlägt
+            filtered_flashcards = generate_fallback_flashcards(analysis, generation_count, existing_flashcards, language)
+            logger.info(f"Generated {len(filtered_flashcards)} fallback flashcards")
+        
+        # Überprüfe, ob genug einzigartige Flashcards generiert wurden
+        if len(filtered_flashcards) < 3:
+            # Wenn nicht genug, generiere weitere Fallback-Flashcards
+            additional_flashcards = generate_fallback_flashcards(
+                analysis, 
+                max(10, 3 - len(filtered_flashcards)), 
+                existing_flashcards + filtered_flashcards,
+                language
+            )
+            filtered_flashcards.extend(additional_flashcards)
+            logger.info(f"Added {len(additional_flashcards)} additional fallback flashcards")
+        
+        try:
+            # Begrenze die Anzahl der zurückgegebenen Flashcards auf die angeforderte Anzahl,
+            # aber mindestens 3
+            final_count = max(count, 3)
+            filtered_flashcards = filtered_flashcards[:final_count]
+            
+            # Speichere nur gültige Flashcards in der Datenbank
+            for f in filtered_flashcards:
+                if f.get('question') and f.get('answer') and not f['question'].startswith('Could not generate'):
+                    flashcard = Flashcard(
+                        upload_id=upload.id,
+                        question=f['question'],
+                        answer=f['answer']
+                    )
+                    db.session.add(flashcard)
+                    logger.info(f"Saved flashcard: {f['question']}")
+            
+            # Begrenze auf 5 Einträge
+            existing_activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.asc()).all()
+            if len(existing_activities) >= 5:
+                oldest_activity = existing_activities[0]
+                db.session.delete(oldest_activity)
+                logger.info(f"Deleted oldest activity: {oldest_activity.id}")
+            
+            # Logge und speichere Benutzeraktivität
+            activity = UserActivity(
+                user_id=request.user_id,
+                activity_type='flashcard',
+                title=f"Generated {len(filtered_flashcards)} more flashcards",
+                main_topic=analysis['main_topic'],
+                subtopics=analysis['subtopics'],
+                session_id=session_id,
+                details={"count": len(filtered_flashcards), "session_id": session_id}
+            )
+            db.session.add(activity)
+            logger.info(f"Logged user activity for generating {len(filtered_flashcards)} flashcards")
+            
+            db.session.commit()
+            return jsonify({
+                "success": True,
+                "data": {
+                    "flashcards": filtered_flashcards
+                },
+                "message": f"Successfully generated {len(filtered_flashcards)} additional flashcards"
+            }), 200
+        except Exception as e:
+            logger.error(f"Error saving flashcards to database for session_id {session_id}: {str(e)}")
+            db.session.rollback()
+            
+            # Wenn der Datenbankfehler auftritt, trotzdem versuchen, Flashcards zurückzugeben
+            return jsonify({
+                "success": True,
+                "data": {
+                    "flashcards": filtered_flashcards
+                },
+                "message": "Flashcards generated but could not be saved to database"
+            }), 200
+    except Exception as e:
+        logger.error(f"Error processing flashcards for session_id {session_id}: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "An error occurred while processing the flashcards"
+            }
+        }), 500

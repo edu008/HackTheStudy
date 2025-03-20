@@ -42,5 +42,5 @@ ENV USE_COLORED_LOGS=true
 ENV PYTHONUNBUFFERED=1
 ENV LOG_LEVEL=INFO
 
-# Standardmäßig start.sh ausführen (wird vom worker überschrieben)
+# Standardmässig start.sh ausführen (wird vom worker überschrieben)
 CMD ["/bin/bash", "/app/start.sh"]

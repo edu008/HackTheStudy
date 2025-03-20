@@ -97,7 +97,7 @@ def callback(provider):
             existing_user.avatar = user_info.get('avatar')
             user = existing_user
         else:
-            user = User(email=user_info['email'], name=user_info['name'], avatar=user_info.get('avatar'), oauth_provider=provider, oauth_id=user_info['id'], credits=100)
+            user = User(email=user_info['email'], name=user_info['name'], avatar=user_info.get('avatar'), oauth_provider=provider, oauth_id=user_info['id'], credits=0)
             db.session.add(user)
             db.session.commit()
         

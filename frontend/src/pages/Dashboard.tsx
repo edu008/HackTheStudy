@@ -88,7 +88,7 @@ const Dashboard = () => {
                 onClick={() => navigate('/payment')}
               >
                 <CreditCard className="mr-2 h-4 w-4" />
-                Buy More Credits
+                Credits kaufen
               </Button>
             </CardContent>
           </Card>
@@ -96,8 +96,8 @@ const Dashboard = () => {
           {/* User Activities and History */}
           <Card className="md:col-span-2">
             <CardHeader>
-              <CardTitle>Activities</CardTitle>
-              <CardDescription>Your recent activities on HackTheStudy</CardDescription>
+              <CardTitle>Aktivitäten</CardTitle>
+              <CardDescription>Ihre letzten Aktivitäten auf HackTheStudy</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
@@ -110,7 +110,7 @@ const Dashboard = () => {
                   }}
                 >
                   <Upload className="h-6 w-6 mb-2" />
-                  <span>Upload Exam</span>
+                  <span>Prüfung hochladen</span>
                 </Button>
                 <Button 
                   variant="outline" 
@@ -121,7 +121,7 @@ const Dashboard = () => {
                   }}
                 >
                   <Lightbulb className="h-6 w-6 mb-2" />
-                  <span>Create Flashcards</span>
+                  <span>Karteikarten erstellen</span>
                 </Button>
                 <Button 
                   variant="outline" 
@@ -132,7 +132,7 @@ const Dashboard = () => {
                   }}
                 >
                   <BookOpen className="h-6 w-6 mb-2" />
-                  <span>Test Simulator</span>
+                  <span>Prüfungssimulator</span>
                 </Button>
                 <Button 
                   variant="outline" 
@@ -143,13 +143,13 @@ const Dashboard = () => {
                   }}
                 >
                   <Network className="h-6 w-6 mb-2" />
-                  <span>Concept Mapper</span>
+                  <span>Konzept-Mapper</span>
                 </Button>
               </div>
               <Tabs defaultValue="activity" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="activity">Activity History</TabsTrigger>
-                  <TabsTrigger value="payments">Payment History</TabsTrigger>
+                  <TabsTrigger value="activity">Aktivitätshistorie</TabsTrigger>
+                  <TabsTrigger value="payments">Zahlungshistorie</TabsTrigger>
                 </TabsList>
                 <TabsContent value="activity">
                   <UserHistory onSessionSelect={handleSessionSelect} />

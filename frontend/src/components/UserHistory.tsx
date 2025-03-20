@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import React from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -43,11 +44,19 @@ interface SessionData {
   subtopics?: string[];
 }
 
-const UserHistory = () => {
+// Füge eine Props-Definition mit dem onSessionSelect-Parameter hinzu
+interface UserHistoryProps {
+  onSessionSelect?: (sessionId: string, activityType: string, mainTopic: string) => void;
+}
+
+const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
   const [activities, setActivities] = useState<SessionActivity[]>([]);
   const [sessions, setSessions] = useState<SessionData[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
+  const [mainTopic, setMainTopic] = useState<string>("");
+  const [flashcards, setFlashcards] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<any[]>([]);
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -126,7 +135,7 @@ const UserHistory = () => {
   }, [activities]);
 
   const loadActivities = async () => {
-    setIsLoading(true);
+    setLoading(true);
     try {
       const token = localStorage.getItem('exammaster_token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -150,7 +159,7 @@ const UserHistory = () => {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
@@ -391,25 +400,9 @@ const UserHistory = () => {
     e.stopPropagation();
   };
 
-  const initializeFromSessionData = (sessionData) => {
-    if (!sessionData) return;
-    
-    setMainTopic(sessionData.analysis?.main_topic || "Unbenannte Analyse");
-    
-    // Aktualisiere die Flashcards
-    const flashcardData = sessionData.flashcards || [];
-    setFlashcards(flashcardData);
-    
-    // Aktualisiere die Testfragen
-    const questionData = sessionData.test_questions || [];
-    setQuestions(questionData);
-    
-    const flashcardCount = flashcardData.length;
-    const questionCount = questionData.length;
-    
-    // Aktualisiere den Status
-    setIsLoading(false);
-  };
+  useEffect(() => {
+    loadActivities();
+  }, []);
 
   return (
     <div className="py-6">
@@ -419,14 +412,14 @@ const UserHistory = () => {
           variant="outline" 
           size="sm" 
           onClick={loadActivities} 
-          disabled={isLoading}
+          disabled={loading}
         >
           <RefreshCw className="h-4 w-4 mr-1" />
           Aktualisieren
         </Button>
       </div>
 
-      {isLoading ? (
+      {loading ? (
         <div className="grid grid-cols-1 gap-4">
           {[...Array(4)].map((_, i) => (
             <Skeleton key={i} className="h-20 w-full rounded-lg" />

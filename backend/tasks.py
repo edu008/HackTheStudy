@@ -135,7 +135,7 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                 Connection.query.filter_by(upload_id=upload.id).delete()
                 Topic.query.filter_by(upload_id=upload.id).delete()
                 
-                # Setze den Status auf "pending", damit der nächste Task weiß, dass alle Daten neu generiert werden müssen
+                # Setze den Status auf "pending", damit der nächste Task weiss, dass alle Daten neu generiert werden müssen
                 upload.processing_status = "pending"
                 db.session.commit()
                 logger.info(f"Session {session_id} für erneute Analyse vorbereitet")
@@ -325,34 +325,59 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                     # Fehlerdetails in Redis speichern
                     error_details = {
                         "error_type": "token_limit",
-                        "message": "Die Datei ist zu groß für die Verarbeitung. Bitte teilen Sie die Datei in kleinere Abschnitte auf."
+                        "message": "Die Datei ist zu gross für die Verarbeitung. Bitte teilen Sie die Datei in kleinere Abschnitte auf."
                     }
                     error_key = f"error_details:{session_id}"
                     redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    # Bereinigen aller Hintergrundprozesse für diese Session
+                    cleanup_processing_for_session(session_id, "token_limit")
                     
                     release_session_lock(session_id)
                     return {
                         "success": False,
                         "error_type": "token_limit",
-                        "message": "Die Datei ist zu groß für die Verarbeitung. Bitte teilen Sie die Datei in kleinere Abschnitte auf."
+                        "message": "Die Datei ist zu gross für die Verarbeitung. Bitte teilen Sie die Datei in kleinere Abschnitte auf."
                     }
-                elif "rate limit" in error_message.lower():
+                elif "rate limit" in error_message.lower() or "429" in error_message:
                     upload.processing_status = "failed"
                     db.session.commit()
                     
-                    # Fehlerdetails in Redis speichern
+                    # Detaillierte Fehleranalyse für Rate-Limit-Fehler
+                    is_tpm_limit = "tokens per min" in error_message.lower() or "tpm" in error_message.lower()
+                    error_code = "rate_limit_exceeded"
+                    if "429" in error_message:
+                        error_code = "openai_429"
+                    
+                    # Präzisere Fehlermeldung basierend auf dem Fehlertyp
+                    error_msg = "Zu viele Anfragen. Bitte versuchen Sie es später erneut."
+                    if is_tpm_limit:
+                        error_msg = "Das OpenAI-Tokenlimit pro Minute wurde überschritten. Bitte teilen Sie die Datei in kleinere Abschnitte auf oder versuchen Sie es später erneut."
+                    
+                    # Fehlerdetails in Redis speichern (mit spezifischen Informationen zum Rate-Limit)
                     error_details = {
                         "error_type": "rate_limit",
-                        "message": "Zu viele Anfragen. Bitte versuchen Sie es später erneut."
+                        "error_code": error_code,
+                        "message": error_msg,
+                        "original_error": error_message
                     }
                     error_key = f"error_details:{session_id}"
                     redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    # Speichere einen speziellen Status für die Frontend-Polling-Logik
+                    processing_status_key = f"processing_status:{session_id}"
+                    redis_client.set(processing_status_key, "rate_limit_error", ex=3600)
+                    
+                    # Wichtig: Bereinigen aller Hintergrundprozesse für diese Session
+                    cleanup_processing_for_session(session_id, "rate_limit_error")
                     
                     release_session_lock(session_id)
                     return {
                         "success": False,
                         "error_type": "rate_limit",
-                        "message": "Zu viele Anfragen. Bitte versuchen Sie es später erneut."
+                        "error_code": error_code,
+                        "message": error_msg,
+                        "original_error": error_message
                     }
                 elif "corrupted" in error_message.lower() or "corrupted_pdf" in error_message.lower():
                     upload.processing_status = "failed"
@@ -365,6 +390,9 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                     }
                     error_key = f"error_details:{session_id}"
                     redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    # Bereinigen aller Hintergrundprozesse für diese Session
+                    cleanup_processing_for_session(session_id, "corrupted_file")
                     
                     release_session_lock(session_id)
                     return {
@@ -384,6 +412,9 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
                     }
                     error_key = f"error_details:{session_id}"
                     redis_client.set(error_key, json.dumps(error_details), ex=3600)  # 1 Stunde gültig
+                    
+                    # Bereinigen aller Hintergrundprozesse für diese Session
+                    cleanup_processing_for_session(session_id, "api_error")
                     
                     release_session_lock(session_id)
                     return {
@@ -623,3 +654,36 @@ def process_upload(self, session_id, files_data, user_id=None, openai_client=Non
             # Stelle sicher, dass der Lock freigegebenen wird
             release_session_lock(session_id)
             raise
+
+def cleanup_processing_for_session(session_id, error_reason="unknown"):
+    """
+    Bereinigt alle laufenden Prozesse und Ressourcen für eine Session, wenn ein Fehler auftritt.
+    Stellt sicher, dass keine "Zombie-Verarbeitungen" weiterlaufen.
+    
+    Args:
+        session_id: Die ID der Session, die bereinigt werden soll
+        error_reason: Der Grund für den Abbruch
+    """
+    try:
+        logger.info(f"Bereinige Session {session_id} wegen: {error_reason}")
+        
+        # 1. Sicherstellen, dass die Session in der Datenbank als fehlgeschlagen markiert ist
+        with app.app_context():
+            upload = Upload.query.filter_by(session_id=session_id).first()
+            if upload:
+                upload.processing_status = "failed"
+                db.session.commit()
+        
+        # 2. Alle Redis-Statusinformationen setzen
+        processing_status_key = f"processing_status:{session_id}"
+        redis_client.set(processing_status_key, f"failed:{error_reason}", ex=3600)
+        
+        # 3. Sitzungssperre freigeben, falls sie noch nicht freigegeben wurde
+        release_session_lock(session_id)
+        
+        # 4. Optional: Alle laufenden Celery-Tasks für diese Session abbrechen (fortgeschritten)
+        # Dies würde eine Verfolgung der Task-IDs in Redis erfordern
+        
+        logger.info(f"Bereinigung für Session {session_id} abgeschlossen")
+    except Exception as e:
+        logger.error(f"Fehler bei der Bereinigung der Session {session_id}: {str(e)}")

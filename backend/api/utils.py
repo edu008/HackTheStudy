@@ -11,6 +11,8 @@ import fitz  # PyMuPDF
 import time  # Für sleep-Funktion
 import os
 from models import db, Upload, Flashcard, Question, Topic, Connection, UserActivity
+import tiktoken
+from api.credit_service import calculate_token_cost
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ def clean_text_for_database(text):
         # Entferne Null-Bytes (0x00)
         cleaned_text = text.replace('\x00', '')
         
-        # Aggressivere Bereinigung - alle Steuerzeichen außer Zeilenumbrüche und Tabs entfernen
+        # Aggressivere Bereinigung - alle Steuerzeichen ausser Zeilenumbrüche und Tabs entfernen
         # Dies verhindert viele Probleme mit exotischen PDF-Formaten
         allowed_control = ['\n', '\r', '\t']
         cleaned_text = ''.join(c for c in cleaned_text if c >= ' ' or c in allowed_control)
@@ -44,7 +46,7 @@ def clean_text_for_database(text):
         # Bereinige Unicode-Escape-Sequenzen, die Probleme verursachen könnten
         cleaned_text = cleaned_text.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
         
-        # Entferne übermäßige Leerzeichen und Zeilenumbrüche
+        # Entferne übermässige Leerzeichen und Zeilenumbrüche
         cleaned_text = re.sub(r'\n{3,}', '\n\n', cleaned_text)  # Mehr als 2 aufeinanderfolgende Zeilenumbrüche reduzieren
         cleaned_text = re.sub(r' {3,}', '  ', cleaned_text)     # Mehr als 2 aufeinanderfolgende Leerzeichen reduzieren
         
@@ -117,7 +119,7 @@ def extract_text_from_pdf_safe(file_data):
                         logger.warning(f"Fehler bei der Extraktion der Seite {page_num+1} mit PyMuPDF: {str(page_error)}")
                         continue
                 
-                # Schließe das Dokument
+                # Schliesse das Dokument
                 pdf_document.close()
             except Exception as e:
                 logger.warning(f"Fehler bei der Extraktion mit PyMuPDF: {str(e)}")
@@ -171,9 +173,30 @@ import hashlib
 # Cache für OpenAI-Antworten
 _response_cache = {}
 
+# Funktion zum Zählen von Tokens mit tiktoken
+def count_tokens(text, model="gpt-4o"):
+    """
+    Zählt die Tokens in einem Text für ein bestimmtes Modell
+    
+    Args:
+        text (str): Der zu zählende Text
+        model (str): Das Modell, für das die Tokens gezählt werden sollen
+        
+    Returns:
+        int: Die Anzahl der Tokens
+    """
+    try:
+        encoder = tiktoken.encoding_for_model(model)
+    except KeyError:
+        # Fallback auf cl100k_base für neue Modelle
+        encoder = tiktoken.get_encoding("cl100k_base")
+    
+    return len(encoder.encode(text))
+
 def query_chatgpt(prompt, client, system_content=None, temperature=0.7, max_retries=5, use_cache=True):
     """
     Sendet eine Anfrage an die OpenAI API mit exponentiellem Backoff bei Ratenlimit-Fehlern.
+    Berechnet und zieht die notwendigen Credits basierend auf der Token-Anzahl ab.
     
     Args:
         prompt: Der Prompt-Text für die Anfrage
@@ -186,13 +209,37 @@ def query_chatgpt(prompt, client, system_content=None, temperature=0.7, max_retr
     Returns:
         Die Antwort der API oder eine Fehlermeldung
     """
+    # Modell aus der Konfiguration abrufen
+    model = current_app.config.get('OPENAI_MODEL', 'gpt-4o')
+    
+    # Token-Anzahl für Prompt berechnen
+    prompt_tokens = count_tokens(prompt, model)
+    
+    # Token-Anzahl für System-Content berechnen, falls vorhanden
+    system_tokens = count_tokens(system_content if system_content else "", model)
+    
+    # Gesamte Input-Token
+    input_tokens = prompt_tokens + system_tokens
+    
+    # Geschätzte Output-Token (ungefähr 1/3 der Input-Token, mindestens 500)
+    estimated_output_tokens = max(500, input_tokens // 3)
+    
+    # Kosten berechnen
+    cost = calculate_token_cost(input_tokens, estimated_output_tokens, model)
+    
+    # Auf Benutzer-Credits prüfen
+    from api.credit_service import check_credits_available
+    if not check_credits_available(cost):
+        raise ValueError(f"Nicht genügend Credits. Benötigt: {cost} Credits für diese Anfrage.")
+    
     # DEBUG: Ausführliches Logging für Docker
     print("\n\n==================================================")
     print("OPENAI DEBUG: ANFRAGE DETAILS")
     print("==================================================")
     print(f"SYSTEM PROMPT: {system_content[:300]}..." if system_content and len(system_content) > 300 else f"SYSTEM PROMPT: {system_content}")
     print(f"USER PROMPT (gekürzt): {prompt[:300]}..." if len(prompt) > 300 else f"USER PROMPT: {prompt}")
-    print(f"PARAMETER: model=gpt-4o, temperature={temperature}, max_tokens=4000")
+    print(f"PARAMETER: model={model}, temperature={temperature}, max_tokens=4000")
+    print(f"GESCHÄTZTE KOSTEN: {cost} Credits (Input: {input_tokens} Tokens, Geschätzte Output: {estimated_output_tokens} Tokens)")
     print("==================================================\n\n")
     
     # Wenn Caching aktiviert ist, erstelle einen Hash-Schlüssel für den Cache
@@ -239,6 +286,32 @@ def query_chatgpt(prompt, client, system_content=None, temperature=0.7, max_retr
             # Speichere die Antwort im Cache, wenn Caching aktiviert ist
             if use_cache:
                 _response_cache[cache_key] = response_text
+            
+            # Nach erfolgreicher Anfrage die tatsächlichen Credits abziehen
+            try:
+                from api.credit_service import deduct_credits
+                from flask import g
+                
+                # Tatsächliche Ausgabetoken aus der Antwort abrufen
+                actual_output_tokens = count_tokens(response_text, model)
+                
+                # Tatsächliche Kosten neu berechnen
+                actual_cost = calculate_token_cost(input_tokens, actual_output_tokens, model)
+                
+                # Credits abziehen
+                if hasattr(g, 'user') and g.user:
+                    deduct_credits(g.user.id, actual_cost)
+                    
+                # Debug: Erfolgreiche Antwort mit Kosten loggen
+                print("\n\n==================================================")
+                print("OPENAI DEBUG: ERFOLGREICHE ANTWORT")
+                print("==================================================")
+                print(f"ANTWORT (gekürzt): {response_text[:300]}..." if len(response_text) > 300 else f"ANTWORT: {response_text}")
+                print(f"TATSÄCHLICHE KOSTEN: {actual_cost} Credits (Input: {input_tokens} Tokens, Output: {actual_output_tokens} Tokens)")
+                print("==================================================\n\n")
+            except Exception as credit_error:
+                # Fehler beim Abziehen der Credits loggen, aber trotzdem fortfahren
+                print(f"Fehler beim Abziehen der Credits: {str(credit_error)}")
             
             return response_text
         except Exception as e:
@@ -1116,7 +1189,7 @@ def unified_content_processing(text, client, file_names=None, language=None):
         print(f"Text zu lang: {len(text)} Zeichen, kürze auf {max_chars} Zeichen")
         text = text[:max_chars] + "...[Text abgeschnitten]"
     else:
-        print(f"Textgröße: {len(text)} Zeichen, ungefähr {len(text) // 4} Tokens")
+        print(f"Textgrösse: {len(text)} Zeichen, ungefähr {len(text) // 4} Tokens")
     
     # Anzahl der Dokumente ermitteln für dynamische Anpassung der Anzahl von Flashcards und Fragen
     num_documents = len(file_names) if file_names else 1
@@ -1161,7 +1234,7 @@ def unified_content_processing(text, client, file_names=None, language=None):
         3. Multiple-Choice-Fragen zum Testen des Wissens
         
         WICHTIG: Der Eingabetext kann Inhalte aus mehreren zusammengefügten Dokumenten enthalten.
-        Analysieren Sie sorgfältig ALLE bereitgestellten Inhalte, einschließlich aller Dokumente, um umfassende Lernmaterialien zu erstellen.
+        Analysieren Sie sorgfältig ALLE bereitgestellten Inhalte, einschliesslich aller Dokumente, um umfassende Lernmaterialien zu erstellen.
         
         Befolgen Sie diese Richtlinien genau:
         - Umfassend, aber prägnant
@@ -1281,7 +1354,7 @@ def unified_content_processing(text, client, file_names=None, language=None):
         6. INHALTSTYP: Identifizieren Sie den Typ (Vorlesung, Lehrbuch, Notizen usw.)
 
         WICHTIG: Ich stelle möglicherweise mehrere Dokumente bereit, die zu einem einzigen Text kombiniert wurden.
-        Sie müssen ALLE Inhalte analysieren, einschließlich Abschnitte aus verschiedenen Dokumenten.
+        Sie müssen ALLE Inhalte analysieren, einschliesslich Abschnitte aus verschiedenen Dokumenten.
         Erstellen Sie umfassende Lernmaterialien, die ALLE Themen im kombinierten Text abdecken.
 
         Antworten Sie mit EINEM gültigen JSON-Objekt mit dieser genauen Struktur:
@@ -1400,7 +1473,7 @@ def unified_content_processing(text, client, file_names=None, language=None):
             
             # Spezifische Fehlertypen erkennen
             if "maximum context length" in error_message or "maximum content length" in error_message:
-                raise ValueError(f"Die Datei ist zu groß für die Verarbeitung (Token-Limit überschritten). OpenAI-Fehler: {error_message}")
+                raise ValueError(f"Die Datei ist zu gross für die Verarbeitung (Token-Limit überschritten). OpenAI-Fehler: {error_message}")
             
             if "rate limit" in error_message.lower() or "rate_limit" in error_message.lower():
                 raise ValueError(f"API-Anfrage-Limit erreicht. Bitte versuchen Sie es später erneut. OpenAI-Fehler: {error_message}")

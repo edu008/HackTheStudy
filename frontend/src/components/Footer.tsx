@@ -1,4 +1,3 @@
-
 import { GraduationCap } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -45,12 +44,22 @@ const Footer = () => {
           </div>
           
           <div>
-            <h3 className="font-semibold mb-4">Kontakt</h3>
+            <h3 className="font-semibold mb-4">Kontakt & Rechtliches</h3>
             <ul className="space-y-3">
               <li>
-                <a href="mailto:info@HackTheStudy.de" className="text-muted-foreground hover:text-foreground transition-colors duration-200">
-                  info@HackTheStudy.ch
+                <a href="mailto:info.eduanroci@gmail.ch" className="text-muted-foreground hover:text-foreground transition-colors duration-200">
+                info.eduanroci@gmail.ch
                 </a>
+              </li>
+              <li>
+                <Link to="/impressum" className="text-muted-foreground hover:text-foreground transition-colors duration-200">
+                  Impressum
+                </Link>
+              </li>
+              <li>
+                <Link to="/datenschutz" className="text-muted-foreground hover:text-foreground transition-colors duration-200">
+                  Datenschutz
+                </Link>
               </li>
               <li className="text-muted-foreground">
                 © {new Date().getFullYear()} HackTheStudy

@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
-import PaymentComponent from '@/components/PaymentPage';
+import PaymentSuccessComponent from '@/components/PaymentSuccess';
 
-const PaymentPage = () => {
+const PaymentSuccessPage = () => {
   const { user, isLoading } = useAuth();
   const navigate = useNavigate();
 
@@ -31,11 +32,11 @@ const PaymentPage = () => {
     <div className="min-h-screen flex flex-col">
       <Navbar />
       <main className="flex-1 pt-16 pb-12">
-        <PaymentComponent />
+        <PaymentSuccessComponent />
       </main>
       <Footer />
     </div>
   );
 };
 
-export default PaymentPage;
+export default PaymentSuccessPage; 
