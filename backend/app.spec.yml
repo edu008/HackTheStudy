@@ -18,14 +18,14 @@ alerts:
     operator: GREATER_THAN
     window: THIRTY_MINUTES
 
-# Gemeinsame Umgebungsvariablen für alle Services
+# Umgebungsvariablen für den All-in-One-Service
 envs:
   # Datenbank-Konfiguration
   - key: DATABASE_URL
     scope: RUN_TIME
     type: SECRET
   
-  # Redis-Konfiguration (wird im API-Container gehostet)
+  # Redis-Konfiguration (im Container gehostet)
   - key: REDIS_URL
     value: "redis://localhost:6379/0"
     scope: RUN_TIME
@@ -121,21 +121,23 @@ envs:
     value: "1"
   - key: CELERY_TASK_TIME_LIMIT
     value: "3600"
+  - key: RUN_WORKER
+    value: "true"
 
 services:
-  # API-Service mit Redis
-  - name: api
+  # All-in-One-Service mit API, Worker und Redis
+  - name: backend
     type: web
     github:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
-    source_dir: backend/main
+    source_dir: backend
     dockerfile_path: Dockerfile
     http_port: 8080
-    # Ressourcen und Skalierung
+    # Ressourcen und Skalierung (erhöht für alle Komponenten)
     instance_count: 1
-    instance_size_slug: basic-s
+    instance_size_slug: basic-m
     health_check:
       http_path: /api/v1/health
       port: 8080
@@ -158,43 +160,15 @@ services:
       window: 0s
     envs:
       - key: CONTAINER_TYPE
-        value: "api"
+        value: "all-in-one"
       - key: DIGITAL_OCEAN_APP_NAME
         value: "hackthestudy-backend"
       - key: DIGITAL_OCEAN_DEPLOYMENT_ID
         value: "${APP_DEPLOYMENT_ID}"
       - key: LOG_PREFIX
-        value: "[API]"
-
-  # Worker-Service 
-  - name: worker
-    type: worker
-    github:
-      repo: edu008/HackTheStudy
-      branch: main
-      deploy_on_push: true
-    source_dir: backend/worker
-    dockerfile_path: Dockerfile
-    # Ressourcen und Skalierung (weniger Ressourcen für Worker nötig)
-    instance_count: 1
-    instance_size_slug: basic-xs
-    restart_policy:
-      condition: on_failure
-      delay: 15s
-      max_attempts: 10
-      window: 120s
-    # Verbindung zum Redis im API-Container über private URL
-    envs:
-      - key: CONTAINER_TYPE
-        value: "worker"
+        value: "[BACKEND]"
       - key: RUN_MODE
-        value: "worker"
-      - key: LOG_PREFIX
-        value: "[WORKER]"
-      - key: REDIS_URL
-        value: "redis://${api.PRIVATE_URL}:6379/0"
-      - key: REDIS_HOST
-        value: "${api.PRIVATE_URL}"
+        value: "all-in-one"
 
 # Domain-Konfiguration
 domains:

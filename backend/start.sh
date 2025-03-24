@@ -1,12 +1,12 @@
 #!/bin/bash
 set -e
 
-echo "Starting Worker container..."
+echo "Starting All-in-One Backend container..."
 
-# Entferne stale socket Dateien direkt, ohne pkill
+# Entferne stale socket Dateien direkt
 echo "Removing stale socket files..."
-rm -f /var/run/supervisor-worker.sock
-rm -f /var/run/supervisord-worker.pid
+rm -f /var/run/supervisor.sock
+rm -f /var/run/supervisord.pid
 rm -f /tmp/supervisor.*
 sleep 1
 
@@ -15,16 +15,7 @@ echo "Checking directory permissions..."
 mkdir -p /var/run/
 chmod 755 /var/run/
 chmod 755 /etc/supervisor/conf.d/
-
-# Prüfe, ob die Redis-URL korrekt gesetzt ist
-echo "Redis URL: $REDIS_URL"
-echo "Redis Host: $REDIS_HOST"
-
-# Überprüfe, ob wir die private URL verwenden (DigitalOcean App Platform)
-if [[ "$REDIS_URL" == *"localhost"* ]]; then
-    echo "WARNUNG: Redis URL enthält 'localhost'. Möglicherweise werden die Umgebungsvariablen von DigitalOcean nicht korrekt übergeben."
-    echo "Erwartete URL sollte eine private URL von DigitalOcean enthalten."
-fi
+chmod 755 /var/run/redis
 
 # Stelle sicher, dass die Supervisor-Konfigurationsdatei existiert
 echo "Checking supervisor configuration file..."
@@ -34,6 +25,22 @@ if [ ! -f /etc/supervisor/conf.d/supervisord.conf ]; then
     ls -la /etc/supervisor/conf.d/
     exit 1
 fi
+
+# Redis-Status überprüfen
+echo "Checking Redis configuration..."
+if [ -f /etc/redis/redis.conf ]; then
+    echo "Redis configuration found."
+else
+    echo "WARNING: Redis configuration not found!"
+    ls -la /etc/redis/
+fi
+
+# Zeige die Umgebungsvariablen an
+echo "Environment variables:"
+echo "REDIS_URL: $REDIS_URL"
+echo "REDIS_HOST: $REDIS_HOST"
+echo "CONTAINER_TYPE: $CONTAINER_TYPE"
+echo "RUN_MODE: $RUN_MODE"
 
 # Start mit explizitem Pfad und direkter Ausführung
 echo "Starting supervisor..."

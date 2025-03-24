@@ -3,12 +3,7 @@ set -e
 
 echo "Starting API container..."
 
-# Suche und entferne alle Supervisor-Prozesse
-echo "Killing any existing supervisor processes..."
-pkill -f supervisord || true
-sleep 1
-
-# Stelle sicher, dass keine alten Socket-Dateien existieren
+# Entferne stale socket Dateien direkt, ohne pkill
 echo "Removing stale socket files..."
 rm -f /var/run/supervisor-api.sock
 rm -f /var/run/supervisord-api.pid
