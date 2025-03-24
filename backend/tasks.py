@@ -112,6 +112,21 @@ celery = Celery(
     backend=REDIS_URL
 )
 
+# Standard-Konfiguration
+celery.conf.update(
+    worker_pool='solo',  # Verwende den Solo-Pool
+    worker_concurrency=1,  # Immer 1 für Solo-Pool
+    worker_prefetch_multiplier=1,  # Nur einen Task gleichzeitig für bessere Stabilität
+    task_acks_late=True,  # Bestätige Tasks erst nach erfolgreicher Ausführung
+    worker_send_task_events=False,  # Deaktiviere Task-Events
+    worker_redirect_stdouts=True,  # Leite Stdout/Stderr um
+    worker_redirect_stdouts_level='INFO',  # Log-Level für umgeleitete Ausgabe
+    broker_connection_timeout=30,  # Längerer Timeout für Redis-Verbindung
+    broker_connection_retry=True,  # Wiederverbindungen zu Redis erlauben
+    broker_connection_max_retries=10,  # Max. Anzahl Wiederverbindungsversuche
+    result_expires=3600  # Ergebnisse nach 1 Stunde löschen
+)
+
 # Lade die Konfiguration aus einer separaten Datei
 try:
     celery.config_from_object('core.celeryconfig')
@@ -327,7 +342,15 @@ def release_session_lock(session_id):
         logger.error(f"Fehler beim Freigeben des Locks: {str(e)}")
         return False
 
-@celery.task(bind=True, max_retries=5, default_retry_delay=120, soft_time_limit=3600, time_limit=4000)
+@celery.task(
+    bind=True, 
+    max_retries=5, 
+    default_retry_delay=120, 
+    soft_time_limit=3600, 
+    time_limit=4000,
+    acks_late=True,
+    reject_on_worker_lost=True
+)
 @log_function_call
 def process_upload(self, session_id, files_data, user_id=None):
     """
@@ -1188,47 +1211,6 @@ def start_worker():
     logger.info("=== WORKER-MODUS AKTIVIERT ===")
     logger.info("Celery Worker wird gestartet...")
     
-    # Patch billiard Connection._poll Methode, um mit ungültigen Dateideskriptoren umzugehen
-    try:
-        import billiard
-        import billiard.connection
-        from billiard.connection import Connection
-        
-        # Patch für die billiard.connection._poll Funktion auf Modulebene
-        original_module_poll = billiard.connection._poll
-        def patched_module_poll(object_list, timeout):
-            try:
-                return original_module_poll(object_list, timeout)
-            except ValueError as e:
-                if "invalid file descriptor" in str(e):
-                    logger.warning(
-                        f"Caught invalid file descriptor error in module-level _poll, returning empty list."
-                    )
-                    return []
-                raise
-        
-        # Patch auf Modulebene
-        billiard.connection._poll = patched_module_poll
-        
-        # Direkter Monkey-Patch für wait Funktion
-        original_wait = billiard.connection.wait
-        def patched_wait(object_list, timeout=None):
-            try:
-                return original_wait(object_list, timeout)
-            except ValueError as e:
-                if "invalid file descriptor" in str(e):
-                    logger.warning(
-                        f"Caught invalid file descriptor error in wait, returning empty list."
-                    )
-                    return []
-                raise
-        
-        billiard.connection.wait = patched_wait
-        
-        logger.info("Billiard _poll and wait functions patched in start_worker")
-    except Exception as e:
-        logger.error(f"Could not patch billiard module: {e}")
-    
     # Setze Socket-Timeout für bessere Stabilität
     import socket
     socket.setdefaulttimeout(120)  # 2 Minuten Timeout
@@ -1238,40 +1220,26 @@ def start_worker():
     if log_api_requests:
         api_request_logger.info("API-Anfragen-Protokollierung wurde aktiviert")
     
-    # Optimierte Worker-Konfiguration
-    worker_concurrency = int(os.environ.get('CELERY_WORKERS', '1'))  # Default auf 1 Worker
-    max_tasks_per_child = int(os.environ.get('CELERY_MAX_TASKS_PER_CHILD', '1'))  # Default auf 1
-    pool_type = os.environ.get('CELERY_POOL', 'threads')  # Verwende threads Pool als Standard
+    # Optimierte Worker-Konfiguration für Solo-Pool
+    worker_concurrency = 1  # Solo-Pool hat immer Concurrency=1
     
-    logger.info(f"Worker-Konfiguration: concurrency={worker_concurrency}, max_tasks_per_child={max_tasks_per_child}, pool={pool_type}")
+    logger.info(f"Worker-Konfiguration: Solo-Pool (keine Concurrency-Einstellung notwendig)")
     
     # Starte den Worker in einem separaten Thread
     import threading
     
     def worker_thread():
         try:
-            # Setze Process-Limits auf -1, um unbegrenzte File Descriptors zu ermöglichen
-            try:
-                import resource
-                resource.setrlimit(resource.RLIMIT_NOFILE, (65536, 65536))
-                logger.info("Erhöhtes RLIMIT_NOFILE auf 65536 für mehr File Descriptors")
-            except (ImportError, ValueError) as e:
-                logger.warning(f"Konnte RLIMIT_NOFILE nicht setzen: {e}")
-            
             # Neuere Celery-Methode zum Starten eines Workers
-            logger.info("Starte Worker mit neuerer Methode...")
+            logger.info("Starte Worker mit Solo-Pool...")
             worker_instance = celery.Worker(
                 loglevel='INFO',
                 traceback=True,
-                concurrency=worker_concurrency,
-                max_tasks_per_child=max_tasks_per_child,
+                pool='solo',        # Verwende solo Pool für maximale Stabilität
                 task_events=False,
-                optimization='fair',
-                prefetch_multiplier=1,  # Nur einen Task gleichzeitig für bessere Stabilität
                 without_heartbeat=True,  # Deaktiviere Heartbeat für bessere Stabilität
                 without_gossip=True,     # Deaktiviere Gossip für bessere Stabilität
-                without_mingle=True,     # Deaktiviere Mingle für bessere Stabilität
-                pool=pool_type           # Verwende threads Pool für maximale Stabilität
+                without_mingle=True      # Deaktiviere Mingle für bessere Stabilität
             )
             worker_instance.start()
         except (AttributeError, TypeError) as e:
@@ -1285,20 +1253,16 @@ def start_worker():
             worker_options = {
                 'loglevel': 'INFO',
                 'traceback': True,
-                'concurrency': worker_concurrency,
-                'max-tasks-per-child': max_tasks_per_child,
+                'pool': 'solo',
                 'task-events': False,
                 'app': celery,
-                'optimization': 'fair',
-                'prefetch-multiplier': 1,
                 'without-heartbeat': True,
                 'without-gossip': True,
-                'without-mingle': True,
-                'pool': pool_type
+                'without-mingle': True
             }
             
             # Starte den Worker mit den Optionen
-            logger.info(f"Starte Worker mit Optionen: {worker_options}")
+            logger.info(f"Starte Worker mit Solo-Pool")
             worker_instance.run(**worker_options)
     
     # Starte Worker-Thread
@@ -1309,7 +1273,13 @@ def start_worker():
     return worker_thread
 
 # Worker-Task für API-Anfragenverarbeitung - wird explizit protokolliert
-@celery.task(name="process_api_request", bind=True, max_retries=3)
+@celery.task(
+    name="process_api_request", 
+    bind=True, 
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True
+)
 def process_api_request(self, endpoint, method, payload=None, user_id=None):
     """Verarbeitet API-Anfragen asynchron und protokolliert sie."""
     log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'

@@ -13,10 +13,11 @@ task_serializer = 'json'
 accept_content = ['json']  # Akzeptiere nur JSON-Tasks
 result_serializer = 'json'
 
-# Pool-Konfiguration - Verwende threads statt Prozesse
-worker_pool = 'threads'  # Vermeidet Probleme mit Multiprocessing & Dateidescriptoren
+# Pool-Konfiguration - Verwende solo statt threads oder Prozesse
+worker_pool = 'solo'  # Vermeidet Probleme mit Multiprocessing & Dateidescriptoren
+worker_concurrency = 1  # Immer 1 für Solo-Pool
 worker_prefetch_multiplier = 1  # Präfetch Limit - ein Task pro Worker
-worker_max_tasks_per_child = 1  # Neustart nach jedem Task, um Speicherlecks zu vermeiden
+# worker_max_tasks_per_child = 1  # Neustart nach jedem Task - nicht relevant für solo-Pool
 
 # Verbesserte Stabilität für Worker
 worker_send_task_events = False
