@@ -32,76 +32,140 @@ import socket
 socket.setdefaulttimeout(120)  # 2 Minuten Timeout
 
 """
-Celery-Worker für HackTheStudy
+Celery-Worker-Hauptmodul für HackTheStudy.
 
-Dieser Worker verarbeitet Hintergrundaufgaben und längere Berechnungen.
+Dieses Modul initialisiert und konfiguriert den Celery-Worker für die
+Ausführung von Hintergrundaufgaben und stellt sicher, dass alle notwendigen
+Konfigurationen und Umgebungsvariablen geladen werden.
 """
 
 import os
 import sys
 from celery import Celery
+from dotenv import load_dotenv
+from core.celeryconfig import configure_celery, CELERY_POOL_TYPE
 import logging
 
-# Stellen sicher, dass das App-Verzeichnis im Python-Pfad ist
-sys.path.insert(0, '/app')
-
-# Konfiguriere Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Konfiguriere Logging für den Worker
 logger = logging.getLogger('celery_worker')
 
-# Importiere Umgebungsvariablen-Handler
-try:
-    from config.env_handler import load_env
-    load_env()
-except ImportError:
-    logger.warning("Umgebungsvariablen-Handler konnte nicht importiert werden")
+# Lade Umgebungsvariablen mit verbesserter Fehlerbehandlung
+def load_environment():
+    """Lädt Umgebungsvariablen mit Fehlerbehandlung"""
+    try:
+        # Versuche zuerst .env zu laden
+        if os.path.exists('.env'):
+            load_dotenv(override=True, verbose=True)
+            logger.info("Umgebungsvariablen aus .env geladen")
+        else:
+            logger.warning("Keine .env-Datei gefunden, verwende Systemumgebungsvariablen")
+        
+        # Überprüfe kritische Umgebungsvariablen
+        required_vars = ['REDIS_URL', 'OPENAI_API_KEY']
+        missing_vars = [var for var in required_vars if not os.environ.get(var)]
+        
+        if missing_vars:
+            logger.error(f"Fehlende kritische Umgebungsvariablen: {', '.join(missing_vars)}")
+            sys.exit(1)
+            
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Umgebungsvariablen: {e}")
+        sys.exit(1)
 
-# Redis-Verbindungszeichenfolge
-redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-logger.info(f"Verwende Redis: {redis_url}")
+# Initialisiere und konfiguriere Celery
+def create_celery_app():
+    """
+    Erstellt und konfiguriert die Celery-Anwendung für den Worker.
+    
+    Returns:
+        Celery: Die konfigurierte Celery-Anwendung
+    """
+    # Bereinige Redis-URL
+    redis_url = os.getenv('REDIS_URL', 'redis://redis:6379/0').strip()
+    
+    # Erstelle Celery-Anwendung
+    app = Celery(
+        'tasks',
+        broker=redis_url,
+        backend=redis_url,
+        include=['tasks']  # Importiere Tasks aus tasks.py
+    )
+    
+    # Konfiguriere Celery mit optimierten Einstellungen
+    app = configure_celery(app)
+    
+    # Registriere Signal-Handler für verbesserte Robustheit
+    register_signal_handlers(app)
+    
+    return app
 
-# Erstelle Celery-Instanz
-app = Celery('hackthestudy')
+def register_signal_handlers(app):
+    """
+    Registriert Signal-Handler für Celery-Ereignisse.
+    
+    Diese Handler verbessern die Robustheit und Fehlerbehandlung des Workers.
+    
+    Args:
+        app: Die Celery-Anwendung
+    """
+    from celery.signals import (
+        worker_ready, worker_init, worker_shutdown,
+        task_prerun, task_postrun, task_failure,
+        task_retry, task_success, task_revoked
+    )
+    
+    @worker_init.connect
+    def worker_init_handler(sender=None, **kwargs):
+        logger.info(f"Worker gestartet mit Pool-Typ: {CELERY_POOL_TYPE}")
+        
+        # Führe Speicherbereinigung durch
+        import gc
+        gc.collect()
+        
+        # Melde Speichernutzung für Diagnosezwecke
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            logger.info(f"Initiale Speichernutzung: {memory_info.rss / 1024 / 1024:.2f} MB")
+        except ImportError:
+            logger.warning("psutil nicht installiert, Speicherüberwachung deaktiviert")
+    
+    @worker_ready.connect
+    def worker_ready_handler(sender=None, **kwargs):
+        logger.info("Worker ist bereit und wartet auf Aufgaben")
+    
+    @worker_shutdown.connect
+    def worker_shutdown_handler(sender=None, **kwargs):
+        logger.info("Worker wird heruntergefahren, räume Ressourcen auf")
+        
+        # Führe explizite Ressourcenbereinigung durch
+        import gc
+        gc.collect()
+    
+    @task_prerun.connect
+    def task_prerun_handler(task_id=None, task=None, **kwargs):
+        logger.debug(f"Starte Task: {task.name}[{task_id}]")
+    
+    @task_postrun.connect
+    def task_postrun_handler(task_id=None, task=None, state=None, **kwargs):
+        logger.debug(f"Task abgeschlossen: {task.name}[{task_id}] - Status: {state}")
+    
+    @task_failure.connect
+    def task_failure_handler(task_id=None, exception=None, traceback=None, **kwargs):
+        logger.error(f"Task fehlgeschlagen: {task_id} - Fehler: {exception}")
+    
+    @task_success.connect
+    def task_success_handler(sender=None, **kwargs):
+        logger.debug(f"Task erfolgreich: {sender.request.id}")
+    
+    @task_retry.connect
+    def task_retry_handler(request=None, reason=None, **kwargs):
+        logger.warning(f"Task wird wiederholt: {request.id} - Grund: {reason}")
 
-# Konfiguration
-app.conf.update(
-    broker_url=redis_url,
-    result_backend=redis_url,
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='Europe/Berlin',
-    enable_utc=True,
-    task_track_started=True,
-    worker_hijack_root_logger=False,
-    worker_redirect_stdouts=False,
-    worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=1,
-    task_acks_late=True,
-    task_reject_on_worker_lost=True,
-    task_time_limit=7200,  # 2 Stunden Zeitlimit für Tasks
-    # Stabilität verbessern, um den ResultHandler-Thread-Absturz zu vermeiden
-    worker_send_task_events=False,
-    worker_without_heartbeat=True,
-    worker_without_gossip=True,
-    worker_without_mingle=True,
-    worker_enable_remote_control=False,
-    # Zusätzliche Resilience-Optionen
-    broker_connection_timeout=30,
-    broker_connection_retry=True,
-    broker_connection_max_retries=10,
-    result_expires=86400,  # 24 Stunden
-    task_ignore_result=False,
-    task_store_errors_even_if_ignored=True,
-    worker_lost_wait=60.0,  # 1 Minute warten, bevor ein Worker als verloren gilt
-    task_send_sent_event=False,
-    broker_pool_limit=None,  # Keine Begrenzung für Verbindungen
-)
-
-# Importiere Tasks mit korrektem Pfad, da die Datei im Root-Verzeichnis liegt
-from tasks import *
-app.autodiscover_tasks(['tasks'])
+# Hauptinitialisierung
+load_environment()
+celery = create_celery_app()
 
 if __name__ == '__main__':
-    logger.info("Starting Celery worker")
-    app.start() 
+    celery.start() 

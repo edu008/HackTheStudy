@@ -1,13 +1,332 @@
+"""
+Optimierter OpenAI-Client mit verbesserter Fehlerbehandlung, Caching und Retry-Logik.
+"""
+
 import os
 import time
+import logging
 import json
-import traceback
-from openai import OpenAI
+import hashlib
+import functools
+from datetime import datetime, timedelta
+import threading
+import backoff  # Für exponentielles Backoff bei Wiederholungen
+from openai import OpenAI, APIError, APITimeoutError, RateLimitError
 from flask import current_app
 from tasks import redis_client
 from api.log_utils import AppLogger
-from api.token_tracking import count_tokens, calculate_token_cost, deduct_credits, check_credits_available
-import logging
+from api.token_tracking import count_tokens, calculate_token_cost, deduct_credits, check_credits_available, track_token_usage
+import traceback
+
+# Thread-lokaler Speicher für Client-Instanzen
+_thread_local = threading.local()
+
+# Logger konfigurieren
+logger = logging.getLogger('api.openai_client')
+
+# Konfigurationswerte aus Umgebungsvariablen
+DEFAULT_MODEL = os.environ.get('OPENAI_DEFAULT_MODEL', 'gpt-4o')
+CACHE_TTL = int(os.environ.get('OPENAI_CACHE_TTL', 86400))  # 24 Stunden Standard-TTL
+CACHE_ENABLED = os.environ.get('OPENAI_CACHE_ENABLED', 'true').lower() == 'true'
+MAX_RETRIES = int(os.environ.get('OPENAI_MAX_RETRIES', 3))
+MAX_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', 120))  # Timeout in Sekunden
+
+# Modell-Preiskonfiguration
+MODEL_PRICING = {
+    'gpt-4o': {'input': 0.00005, 'output': 0.00015},
+    'gpt-4-turbo': {'input': 0.00001, 'output': 0.00003},
+    'gpt-3.5-turbo': {'input': 0.000001, 'output': 0.000002},
+    'gpt-4-vision-preview': {'input': 0.00001, 'output': 0.00003},
+    'gpt-4': {'input': 0.00003, 'output': 0.00006},
+    'gpt-4-32k': {'input': 0.00006, 'output': 0.00012},
+}
+
+def get_openai_client():
+    """
+    Holt oder erstellt einen OpenAI-Client für den aktuellen Thread.
+    
+    Returns:
+        OpenAI: Eine thread-lokale OpenAI-Client-Instanz
+    """
+    if not hasattr(_thread_local, 'client'):
+        api_key = os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY nicht konfiguriert")
+        
+        # Client mit angepassten Timeout-Einstellungen erstellen
+        _thread_local.client = OpenAI(
+            api_key=api_key,
+            timeout=MAX_TIMEOUT,
+            max_retries=MAX_RETRIES
+        )
+        
+    return _thread_local.client
+
+def generate_cache_key(model, messages, **kwargs):
+    """
+    Generiert einen eindeutigen Cache-Schlüssel basierend auf Anfrageparametern.
+    
+    Args:
+        model: Das verwendete Modell
+        messages: Die Nachrichten für die Anfrage
+        **kwargs: Andere OpenAI-Parameter
+    
+    Returns:
+        str: Ein eindeutiger Cache-Schlüssel
+    """
+    # Relevante Parameter für den Cache-Schlüssel extrahieren
+    cache_params = {
+        'model': model,
+        'messages': messages,
+    }
+    
+    # Optionale Parameter hinzufügen, die das Ergebnis beeinflussen
+    for param in ['temperature', 'top_p', 'n', 'stream', 'stop', 'max_tokens', 
+                  'presence_penalty', 'frequency_penalty', 'logit_bias', 'functions']:
+        if param in kwargs and kwargs[param] is not None:
+            cache_params[param] = kwargs[param]
+    
+    # JSON-String erzeugen und Hash berechnen
+    param_str = json.dumps(cache_params, sort_keys=True)
+    return f"openai:chat:{hashlib.md5(param_str.encode()).hexdigest()}"
+
+def get_cached_response(cache_key):
+    """
+    Holt eine zwischengespeicherte Antwort, wenn verfügbar.
+    
+    Args:
+        cache_key: Der Cache-Schlüssel für die Anfrage
+    
+    Returns:
+        dict oder None: Die zwischengespeicherte Antwort oder None
+    """
+    if not CACHE_ENABLED:
+        return None
+    
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            logger.debug(f"Cache-Treffer für Schlüssel: {cache_key}")
+            return json.loads(cached)
+        logger.debug(f"Cache-Fehltreffer für Schlüssel: {cache_key}")
+    except Exception as e:
+        logger.warning(f"Fehler beim Abrufen aus Cache: {e}")
+    
+    return None
+
+def cache_response(cache_key, response, ttl=None):
+    """
+    Speichert eine Antwort im Cache.
+    
+    Args:
+        cache_key: Der Cache-Schlüssel
+        response: Die zu speichernde Antwort
+        ttl: Time-to-Live in Sekunden (optional)
+    """
+    if not CACHE_ENABLED:
+        return
+    
+    if ttl is None:
+        ttl = CACHE_TTL
+    
+    try:
+        redis_client.setex(
+            cache_key,
+            ttl,
+            json.dumps(response)
+        )
+        logger.debug(f"Antwort im Cache gespeichert: {cache_key}, TTL: {ttl}s")
+    except Exception as e:
+        logger.warning(f"Fehler beim Speichern im Cache: {e}")
+
+@backoff.on_exception(
+    backoff.expo,
+    (APIError, APITimeoutError, RateLimitError),
+    max_tries=MAX_RETRIES + 1,  # +1, da der erste Versuch nicht als Wiederholung zählt
+    giveup=lambda e: isinstance(e, RateLimitError) and "exceeded your quota" in str(e),
+    on_backoff=lambda details: logger.warning(
+        f"Wiederhole OpenAI-Anfrage nach {details['wait']:.1f}s "
+        f"(Versuch {details['tries']}/{MAX_RETRIES + 1})"
+    )
+)
+def chat_completion_with_backoff(model, messages, user_id=None, session_id=None, 
+                                function_name=None, use_cache=True, **kwargs):
+    """
+    Führt eine OpenAI-Chat-Completion mit Backoff-Wiederholungen durch.
+    
+    Args:
+        model: Das zu verwendende OpenAI-Modell
+        messages: Die Nachrichten für die Anfrage
+        user_id: Benutzer-ID für Tracking (optional)
+        session_id: Sitzungs-ID für Tracking (optional)
+        function_name: Funktionsname für Tracking (optional)
+        use_cache: Ob der Cache verwendet werden soll (Standard: True)
+        **kwargs: Weitere Parameter für die OpenAI-API
+    
+    Returns:
+        dict: Die OpenAI-Antwort
+    """
+    # Cache-Schlüssel generieren
+    cache_key = generate_cache_key(model, messages, **kwargs)
+    
+    # Zwischengespeicherte Antwort abrufen, wenn Cache aktiviert
+    if use_cache:
+        cached_response = get_cached_response(cache_key)
+        if cached_response:
+            # Token-Nutzung für zwischengespeicherte Antwort tracken
+            track_cached_usage(model, messages, cached_response, user_id, session_id, function_name)
+            return cached_response
+    
+    # OpenAI-Client abrufen
+    client = get_openai_client()
+    
+    start_time = time.time()
+    try:
+        # Anfrage an OpenAI senden
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            **kwargs
+        )
+        
+        # Response in Dict umwandeln
+        response_dict = response.model_dump()
+        
+        # Im Cache speichern, wenn aktiviert
+        if use_cache:
+            cache_response(cache_key, response_dict)
+        
+        # Token-Nutzung tracken
+        track_token_usage(
+            user_id=user_id,
+            session_id=session_id,
+            model=model,
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+            function_name=function_name,
+            cached=False
+        )
+        
+        # Erfolgreiche Anfrage protokollieren
+        logger.info(
+            f"OpenAI-Anfrage erfolgreich: Modell={model}, "
+            f"Tokens={response.usage.prompt_tokens}+{response.usage.completion_tokens}, "
+            f"Zeit={time.time() - start_time:.2f}s"
+        )
+        
+        return response_dict
+    
+    except Exception as e:
+        logger.error(f"Fehler bei OpenAI-Anfrage: {type(e).__name__}: {e}")
+        raise
+
+def track_cached_usage(model, messages, cached_response, user_id, session_id, function_name):
+    """
+    Trackt die Token-Nutzung für zwischengespeicherte Antworten.
+    
+    Args:
+        model: Das verwendete Modell
+        messages: Die gesendeten Nachrichten
+        cached_response: Die zwischengespeicherte Antwort
+        user_id: Benutzer-ID (optional)
+        session_id: Sitzungs-ID (optional)
+        function_name: Funktionsname (optional)
+    """
+    try:
+        # Token-Zählung aus der zwischengespeicherten Antwort extrahieren
+        input_tokens = cached_response.get('usage', {}).get('prompt_tokens', 0)
+        output_tokens = cached_response.get('usage', {}).get('completion_tokens', 0)
+        
+        # Wenn keine Token-Zählung verfügbar, schätzen wir sie
+        if input_tokens == 0:
+            input_tokens = count_tokens(messages, model)
+        
+        if output_tokens == 0 and 'choices' in cached_response:
+            content = cached_response['choices'][0].get('message', {}).get('content', '')
+            output_tokens = count_tokens([{"role": "assistant", "content": content}], model)
+        
+        # Token-Nutzung mit Cache-Flag tracken
+        track_token_usage(
+            user_id=user_id,
+            session_id=session_id,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            function_name=function_name,
+            cached=True
+        )
+        
+        logger.debug(
+            f"Cache-Treffer verfolgt: Modell={model}, "
+            f"Tokens={input_tokens}+{output_tokens}, User={user_id}, Session={session_id}"
+        )
+    
+    except Exception as e:
+        logger.warning(f"Fehler beim Tracken der zwischengespeicherten Nutzung: {e}")
+
+def calculate_cost(model, input_tokens, output_tokens):
+    """
+    Berechnet die Kosten für eine API-Anfrage basierend auf dem Modell und der Token-Anzahl.
+    
+    Args:
+        model: Das verwendete Modell
+        input_tokens: Anzahl der Eingabe-Token
+        output_tokens: Anzahl der Ausgabe-Token
+    
+    Returns:
+        float: Die berechneten Kosten in USD
+    """
+    # Standardpreise verwenden, wenn das Modell nicht in der Konfiguration enthalten ist
+    if model not in MODEL_PRICING:
+        logger.warning(f"Unbekanntes Modell für Preisberechnung: {model}, verwende gpt-4-Preise")
+        pricing = MODEL_PRICING['gpt-4']
+    else:
+        pricing = MODEL_PRICING[model]
+    
+    # Kosten berechnen
+    input_cost = input_tokens * pricing['input']
+    output_cost = output_tokens * pricing['output']
+    
+    return input_cost + output_cost
+
+def extract_content_from_response(response):
+    """
+    Extrahiert den Inhaltstext aus einer OpenAI-Antwort.
+    
+    Args:
+        response: Die OpenAI-Antwort
+    
+    Returns:
+        str: Der extrahierte Inhalt
+    """
+    if not response or 'choices' not in response or not response['choices']:
+        return ""
+    
+    # Inhalt aus der ersten Wahl extrahieren
+    first_choice = response['choices'][0]
+    if 'message' in first_choice and 'content' in first_choice['message']:
+        return first_choice['message']['content'] or ""
+    
+    return ""
+
+def invalidate_cache(pattern="openai:chat:*"):
+    """
+    Invalidiert den Cache basierend auf einem Muster.
+    
+    Args:
+        pattern: Das zu verwendende Redis-Muster
+    
+    Returns:
+        int: Anzahl der gelöschten Schlüssel
+    """
+    try:
+        keys = redis_client.keys(pattern)
+        if keys:
+            return redis_client.delete(*keys)
+        return 0
+    except Exception as e:
+        logger.error(f"Fehler beim Invalidieren des Caches: {e}")
+        return 0
 
 class OptimizedOpenAIClient:
     _instance = None

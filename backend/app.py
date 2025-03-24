@@ -20,6 +20,8 @@ from datetime import datetime
 import traceback
 import json
 from werkzeug.exceptions import HTTPException
+# Importiere das neue Logging-Modul
+from core.logging_config import setup_logging, api_request_logger
 
 # Direkt am Anfang - Umfassendes Monkey-Patching für billiard
 try:
@@ -233,14 +235,6 @@ def setup_logging():
     # Flag setzen
     LOGGING_INITIALIZED = True
     return logger
-
-# Logger für API-Anfragen
-api_request_logger = logging.getLogger('api_requests')
-
-# Optimierte Funktion zum Konfigurieren spezialisierter Logger
-def config_specialized_loggers():
-    # Diese Funktion ist jetzt Teil von setup_logging()
-    pass
 
 # Konfiguriere Logging
 logger = setup_logging()

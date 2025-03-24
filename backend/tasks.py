@@ -17,8 +17,12 @@ import threading
 from threading import Timer
 import signal
 import gc  # Garbage Collector für manuelles Memory Management
-import resource  # Für Ressourcenlimits
-import psutil  # Für Prozessüberwachung
+# Importiere die ausgelagerten Ressourcenverwaltungsfunktionen
+from core.resource_manager import (
+    check_and_set_fd_limits,
+    monitor_file_descriptors,
+    cleanup_signal_handler
+)
 
 # Konstanten für die Anwendung
 REDIS_TTL_DEFAULT = 14400  # 4 Stunden Standard-TTL für Redis-Einträge
@@ -114,23 +118,6 @@ REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0').strip()
 
 # Überwache Datei-Deskriptoren während der Initialisierung
 monitor_file_descriptors()
-
-# Signal-Handler für bessere Ressourcenbereinigung
-def cleanup_signal_handler(signum, frame):
-    """Signal-Handler für saubere Bereinigung beim Beenden."""
-    logger.info(f"Signal {signum} empfangen, führe Bereinigung durch...")
-    # Erzwinge Garbage Collection
-    gc.collect()
-    # Schließe alle übrigen Datei-Deskriptoren
-    try:
-        for fd in range(3, 1024):  # Starte bei 3 (nach stdin, stdout, stderr)
-            try:
-                os.close(fd)
-            except:
-                pass
-    except Exception as e:
-        logger.error(f"Fehler beim Schließen von Datei-Deskriptoren: {e}")
-    sys.exit(0)
 
 # Registriere Signal-Handler
 signal.signal(signal.SIGTERM, cleanup_signal_handler)
