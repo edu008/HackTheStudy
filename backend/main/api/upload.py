@@ -3,8 +3,7 @@ from flask import request, jsonify, Blueprint, current_app, g
 from . import api_bp
 from core.models import db, Upload, Question, Topic, Connection, Flashcard, User
 from sqlalchemy.orm import Session as SQLAlchemySession  # korrekte Quelle für Session
-# Direkter Import des tasks Moduls anstatt einzelner Funktionen
-import tasks
+# import tasks  # In main/api sollte dieser Import durch Celery API ersetzt werden
 import os  # Für Zugriff auf os.environ
 from .cleanup import cleanup_processing_for_session
 import uuid
@@ -14,35 +13,20 @@ from .auth import token_required
 from api.token_tracking import check_credits_available, calculate_token_cost, deduct_credits
 import time
 import json
-from tasks import redis_client
-from openai import OpenAI
-import base64
-import io
-import re
-import hashlib
-# import bleach  # Wird aktuell nicht verwendet
-from .error_handler import (
-    log_error, create_error_response, safe_transaction,
-    ERROR_INVALID_INPUT, ERROR_FILE_PROCESSING, ERROR_INSUFFICIENT_CREDITS,
-    ERROR_SESSION_CONFLICT, ERROR_DATABASE, ERROR_NOT_FOUND,
-    InvalidInputError, ResourceNotFoundError, InsufficientCreditsError, FileProcessingError
-)
-import mimetypes
-from datetime import datetime
-from pathlib import Path
-import traceback
-import tempfile
-from urllib.parse import urlparse
-import requests
-from werkzeug.utils import secure_filename
-from sqlalchemy.exc import SQLAlchemyError
-from werkzeug.exceptions import RequestEntityTooLarge, BadRequest
-# Der Import wird bereits oben durchgeführt
-# from core.models import Session, Connection
+# Redis-Client direkt erstellen
+import redis
+from celery import Celery
 
-# Importiere die neuen Module
-from api.log_utils import AppLogger
-from api.openai_client import OptimizedOpenAIClient
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+redis_client = redis.from_url(redis_url)
+
+# Celery-Client zum Senden von Tasks an den Worker
+celery_app = Celery('api', broker=redis_url, backend=redis_url)
+
+# Hilfsfunktion, um Tasks an den Worker zu delegieren
+def delegate_to_worker(task_name, *args, **kwargs):
+    """Delegiert eine Aufgabe an den Worker über Celery."""
+    return celery_app.send_task(f'tasks.{task_name}', args=args, kwargs=kwargs)
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +176,7 @@ def upload_file():
                 
                 # Starte den Hintergrund-Task zur Verarbeitung asynchron
                 task_files_data = [(file.filename, file_content.hex())]
-                task = tasks.process_upload.delay(session_id, task_files_data, user_id)
+                task = delegate_to_worker('process_upload', session_id, task_files_data, user_id)
                 
                 # Speichere die Task-ID in Redis für Tracking
                 redis_client.set(f"task_id:{session_id}", task.id, ex=3600)
@@ -867,7 +851,7 @@ def upload_chunk():
             
             # Starte die Verarbeitung
             task_files_data = [(file_name, file_content.hex())]
-            task = tasks.process_upload.delay(session_id, task_files_data, getattr(request, 'user_id', None))
+            task = delegate_to_worker('process_upload', session_id, task_files_data, getattr(request, 'user_id', None))
             
             # Speichere die Task-ID
             redis_client.set(f"task_id:{session_id}", task.id, ex=3600)
@@ -1063,7 +1047,7 @@ def retry_processing(session_id):
         redis_client.set(f"processing_status:{session_id}", "restarting", ex=7200)
         
         # Erstelle neuen Celery-Task
-        task = tasks.process_upload.delay(session_id, [], upload.user_id)
+        task = delegate_to_worker('process_upload', session_id, [], upload.user_id)
         
         # Speichere neue Task-ID
         redis_client.set(f"task_id:{session_id}", task.id, ex=7200)

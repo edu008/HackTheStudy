@@ -12,11 +12,15 @@ from datetime import datetime, timedelta
 import threading
 import backoff  # Für exponentielles Backoff bei Wiederholungen
 from openai import OpenAI, APIError, APITimeoutError, RateLimitError
-from flask import current_app
-from tasks import redis_client
+from flask import current_app, g
 from api.log_utils import AppLogger
 from api.token_tracking import count_tokens, calculate_token_cost, deduct_credits, check_credits_available, track_token_usage
 import traceback
+import redis
+
+# Redis-Client direkt erstellen
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+redis_client = redis.from_url(redis_url)
 
 # Thread-lokaler Speicher für Client-Instanzen
 _thread_local = threading.local()

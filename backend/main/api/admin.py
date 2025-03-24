@@ -10,11 +10,21 @@ from sqlalchemy import func, cast, Float, desc
 from datetime import datetime, timedelta
 from api.log_utils import AppLogger
 import json
+import string
+import random
+import time
+import uuid
+import stripe
+import redis
 
 # Blueprint erstellen und zentrale CORS-Konfiguration verwenden
 admin_bp = Blueprint('admin', __name__)
 
 logger = logging.getLogger(__name__)
+
+# Redis-Client direkt erstellen
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+redis_client = redis.from_url(redis_url)
 
 def admin_required(f):
     """
@@ -292,9 +302,6 @@ def get_openai_errors():
         }), 400
     
     try:
-        # Redis-Client importieren
-        from tasks import redis_client
-        
         # Alle relevanten OpenAI-Schlüssel für diese Session abrufen
         request_key = f"openai_last_request:{session_id}"
         response_key = f"openai_last_response:{session_id}"

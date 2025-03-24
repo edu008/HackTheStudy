@@ -3,7 +3,7 @@ set -e
 
 echo "Starting Worker container..."
 
-# Entferne stale socket Dateien direkt
+# Entferne alte Socket-Dateien
 echo "Removing stale socket files..."
 rm -f /tmp/supervisor-worker.sock
 rm -f /tmp/supervisord-worker.pid
@@ -20,51 +20,46 @@ chmod 755 /etc/supervisor/conf.d/
 echo "=== ENVIRONMENT VARIABLES ==="
 echo "REDIS_URL: $REDIS_URL"
 echo "REDIS_HOST: $REDIS_HOST"
-echo "DEBUG_INFO: $DEBUG_INFO"
-echo "USE_API_URL: $USE_API_URL"
+echo "API_HOST: $API_HOST"
 echo "CONTAINER_TYPE: $CONTAINER_TYPE"
 echo "RUN_MODE: $RUN_MODE"
 echo "============================"
 
 # Hardcoded IP-Adresse des API-Services als Fallback
-API_HOST="10.0.0.3" # Diese IP-Adresse sollte dem DigitalOcean API-Container entsprechen
-echo "Hardcoded API-Host: $API_HOST"
+DEFAULT_API_HOST="10.0.0.3" # Typische IP für DigitalOcean-Container
+if [ -z "$API_HOST" ]; then
+    API_HOST="$DEFAULT_API_HOST"
+    echo "API_HOST nicht gesetzt, verwende Default: $API_HOST"
+fi
 
 # Korrigiere Redis-URL falls nötig
 if [ -z "$REDIS_URL" ] || [ "$REDIS_URL" == "redis://localhost:6379/0" ]; then
     if [ ! -z "$USE_API_URL" ]; then
         export REDIS_HOST="$USE_API_URL"
         export REDIS_URL="redis://$USE_API_URL:6379/0"
-        echo "Überschreibe Redis-URL mit: $REDIS_URL"
+        echo "Überschreibe Redis-URL mit: $REDIS_URL (von USE_API_URL)"
     else
-        echo "WARNUNG: Lokale Redis-URL wird verwendet. Versuche API_HOST=$API_HOST"
+        echo "Verwende API_HOST für Redis-Verbindung: $API_HOST"
         export REDIS_HOST="$API_HOST"
         export REDIS_URL="redis://$API_HOST:6379/0"
-        echo "Überschreibe Redis-URL mit Fallback: $REDIS_URL"
+        echo "Überschreibe Redis-URL mit: $REDIS_URL"
     fi
-fi
-
-# Prüfe, ob die Redis-URL eine interne URL ist (erwartet bei DigitalOcean)
-if [[ "$REDIS_URL" != *"PRIVATE_URL"* ]] && [[ "$REDIS_URL" != *"redis://"* ]]; then
-    # Füge "redis://" hinzu, falls es fehlt
-    export REDIS_URL="redis://$REDIS_URL"
-    echo "Korrigierte Redis URL: $REDIS_URL"
 fi
 
 # Füge eine Liste von möglichen API-Adressen hinzu, die wir nacheinander versuchen können
 API_ADDRESSES=(
-    "localhost"
-    "$API_HOST" 
     "api"
     "hackthestudy-backend-api"
-    "10.0.0.2"
+    "$API_HOST"
     "10.0.0.3"
-    "10.0.0.4"
+    "10.0.0.2"
+    "localhost"
 )
 
 # Warte bis Redis im API-Container verfügbar ist - versuche verschiedene Adressen
+echo "Versuche Verbindung zu Redis aufzubauen..."
 for api_addr in "${API_ADDRESSES[@]}"; do
-    echo "Versuche Redis-Verbindung zu $api_addr:6379..."
+    echo "Teste Redis-Verbindung zu $api_addr:6379..."
     if timeout 2 redis-cli -h "$api_addr" -p 6379 ping &>/dev/null; then
         echo "Redis-Server gefunden auf $api_addr:6379!"
         export REDIS_HOST="$api_addr"
@@ -84,6 +79,6 @@ if [ ! -f /etc/supervisor/conf.d/supervisord.conf ]; then
     exit 1
 fi
 
-# Start mit explizitem Pfad und direkter Ausführung
+# Starte Supervisor
 echo "Starting supervisor..."
 exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf 

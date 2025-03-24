@@ -314,8 +314,15 @@ def init_app(run_mode=None):
         
         # Worker-Modus: Starte Celery-Worker
         if run_mode == 'worker':
-            from tasks import start_worker
-            start_worker()
+            from celery import Celery
+            # Konfiguriere Celery-Worker direkt, statt eine externe Funktion aufzurufen
+            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
+            celery_app = Celery('worker', broker=redis_url, backend=redis_url)
+            
+            # Setze Logging für den Celery-Worker
+            logging.info(f"Starte Celery-Worker mit Redis-URL: {redis_url}")
+            
+            # Beende die App-Initialisierung hier, da wir nur den Worker starten wollen
             return None  # Worker hat keine Flask-App
         
         # Payment-Service: Starte speziellen Server

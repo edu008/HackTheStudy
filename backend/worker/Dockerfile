@@ -13,10 +13,8 @@ ENV PYTHONUNBUFFERED=1 \
     CONTAINER_TYPE=worker \
     RUN_MODE=worker
 
-# Installiere Abhängigkeiten mit geringerem Speicherverbrauch
+# Installiere nur die wirklich benötigten Abhängigkeiten
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    netcat-openbsd \
-    poppler-utils \
     curl \
     postgresql-client \
     redis-tools \
@@ -42,7 +40,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Kopiere die lokalen Dateien
+# Kopiere die Quellcodedateien
 COPY tasks.py .
 COPY api/ ./api/
 COPY core/ ./core/
@@ -53,12 +51,6 @@ COPY .env.example ./.env.example
 
 # Supervisord-Konfiguration
 COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
-
-# Stelle zusätzlich sicher, dass die Socket-Datei entfernt wird, falls sie existiert
-RUN rm -f /var/run/supervisor.sock && \
-    # Debugging: Überprüfe, ob die Supervisor-Konfiguration existiert
-    ls -la /etc/supervisor/conf.d/ && \
-    cat /etc/supervisor/conf.d/supervisord.conf
 
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
@@ -85,7 +77,6 @@ ENV CELERY_WORKERS=1 \
     CELERY_WORKER_WITHOUT_MINGLE=1 \
     CELERY_WORKER_SEND_TASK_EVENTS=0 \
     CELERY_POOL=solo \
-    BILLIARD_DEBUG=1 \
     LOG_PREFIX="[WORKER] " \
     LOG_LEVEL="INFO" \
     LOG_API_REQUESTS="true"
