@@ -479,27 +479,31 @@ def init_app(run_mode=None):
     @app.route('/api/v1/health', methods=['GET'])
     def health_check():
         """
-        Einfacher Health-Check-Endpunkt für Digital Ocean App Platform.
+        Health-Check-Endpunkt für Digital Ocean App Platform.
+        Prüft, ob die Anwendung läuft und Datenbankverbindung besteht.
         """
-        app.logger.info("Health-Check-Anfrage erhalten")
-        
-        # Zusätzlich Redis-Verbindung prüfen
-        redis_status = "unavailable"
         try:
-            from redis import Redis
-            redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-            redis_client = Redis.from_url(redis_url)
-            if redis_client.ping():
-                redis_status = "available"
+            # Prüfe Datenbankverbindung mit einer einfachen Abfrage
+            db.session.execute("SELECT 1")
+            
+            # Prüfe Redis-Verbindung, wenn wir im API-Container sind
+            if os.environ.get('CONTAINER_TYPE') == 'api':
+                from core.redis_client import redis_client
+                redis_client.ping()
+            
+            return jsonify({
+                "status": "healthy",
+                "timestamp": datetime.now().isoformat(),
+                "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+                "version": "1.0.0"
+            }), 200
         except Exception as e:
-            app.logger.error(f"Redis-Verbindungsfehler: {str(e)}")
-            redis_status = f"error: {str(e)}"
-        
-        return jsonify({
-            "status": "healthy",
-            "redis": redis_status,
-            "timestamp": datetime.now().isoformat()
-        }), 200
+            logger.error(f"Health check fehlgeschlagen: {e}")
+            return jsonify({
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }), 500
     
     # Root-Route für API-Status
     @app.route('/', methods=['GET', 'OPTIONS'])

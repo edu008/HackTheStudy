@@ -25,9 +25,13 @@ envs:
     scope: RUN_TIME
     type: SECRET
   
-  # Redis-Konfiguration (lokaler Redis im Container)
+  # Redis-Konfiguration
   - key: REDIS_URL
     value: "redis://localhost:6379/0"
+    scope: RUN_TIME
+  - key: REDIS_HOST
+    value: "${APP_URL}"
+    scope: RUN_TIME
   
   # Server-Konfiguration
   - key: FLASK_APP
@@ -109,8 +113,6 @@ envs:
     value: "true"
   - key: USE_SUPERVISOR
     value: "true"
-  - key: PAYMENT_PORT
-    value: "5001"
   
   # Celery Worker Konfiguration
   - key: CELERY_POOL
@@ -121,25 +123,25 @@ envs:
     value: "3600"
 
 services:
-  # Kombinierter API-Service und Worker-Service in einem Container
-  - name: backend
+  # API-Service mit Redis
+  - name: api
     type: web
     github:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
     source_dir: backend
-    dockerfile_path: backend/Dockerfile
+    dockerfile_path: backend/Dockerfile.api
     http_port: 8080
-    # Verbesserte Ressourcen und Skalierung
+    # Ressourcen und Skalierung
     instance_count: 1
     instance_size_slug: basic-s
     health_check:
       http_path: /api/v1/health
       port: 8080
-      initial_delay_seconds: 120
-      period_seconds: 60
-      timeout_seconds: 30
+      initial_delay_seconds: 60
+      period_seconds: 30
+      timeout_seconds: 10
       success_threshold: 1
       failure_threshold: 3
     # Erhöhte Limits für bessere Stabilität
@@ -155,17 +157,51 @@ services:
       max_attempts: 0
       window: 0s
     envs:
+      - key: CONTAINER_TYPE
+        value: "api"
       - key: DIGITAL_OCEAN_APP_NAME
         value: "hackthestudy-backend"
       - key: DIGITAL_OCEAN_DEPLOYMENT_ID
         value: "${APP_DEPLOYMENT_ID}"
       - key: LOG_PREFIX
-        value: "[APP]"
+        value: "[API]"
 
-  # Domain-Konfiguration
+  # Worker-Service 
+  - name: worker
+    type: worker
+    github:
+      repo: edu008/HackTheStudy
+      branch: main
+      deploy_on_push: true
+    source_dir: backend
+    dockerfile_path: backend/Dockerfile.worker
+    # Ressourcen und Skalierung (weniger Ressourcen für Worker nötig)
+    instance_count: 1
+    instance_size_slug: basic-xs
+    # Automatische Neustarts
+    restart_policy:
+      condition: on_failure
+      delay: 10s
+      max_attempts: 0
+      window: 0s
+    # Hängt von API-Container ab
+    envs:
+      - key: CONTAINER_TYPE
+        value: "worker"
+      - key: RUN_MODE
+        value: "worker"
+      - key: LOG_PREFIX
+        value: "[WORKER]"
+      - key: REDIS_URL
+        value: ${api.PRIVATE_URL}:6379
+      - key: REDIS_HOST
+        value: "${api.PRIVATE_URL}"
+
+# Domain-Konfiguration
 domains:
   - domain: api.hackthestudy.ch
     type: PRIMARY
+    service: api
 
 openapi: 3.0.3
 info:
