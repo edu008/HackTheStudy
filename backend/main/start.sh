@@ -15,7 +15,24 @@ echo "Checking directory permissions..."
 mkdir -p /var/run/
 chmod 755 /var/run/
 chmod 755 /etc/supervisor/conf.d/
+
+# Prüfe und erstelle Redis-Verzeichnisse falls nötig
+echo "Setting up Redis directories..."
+if [ ! -d "/var/run/redis" ]; then
+    mkdir -p /var/run/redis
+    echo "Created /var/run/redis directory"
+fi
+if [ ! -d "/var/lib/redis" ]; then
+    mkdir -p /var/lib/redis
+    echo "Created /var/lib/redis directory"
+fi
+if [ ! -d "/var/log/redis" ]; then
+    mkdir -p /var/log/redis
+    echo "Created /var/log/redis directory"
+fi
+
 chmod 755 /var/run/redis
+chown -R root:root /var/run/redis /var/lib/redis /var/log/redis || true
 
 # Stelle sicher, dass die Supervisor-Konfigurationsdatei existiert
 echo "Checking supervisor configuration file..."

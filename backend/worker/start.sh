@@ -16,9 +16,26 @@ mkdir -p /var/run/
 chmod 755 /var/run/
 chmod 755 /etc/supervisor/conf.d/
 
-# Prüfe, ob die Redis-URL korrekt gesetzt ist
-echo "Redis URL: $REDIS_URL"
-echo "Redis Host: $REDIS_HOST"
+# Debug-Informationen anzeigen
+echo "=== ENVIRONMENT VARIABLES ==="
+echo "REDIS_URL: $REDIS_URL"
+echo "REDIS_HOST: $REDIS_HOST"
+echo "DEBUG_INFO: $DEBUG_INFO"
+echo "USE_API_URL: $USE_API_URL"
+echo "CONTAINER_TYPE: $CONTAINER_TYPE"
+echo "RUN_MODE: $RUN_MODE"
+echo "============================"
+
+# Korrigiere Redis-URL falls nötig
+if [ -z "$REDIS_URL" ] || [ "$REDIS_URL" == "redis://localhost:6379/0" ]; then
+    if [ ! -z "$USE_API_URL" ]; then
+        export REDIS_HOST="$USE_API_URL"
+        export REDIS_URL="redis://$USE_API_URL:6379/0"
+        echo "Überschreibe Redis-URL mit: $REDIS_URL"
+    else
+        echo "WARNUNG: Lokale Redis-URL wird verwendet und USE_API_URL ist nicht gesetzt!"
+    fi
+fi
 
 # Prüfe, ob die Redis-URL eine interne URL ist (erwartet bei DigitalOcean)
 if [[ "$REDIS_URL" != *"PRIVATE_URL"* ]] && [[ "$REDIS_URL" != *"redis://"* ]]; then
@@ -28,20 +45,33 @@ if [[ "$REDIS_URL" != *"PRIVATE_URL"* ]] && [[ "$REDIS_URL" != *"redis://"* ]]; 
 fi
 
 # Warte bis Redis im API-Container verfügbar ist
-echo "Waiting for Redis to become available..."
+echo "Waiting for Redis to become available at $REDIS_HOST:6379..."
 attempt=0
 max_attempts=30
 
-until redis-cli -h $REDIS_HOST -p 6379 ping 2>/dev/null || [ $attempt -eq $max_attempts ]; do
+# Erster Timeout: Kürzere Abstände für schnellere Services
+until timeout 2 redis-cli -h $REDIS_HOST -p 6379 ping 2>/dev/null || [ $attempt -eq 5 ]; do
     attempt=$((attempt+1))
-    echo "Waiting for Redis (Attempt $attempt/$max_attempts)..."
+    echo "Erstes Warten auf Redis (Attempt $attempt/5)..."
     sleep 2
 done
 
+# Wenn der erste Versuch fehlschlägt, warte länger zwischen den Versuchen
+if [ $attempt -eq 5 ]; then
+    echo "Erstes Warten fehlgeschlagen, längere Wartezeit..."
+    attempt=0
+    until timeout 5 redis-cli -h $REDIS_HOST -p 6379 ping 2>/dev/null || [ $attempt -eq $max_attempts ]; do
+        attempt=$((attempt+1))
+        echo "Zweites Warten auf Redis (Attempt $attempt/$max_attempts)..."
+        sleep 5
+    done
+fi
+
 if [ $attempt -eq $max_attempts ]; then
-    echo "WARNING: Redis server not responding after $max_attempts attempts. Continuing anyway..."
+    echo "WARNUNG: Redis-Server antwortet nicht nach $max_attempts Versuchen."
+    echo "Versuche, dennoch fortzufahren..."
 else
-    echo "Redis server is available!"
+    echo "Redis-Server ist verfügbar!"
 fi
 
 # Stelle sicher, dass die Supervisor-Konfigurationsdatei existiert

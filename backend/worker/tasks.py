@@ -115,7 +115,29 @@ check_and_set_fd_limits()
 
 # Bereinige Redis-URL
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
-logger.info(f"Celery verwendet Redis-URL: {REDIS_URL}")
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost').strip()
+USE_API_URL = os.getenv('USE_API_URL', '').strip()
+
+# Verbindungskorrektur: Falls die REDIS_URL localhost ist, aber USE_API_URL gesetzt ist
+if 'localhost' in REDIS_URL and USE_API_URL:
+    logger.warning(f"Lokale Redis-URL erkannt, aber USE_API_URL ist verfügbar: {USE_API_URL}")
+    REDIS_URL = f"redis://{USE_API_URL}:6379/0"
+    REDIS_HOST = USE_API_URL
+    os.environ['REDIS_URL'] = REDIS_URL
+    os.environ['REDIS_HOST'] = REDIS_HOST
+    logger.info(f"Redis-URL korrigiert zu: {REDIS_URL}")
+
+logger.info(f"Celery verwendet Redis-URL: {REDIS_URL} (Host: {REDIS_HOST})")
+
+# Prüfe, ob die Redis-URL gültig ist
+try:
+    import redis
+    r = redis.from_url(REDIS_URL, socket_timeout=5)
+    r.ping()
+    logger.info("Redis-Verbindung erfolgreich getestet!")
+except Exception as e:
+    logger.warning(f"Redis-Verbindungstest fehlgeschlagen: {str(e)}")
+    logger.warning("Celery wird trotzdem versuchen, eine Verbindung herzustellen...")
 
 # Überwache Datei-Deskriptoren während der Initialisierung
 monitor_file_descriptors()
@@ -140,11 +162,13 @@ celery.conf.update(
     worker_send_task_events=False,  # Deaktiviere Task-Events
     worker_redirect_stdouts=True,  # Leite Stdout/Stderr um
     worker_redirect_stdouts_level='INFO',  # Log-Level für umgeleitete Ausgabe
-    broker_connection_timeout=30,  # Längerer Timeout für Redis-Verbindung
+    broker_connection_timeout=60,  # Verlängerter Timeout für Redis-Verbindung
     broker_connection_retry=True,  # Wiederverbindungen zu Redis erlauben
-    broker_connection_max_retries=10,  # Max. Anzahl Wiederverbindungsversuche
+    broker_connection_max_retries=20,  # Erhöhte Anzahl Wiederverbindungsversuche
+    broker_connection_retry_on_startup=True,  # Versuche, beim Start eine Verbindung herzustellen
+    broker_pool_limit=None,  # Keine Begrenzung des Pools
     result_expires=3600,  # Ergebnisse nach 1 Stunde löschen
-    # Zusätzliche Konfiguration für Datei-Deskriptor-Probleme
+    # Konfiguration für Datei-Deskriptor-Probleme
     worker_without_heartbeat=True,  # Deaktiviere Heartbeat zur Reduzierung von Sockets
     worker_without_gossip=True,  # Deaktiviere Gossip zur Reduzierung von Sockets
     worker_without_mingle=True,  # Deaktiviere Mingle zur Reduzierung von Sockets
@@ -152,12 +176,12 @@ celery.conf.update(
     task_ignore_result=False,  # Behalte Ergebnisse zur besseren Nachverfolgung
     broker_heartbeat=0,  # Deaktiviere Broker-Heartbeat
     # Verbesserte Fehlertoleranz für Datei-Deskriptor-Probleme
-    broker_transport_options={'socket_keepalive': False},  # Deaktiviere Socket-Keepalive
-    broker_pool_limit=None,  # Keine Begrenzung der Verbindungen
-    task_send_sent_event=False,  # Keine Events für gesendete Tasks
-    worker_enable_remote_control=False,  # Deaktiviere Remote-Steuerung
-    result_persistent=False,  # Keine persistenten Ergebnisse
-    accept_content=['json']  # Nur JSON akzeptieren
+    broker_transport_options={
+        'socket_keepalive': False,  # Deaktiviere Socket-Keepalive
+        'socket_timeout': 30,       # Erhöhter Socket-Timeout
+        'retry_on_timeout': True,   # Wiederhole bei Timeouts
+        'max_retries': 5           # Maximale Anzahl an Wiederholungen pro Verbindung
+    }
 )
 
 # Periodische Ressourcenüberwachung einrichten
