@@ -3,7 +3,7 @@ set -e
 
 echo "Starting Worker container..."
 
-# Entferne stale socket Dateien direkt, ohne pkill
+# Entferne stale socket Dateien direkt
 echo "Removing stale socket files..."
 rm -f /var/run/supervisor-worker.sock
 rm -f /var/run/supervisord-worker.pid
@@ -20,10 +20,28 @@ chmod 755 /etc/supervisor/conf.d/
 echo "Redis URL: $REDIS_URL"
 echo "Redis Host: $REDIS_HOST"
 
-# Überprüfe, ob wir die private URL verwenden (DigitalOcean App Platform)
-if [[ "$REDIS_URL" == *"localhost"* ]]; then
-    echo "WARNUNG: Redis URL enthält 'localhost'. Möglicherweise werden die Umgebungsvariablen von DigitalOcean nicht korrekt übergeben."
-    echo "Erwartete URL sollte eine private URL von DigitalOcean enthalten."
+# Prüfe, ob die Redis-URL eine interne URL ist (erwartet bei DigitalOcean)
+if [[ "$REDIS_URL" != *"PRIVATE_URL"* ]] && [[ "$REDIS_URL" != *"redis://"* ]]; then
+    # Füge "redis://" hinzu, falls es fehlt
+    export REDIS_URL="redis://$REDIS_URL"
+    echo "Korrigierte Redis URL: $REDIS_URL"
+fi
+
+# Warte bis Redis im API-Container verfügbar ist
+echo "Waiting for Redis to become available..."
+attempt=0
+max_attempts=30
+
+until redis-cli -h $REDIS_HOST -p 6379 ping 2>/dev/null || [ $attempt -eq $max_attempts ]; do
+    attempt=$((attempt+1))
+    echo "Waiting for Redis (Attempt $attempt/$max_attempts)..."
+    sleep 2
+done
+
+if [ $attempt -eq $max_attempts ]; then
+    echo "WARNING: Redis server not responding after $max_attempts attempts. Continuing anyway..."
+else
+    echo "Redis server is available!"
 fi
 
 # Stelle sicher, dass die Supervisor-Konfigurationsdatei existiert
