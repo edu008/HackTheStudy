@@ -42,7 +42,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Kopiere die notwendigen Dateien
+# Kopiere die lokalen Dateien
 COPY tasks.py .
 COPY api/ ./api/
 COPY core/ ./core/

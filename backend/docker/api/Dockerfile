@@ -54,7 +54,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install gunicorn==21.2.0
 
-# Kopiere die notwendigen Dateien
+# Kopiere die lokalen Dateien
 COPY app.py .
 COPY api/ ./api/
 COPY core/ ./core/
