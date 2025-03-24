@@ -10,7 +10,8 @@ sleep 1
 
 # Stelle sicher, dass keine alten Socket-Dateien existieren
 echo "Removing stale socket files..."
-rm -f /var/run/supervisor.sock
+rm -f /var/run/supervisor-worker.sock
+rm -f /var/run/supervisord-worker.pid
 rm -f /tmp/supervisor.*
 sleep 1
 
@@ -22,6 +23,13 @@ chmod 755 /etc/supervisor/conf.d/
 
 # Prüfe, ob die Redis-URL korrekt gesetzt ist
 echo "Redis URL: $REDIS_URL"
+echo "Redis Host: $REDIS_HOST"
+
+# Überprüfe, ob wir die private URL verwenden (DigitalOcean App Platform)
+if [[ "$REDIS_URL" == *"localhost"* ]]; then
+    echo "WARNUNG: Redis URL enthält 'localhost'. Möglicherweise werden die Umgebungsvariablen von DigitalOcean nicht korrekt übergeben."
+    echo "Erwartete URL sollte '${api.PRIVATE_URL}' enthalten."
+fi
 
 # Stelle sicher, dass die Supervisor-Konfigurationsdatei existiert
 echo "Checking supervisor configuration file..."

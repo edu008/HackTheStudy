@@ -10,7 +10,8 @@ sleep 1
 
 # Stelle sicher, dass keine alten Socket-Dateien existieren
 echo "Removing stale socket files..."
-rm -f /var/run/supervisor.sock
+rm -f /var/run/supervisor-api.sock
+rm -f /var/run/supervisord-api.pid
 rm -f /tmp/supervisor.*
 sleep 1
 
