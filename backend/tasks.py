@@ -1242,7 +1242,7 @@ def start_worker():
     
     # Optimierte Worker-Konfiguration
     worker_concurrency = int(os.environ.get('CELERY_WORKERS', '1'))  # Default auf 1 Worker
-    max_tasks_per_child = int(os.environ.get('CELERY_MAX_TASKS_PER_CHILD', '10'))  # Default auf 10
+    max_tasks_per_child = int(os.environ.get('CELERY_MAX_TASKS_PER_CHILD', '1'))  # Default auf 1
     
     logger.info(f"Worker-Konfiguration: concurrency={worker_concurrency}, max_tasks_per_child={max_tasks_per_child}")
     
@@ -1258,12 +1258,12 @@ def start_worker():
                 traceback=True,
                 concurrency=worker_concurrency,
                 max_tasks_per_child=max_tasks_per_child,
-                task_events=True,
+                task_events=False,
                 optimization='fair',
                 prefetch_multiplier=1,  # Nur einen Task gleichzeitig für bessere Stabilität
-                without_heartbeat=False,  # Aktiviere Heartbeat für bessere Überwachung
-                without_gossip=False,     # Aktiviere Gossip für bessere Kommunikation
-                without_mingle=False      # Aktiviere Mingle für bessere Task-Verteilung
+                without_heartbeat=True,  # Deaktiviere Heartbeat für bessere Stabilität
+                without_gossip=True,     # Deaktiviere Gossip für bessere Stabilität
+                without_mingle=True      # Deaktiviere Mingle für bessere Stabilität
             )
             worker_instance.start()
         except (AttributeError, TypeError) as e:
@@ -1279,13 +1279,13 @@ def start_worker():
                 'traceback': True,
                 'concurrency': worker_concurrency,
                 'max-tasks-per-child': max_tasks_per_child,
-                'task-events': True,
+                'task-events': False,
                 'app': celery,
                 'optimization': 'fair',
                 'prefetch-multiplier': 1,
-                'without-heartbeat': False,
-                'without-gossip': False,
-                'without-mingle': False
+                'without-heartbeat': True,
+                'without-gossip': True,
+                'without-mingle': True
             }
             
             # Starte den Worker mit den Optionen

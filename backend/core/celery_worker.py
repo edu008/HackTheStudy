@@ -42,10 +42,17 @@ app.conf.update(
     task_track_started=True,
     worker_hijack_root_logger=False,
     worker_redirect_stdouts=False,
-    worker_prefetch_multiplier=4,
+    worker_prefetch_multiplier=1,
+    worker_max_tasks_per_child=1,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     task_time_limit=7200,  # 2 Stunden Zeitlimit für Tasks
+    # Stabilität verbessern, um den ResultHandler-Thread-Absturz zu vermeiden
+    worker_send_task_events=False,
+    worker_without_heartbeat=True,
+    worker_without_gossip=True,
+    worker_without_mingle=True,
+    worker_enable_remote_control=False,
 )
 
 # Importiere Tasks mit korrektem Pfad, da die Datei im Root-Verzeichnis liegt

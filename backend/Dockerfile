@@ -79,5 +79,15 @@ EXPOSE 5000 8080
 # Umgebungsvariable für CORS setzen
 ENV CORS_ORIGINS="https://www.hackthestudy.ch,https://hackthestudy.ch,http://localhost:3000"
 
+# Celery Worker Konfiguration für bessere Stabilität
+ENV CELERY_WORKERS=1 \
+    CELERY_MAX_TASKS_PER_CHILD=1 \
+    CELERY_DISABLE_RATE_LIMITS=1 \
+    CELERY_WORKER_PREFETCH_MULTIPLIER=1 \
+    CELERY_WORKER_WITHOUT_HEARTBEAT=1 \
+    CELERY_WORKER_WITHOUT_GOSSIP=1 \
+    CELERY_WORKER_WITHOUT_MINGLE=1 \
+    CELERY_WORKER_SEND_TASK_EVENTS=0
+
 # Starte den Container mit Hilfe von Supervisor
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

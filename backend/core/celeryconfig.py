@@ -15,18 +15,25 @@ result_serializer = 'json'
 
 # Worker Konfiguration
 worker_prefetch_multiplier = 1  # Präfetch Limit - ein Task pro Worker
-worker_max_tasks_per_child = 10  # Neustart eines Workers nach 10 Tasks, um Speicherlecks zu vermeiden
+worker_max_tasks_per_child = 1  # Neustart nach jedem Task, um Speicherlecks zu vermeiden
+
+# Verbesserte Stabilität für Worker
+worker_send_task_events = False
+worker_disable_rate_limits = True
+worker_without_heartbeat = True
+worker_without_gossip = True
+worker_without_mingle = True
 
 # Erlaube Task-Abbruch und Wiederaufnahme
 task_acks_late = True
 task_reject_on_worker_lost = True
 
 # Erlaube deregistrieren/registrieren von Tasks
-worker_enable_remote_control = True
+worker_enable_remote_control = False
 
 # Task-Tracking und Logging
 task_track_started = True
-task_send_sent_event = True
+task_send_sent_event = False
 
 # Verbesserte Fehlerbehandlung
 task_default_retry_delay = 300  # 5 Minuten Wartezeit vor Retry
