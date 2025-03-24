@@ -25,12 +25,12 @@ envs:
     scope: RUN_TIME
     type: SECRET
   
-  # Redis-Konfiguration
+  # Redis-Konfiguration (wird im API-Container gehostet)
   - key: REDIS_URL
     value: "redis://localhost:6379/0"
     scope: RUN_TIME
   - key: REDIS_HOST
-    value: "${APP_URL}"
+    value: "localhost"
     scope: RUN_TIME
   
   # Server-Konfiguration
@@ -130,7 +130,7 @@ services:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
-    source_dir: backend/docker/api
+    source_dir: backend/main
     dockerfile_path: Dockerfile
     http_port: 8080
     # Ressourcen und Skalierung
@@ -173,16 +173,17 @@ services:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
-    source_dir: backend/docker/worker
+    source_dir: backend/worker
     dockerfile_path: Dockerfile
     # Ressourcen und Skalierung (weniger Ressourcen für Worker nötig)
     instance_count: 1
+    instance_size_slug: basic-xs
     restart_policy:
       condition: on_failure
       delay: 15s
       max_attempts: 10
       window: 120s
-    # Hängt von API-Container ab
+    # Verbindung zum Redis im API-Container über private URL
     envs:
       - key: CONTAINER_TYPE
         value: "worker"
@@ -191,7 +192,7 @@ services:
       - key: LOG_PREFIX
         value: "[WORKER]"
       - key: REDIS_URL
-        value: ${api.PRIVATE_URL}:6379
+        value: "redis://${api.PRIVATE_URL}:6379/0"
       - key: REDIS_HOST
         value: "${api.PRIVATE_URL}"
 
@@ -199,7 +200,6 @@ services:
 domains:
   - domain: api.hackthestudy.ch
     type: PRIMARY
-    service: api
 
 openapi: 3.0.3
 info:
