@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-tools \
     redis-server \
     supervisor \
+    cron \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -96,6 +97,13 @@ ENV CELERY_WORKERS=1 \
     CELERY_WORKER_SEND_TASK_EVENTS=0 \
     CELERY_POOL=solo \
     BILLIARD_DEBUG=1
+
+# Cron-Job für regelmäßige Bereinigung einrichten
+RUN echo "0 */3 * * * python /app/core/cleanup.py >> /var/log/cron-cleanup.log 2>&1" > /etc/cron.d/cleanup-cron \
+    && chmod 0644 /etc/cron.d/cleanup-cron \
+    && crontab /etc/cron.d/cleanup-cron \
+    && touch /var/log/cron-cleanup.log \
+    && chmod 0666 /var/log/cron-cleanup.log
 
 # Starte den Container mit Hilfe von Supervisor
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

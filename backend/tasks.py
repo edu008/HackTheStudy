@@ -16,6 +16,9 @@ import functools  # Für Decorator-Funktionen
 import threading
 from threading import Timer
 import signal
+import gc  # Garbage Collector für manuelles Memory Management
+import resource  # Für Ressourcenlimits
+import psutil  # Für Prozessüberwachung
 
 # Konstanten für die Anwendung
 REDIS_TTL_DEFAULT = 14400  # 4 Stunden Standard-TTL für Redis-Einträge
@@ -102,8 +105,36 @@ def log_function_call(func):
 # Lade Umgebungsvariablen mit verbesserten Optionen
 load_dotenv(override=True, verbose=True)
 
+# Erhöhe die Datei-Deskriptor-Limits vor der Celery-Initialisierung
+logger.info("Überprüfe und passe Datei-Deskriptor-Limits an")
+check_and_set_fd_limits()
+
 # Bereinige Redis-URL
 REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0').strip()
+
+# Überwache Datei-Deskriptoren während der Initialisierung
+monitor_file_descriptors()
+
+# Signal-Handler für bessere Ressourcenbereinigung
+def cleanup_signal_handler(signum, frame):
+    """Signal-Handler für saubere Bereinigung beim Beenden."""
+    logger.info(f"Signal {signum} empfangen, führe Bereinigung durch...")
+    # Erzwinge Garbage Collection
+    gc.collect()
+    # Schließe alle übrigen Datei-Deskriptoren
+    try:
+        for fd in range(3, 1024):  # Starte bei 3 (nach stdin, stdout, stderr)
+            try:
+                os.close(fd)
+            except:
+                pass
+    except Exception as e:
+        logger.error(f"Fehler beim Schließen von Datei-Deskriptoren: {e}")
+    sys.exit(0)
+
+# Registriere Signal-Handler
+signal.signal(signal.SIGTERM, cleanup_signal_handler)
+signal.signal(signal.SIGINT, cleanup_signal_handler)
 
 # Initialisiere Celery
 celery = Celery(
@@ -131,8 +162,42 @@ celery.conf.update(
     worker_without_mingle=True,  # Deaktiviere Mingle zur Reduzierung von Sockets
     worker_proc_alive_timeout=120.0,  # Erhöhter Timeout für Worker-Prozesse
     task_ignore_result=False,  # Behalte Ergebnisse zur besseren Nachverfolgung
-    broker_heartbeat=0  # Deaktiviere Broker-Heartbeat
+    broker_heartbeat=0,  # Deaktiviere Broker-Heartbeat
+    # Verbesserte Fehlertoleranz für Datei-Deskriptor-Probleme
+    broker_transport_options={'socket_keepalive': False},  # Deaktiviere Socket-Keepalive
+    broker_pool_limit=None,  # Keine Begrenzung der Verbindungen
+    task_send_sent_event=False,  # Keine Events für gesendete Tasks
+    worker_enable_remote_control=False,  # Deaktiviere Remote-Steuerung
+    result_persistent=False,  # Keine persistenten Ergebnisse
+    accept_content=['json']  # Nur JSON akzeptieren
 )
+
+# Periodische Ressourcenüberwachung einrichten
+def periodic_resource_check():
+    """Führt regelmäßige Ressourcenüberwachung und -bereinigung durch."""
+    try:
+        fd_count = monitor_file_descriptors()
+        
+        # Wenn mehr als 200 Datei-Deskriptoren offen sind, führe zusätzliche Bereinigung durch
+        if fd_count > 200:
+            logger.warning(f"Kritische Anzahl offener Datei-Deskriptoren: {fd_count}")
+            gc.collect()  # Erzwinge Garbage Collection
+            
+        # Für große Anzahl an Datei-Deskriptoren könnten wir den Worker neustarten
+        if fd_count > 500:
+            logger.error(f"Zu viele offene Datei-Deskriptoren: {fd_count}. Worker sollte neu gestartet werden.")
+            # Dies sendet nur ein Signal, statt den Prozess direkt zu beenden
+            os.kill(os.getpid(), signal.SIGTERM)
+        
+        # Plane nächste Überprüfung
+        threading.Timer(300, periodic_resource_check).start()  # Alle 5 Minuten prüfen
+    except Exception as e:
+        logger.error(f"Fehler bei periodischer Ressourcenüberwachung: {e}")
+        # Auch bei Fehlern weiter überprüfen
+        threading.Timer(300, periodic_resource_check).start()
+
+# Starte erste Ressourcenüberwachung nach Verzögerung
+threading.Timer(60, periodic_resource_check).start()  # Erste Überprüfung nach 1 Minute
 
 # Lade die Konfiguration aus einer separaten Datei
 try:
@@ -1508,3 +1573,46 @@ def timeout(seconds, error_message="Operation timed out"):
                 
         return wrapper
     return decorator
+
+# Verbesserte Ressourcenverwaltung - Überprüfe/erhöhe Datei-Deskriptor-Limits
+def check_and_set_fd_limits():
+    """Überprüft und setzt das Limit für Datei-Deskriptoren."""
+    try:
+        # Aktuelle Limits abrufen
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        logger.info(f"Aktuelle Datei-Deskriptor-Limits: soft={soft}, hard={hard}")
+        
+        # Versuche, das Soft-Limit zu erhöhen
+        target_soft = min(hard, 65536)  # Setze auf Hard-Limit oder 65536, was niedriger ist
+        if soft < target_soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target_soft, hard))
+            new_soft, new_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            logger.info(f"Datei-Deskriptor-Limits aktualisiert: soft={new_soft}, hard={new_hard}")
+        
+        return True
+    except Exception as e:
+        logger.warning(f"Konnte Datei-Deskriptor-Limits nicht anpassen: {e}")
+        return False
+
+# Überwachungsfunktion für Datei-Deskriptoren
+def monitor_file_descriptors():
+    """Überwacht die Anzahl der offenen Datei-Deskriptoren und loggt Warnungen."""
+    try:
+        process = psutil.Process(os.getpid())
+        open_files = process.open_files()
+        open_connections = process.connections()
+        
+        num_files = len(open_files)
+        num_connections = len(open_connections)
+        
+        logger.info(f"Ressourcenüberwachung: {num_files} offene Dateien, {num_connections} offene Verbindungen")
+        
+        # Wenn viele Datei-Deskriptoren offen sind, führe Garbage Collection durch
+        if num_files + num_connections > 100:
+            logger.warning("Hohe Anzahl offener Deskriptoren erkannt. Führe Garbage Collection durch.")
+            gc.collect()
+            
+        return num_files + num_connections
+    except Exception as e:
+        logger.warning(f"Fehler bei der Überwachung der Datei-Deskriptoren: {e}")
+        return -1
