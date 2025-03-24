@@ -54,6 +54,12 @@ COPY .env.example ./.env.example
 # Supervisord-Konfiguration
 COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
 
+# Stelle zusätzlich sicher, dass die Socket-Datei entfernt wird, falls sie existiert
+RUN rm -f /var/run/supervisor.sock && \
+    # Debugging: Überprüfe, ob die Supervisor-Konfiguration existiert
+    ls -la /etc/supervisor/conf.d/ && \
+    cat /etc/supervisor/conf.d/supervisord.conf
+
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
     echo "* hard nofile 65536" >> /etc/security/limits.conf
@@ -64,6 +70,10 @@ RUN chown -R appuser:appuser /app /var/log
 # Healthcheck für Worker
 HEALTHCHECK --interval=60s --timeout=30s --start-period=60s --retries=3 \
     CMD ps aux | grep celery | grep -v grep || exit 1
+
+# Kopiere und aktiviere das Startskript
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 # Celery Worker Konfiguration für bessere Stabilität
 ENV CELERY_WORKERS=1 \
@@ -80,5 +90,5 @@ ENV CELERY_WORKERS=1 \
     LOG_LEVEL="INFO" \
     LOG_API_REQUESTS="true"
 
-# Starte den Container mit Hilfe von Supervisor
-CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
+# Starte den Container mit dem Startskript
+CMD ["/app/start.sh"] 

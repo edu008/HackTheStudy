@@ -66,6 +66,12 @@ COPY .env.example ./.env.example
 # Supervisord-Konfiguration
 COPY config/supervisor-api.conf /etc/supervisor/conf.d/supervisord.conf
 
+# Stelle zusätzlich sicher, dass die Socket-Datei entfernt wird, falls sie existiert
+RUN rm -f /var/run/supervisor.sock && \
+    # Debugging: Überprüfe, ob die Supervisor-Konfiguration existiert
+    ls -la /etc/supervisor/conf.d/ && \
+    cat /etc/supervisor/conf.d/supervisord.conf
+
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
     echo "* hard nofile 65536" >> /etc/security/limits.conf
@@ -77,8 +83,12 @@ RUN chown -R appuser:appuser /app /var/log
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8080/api/v1/health || exit 1
 
+# Kopiere und aktiviere das Startskript
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Ports freigeben
 EXPOSE 8080
 
-# Starte den Container mit Hilfe von Supervisor
-CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"] 
+# Starte den Container mit dem Startskript
+CMD ["/app/start.sh"] 

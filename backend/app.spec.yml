@@ -139,11 +139,11 @@ services:
     health_check:
       http_path: /api/v1/health
       port: 8080
-      initial_delay_seconds: 60
-      period_seconds: 30
-      timeout_seconds: 10
+      initial_delay_seconds: 180
+      period_seconds: 60
+      timeout_seconds: 30
       success_threshold: 1
-      failure_threshold: 3
+      failure_threshold: 5
     # Erhöhte Limits für bessere Stabilität
     alert_options:
       error_count:
@@ -177,13 +177,11 @@ services:
     dockerfile_path: Dockerfile
     # Ressourcen und Skalierung (weniger Ressourcen für Worker nötig)
     instance_count: 1
-    instance_size_slug: basic-xs
-    # Automatische Neustarts
     restart_policy:
       condition: on_failure
-      delay: 10s
-      max_attempts: 0
-      window: 0s
+      delay: 15s
+      max_attempts: 10
+      window: 120s
     # Hängt von API-Container ab
     envs:
       - key: CONTAINER_TYPE
