@@ -79,6 +79,12 @@ EXPOSE 5000 8080
 # Umgebungsvariable für CORS setzen
 ENV CORS_ORIGINS="https://www.hackthestudy.ch,https://hackthestudy.ch,http://localhost:3000"
 
+# Datei-Deskriptoren-Limit erhöhen, um Probleme mit 'invalid file descriptor' zu beheben
+RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
+    echo "* hard nofile 65536" >> /etc/security/limits.conf && \
+    echo "root soft nofile 65536" >> /etc/security/limits.conf && \
+    echo "root hard nofile 65536" >> /etc/security/limits.conf
+
 # Celery Worker Konfiguration für bessere Stabilität
 ENV CELERY_WORKERS=1 \
     CELERY_MAX_TASKS_PER_CHILD=1 \
@@ -88,7 +94,7 @@ ENV CELERY_WORKERS=1 \
     CELERY_WORKER_WITHOUT_GOSSIP=1 \
     CELERY_WORKER_WITHOUT_MINGLE=1 \
     CELERY_WORKER_SEND_TASK_EVENTS=0 \
-    CELERY_POOL=threads \
+    CELERY_POOL=solo \
     BILLIARD_DEBUG=1
 
 # Starte den Container mit Hilfe von Supervisor

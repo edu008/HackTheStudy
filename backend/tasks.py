@@ -124,7 +124,14 @@ celery.conf.update(
     broker_connection_timeout=30,  # Längerer Timeout für Redis-Verbindung
     broker_connection_retry=True,  # Wiederverbindungen zu Redis erlauben
     broker_connection_max_retries=10,  # Max. Anzahl Wiederverbindungsversuche
-    result_expires=3600  # Ergebnisse nach 1 Stunde löschen
+    result_expires=3600,  # Ergebnisse nach 1 Stunde löschen
+    # Zusätzliche Konfiguration für Datei-Deskriptor-Probleme
+    worker_without_heartbeat=True,  # Deaktiviere Heartbeat zur Reduzierung von Sockets
+    worker_without_gossip=True,  # Deaktiviere Gossip zur Reduzierung von Sockets
+    worker_without_mingle=True,  # Deaktiviere Mingle zur Reduzierung von Sockets
+    worker_proc_alive_timeout=120.0,  # Erhöhter Timeout für Worker-Prozesse
+    task_ignore_result=False,  # Behalte Ergebnisse zur besseren Nachverfolgung
+    broker_heartbeat=0  # Deaktiviere Broker-Heartbeat
 )
 
 # Lade die Konfiguration aus einer separaten Datei
