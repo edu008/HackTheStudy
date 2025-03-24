@@ -287,13 +287,26 @@ def process_upload(self, session_id, files_data, user_id=None):
     if files_data:
         logger.info(f"files_data enthält {len(files_data)} Dateien")
         for i, file_data in enumerate(files_data):
-            # Sicher überprüfen, ob file_data ein Dict oder Tupel ist
+            # Sicher überprüfen, ob file_data ein Dict, Tupel oder eine Liste ist
             if isinstance(file_data, dict):
                 logger.info(f"Datei {i+1}: Name={file_data.get('file_name', 'Unbekannt')}, Größe={len(file_data.get('file_content', '')[:10])}...")
             elif isinstance(file_data, tuple) and len(file_data) >= 2:
                 logger.info(f"Datei {i+1}: Name={file_data[0]}, Größe=ca.{len(file_data[1]) // 2 if len(file_data) > 1 else 0} Bytes")
+            elif isinstance(file_data, list) and len(file_data) >= 2:
+                # Behandle Listen wie Tupel
+                logger.info(f"Datei {i+1}: Name={file_data[0]}, Größe=ca.{len(file_data[1]) // 2 if len(file_data) > 1 else 0} Bytes")
             else:
                 logger.info(f"Datei {i+1}: Unbekanntes Format: {type(file_data)}")
+                
+                # Versuche mehr Informationen über die Struktur zu loggen
+                try:
+                    if hasattr(file_data, '__len__'):
+                        logger.info(f"Länge: {len(file_data)}")
+                    if hasattr(file_data, '__getitem__'):
+                        for j, item in enumerate(file_data[:3]): # Erste 3 Elemente
+                            logger.info(f"Element {j}: Typ={type(item)}")
+                except:
+                    logger.info("Konnte keine weiteren Informationen über das Datenobjekt sammeln")
     else:
         logger.info("WARNUNG: files_data ist leer oder None!")
     
@@ -478,10 +491,19 @@ def process_upload(self, session_id, files_data, user_id=None):
                                     file_name = file_data[0]
                                     file_content_b64 = file_data[1]
                                     file_type = 'application/octet-stream'  # Standard
+                                elif isinstance(file_data, list) and len(file_data) >= 2:
+                                    # Behandle Listen wie Tupel
+                                    file_name = file_data[0]
+                                    file_content_b64 = file_data[1]
+                                    file_type = 'application/octet-stream'  # Standard
+                                    logger.info(f"Liste als Dateiformat für {file_name} erkannt und verarbeitet")
                                 else:
                                     logger.error(f"Unbekanntes Format für file_data: {type(file_data)}")
+                                    # Versuche, mehr Informationen zu loggen
+                                    if hasattr(file_data, '__dict__'):
+                                        logger.error(f"Attribute: {dir(file_data)}")
                                     continue
-                            
+                                
                                 # Protokolliere Fortschritt
                                 logger.info(f"Session {session_id} - Processing file {i+1}/{len(files_data)}: {file_name}")
                                 
@@ -496,10 +518,31 @@ def process_upload(self, session_id, files_data, user_id=None):
                                 try:
                                     # Extrahiere Text aus der Datei
                                     logger.info(f"Dekodiere base64 für {file_name}")
-                                    file_bytes = base64.b64decode(file_content_b64)
+                                    try:
+                                        # Logge einen Teil des base64-Strings zur Überprüfung
+                                        preview_length = min(100, len(file_content_b64))
+                                        logger.info(f"Base64-Vorschau: {file_content_b64[:preview_length]}...")
+                                        
+                                        file_bytes = base64.b64decode(file_content_b64)
+                                        logger.info(f"Base64-Dekodierung erfolgreich, {len(file_bytes)} Bytes erhalten")
+                                    except Exception as decode_error:
+                                        logger.error(f"Fehler bei der Base64-Dekodierung: {str(decode_error)}")
+                                        logger.error(f"Base64-Typ: {type(file_content_b64)}")
+                                        raise
+                                        
                                     logger.info(f"📄 Extrahiere Text aus Datei {file_name} ({len(file_bytes)} Bytes)")
-                                    from api.utils import extract_text_from_file
-                                    extracted_text = extract_text_from_file(file_bytes, file_name, file_type)
+                                    try:
+                                        # Import vor Verwendung
+                                        from api.utils import extract_text_from_file
+                                        logger.info(f"API Utils-Modul importiert")
+                                        
+                                        # Extrahiere den Text
+                                        extracted_text = extract_text_from_file(file_bytes, file_name, file_type)
+                                        logger.info(f"Textextraktion für {file_name} erfolgreich abgeschlossen")
+                                    except Exception as extract_error:
+                                        logger.error(f"Fehler bei der Textextraktion: {str(extract_error)}")
+                                        logger.error(traceback.format_exc())
+                                        raise
                                     
                                     # Log für extrahierte Textlänge und erste Zeichen
                                     text_preview = extracted_text[:100] + "..." if len(extracted_text) > 100 else extracted_text
