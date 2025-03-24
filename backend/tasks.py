@@ -277,355 +277,411 @@ def process_upload(self, session_id, files_data, user_id=None):
     logger.info(f"Worker process PID: {os.getpid()}, Task ID: {self.request.id}")
     if user_id:
         logger.info(f"Verarbeite {len(files_data) if files_data else 0} Dateien für Benutzer {user_id}")
+    
+    # Zusätzliches Debug-Logging
     print(f"DIRECT STDOUT: Worker processing session {session_id}", flush=True)
+    logger.info(f"DIREKT: Worker processing session {session_id} - TASK: {self.request.id}")
     start_time = time.time()
     
+    # Debug Logging für files_data
+    if files_data:
+        logger.info(f"files_data enthält {len(files_data)} Dateien")
+        for i, file_data in enumerate(files_data):
+            # Sicher überprüfen, ob file_data ein Dict oder Tupel ist
+            if isinstance(file_data, dict):
+                logger.info(f"Datei {i+1}: Name={file_data.get('file_name', 'Unbekannt')}, Größe={len(file_data.get('file_content', '')[:10])}...")
+            elif isinstance(file_data, tuple) and len(file_data) >= 2:
+                logger.info(f"Datei {i+1}: Name={file_data[0]}, Größe=ca.{len(file_data[1]) // 2 if len(file_data) > 1 else 0} Bytes")
+            else:
+                logger.info(f"Datei {i+1}: Unbekanntes Format: {type(file_data)}")
+    else:
+        logger.info("WARNUNG: files_data ist leer oder None!")
+    
     # Speichere Task-ID für Tracking
-    safe_redis_set(f"task_id:{session_id}", self.request.id, ex=14400)  # 4 Stunden Gültigkeit
+    try:
+        safe_redis_set(f"task_id:{session_id}", self.request.id, ex=14400)  # 4 Stunden Gültigkeit
+        logger.info(f"Task-ID {self.request.id} in Redis gespeichert für Session {session_id}")
+    except Exception as e:
+        logger.error(f"FEHLER beim Speichern der Task-ID in Redis: {str(e)}")
     
     # Debugging-Info hinzufügen
-    log_debug_info(session_id, "Worker-Task gestartet", 
-                  task_id=self.request.id, 
-                  pid=os.getpid(),
-                  files_count=len(files_data) if files_data else 0)
+    try:
+        log_debug_info(session_id, "Worker-Task gestartet", 
+                      task_id=self.request.id, 
+                      pid=os.getpid(),
+                      files_count=len(files_data) if files_data else 0)
+        logger.info("Debug-Info in Redis gespeichert")
+    except Exception as e:
+        logger.error(f"FEHLER beim Speichern der Debug-Info: {str(e)}")
     
     # Hole die Flask-App und erstelle einen Anwendungskontext
-    flask_app = get_flask_app()
+    try:
+        logger.info("Versuche Flask-App zu bekommen")
+        flask_app = get_flask_app()
+        logger.info("Flask-App erfolgreich geholt")
+    except Exception as e:
+        logger.error(f"KRITISCHER FEHLER beim Holen der Flask-App: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            "status": "error",
+            "error": f"Flask-App konnte nicht initialisiert werden: {str(e)}"
+        }
     
     # Verwende einen expliziten Anwendungskontext für die gesamte Task
-    with flask_app.app_context():
-        try:
-            # Initialisiere Redis-Status mit detaillierten Informationen
-            safe_redis_set(f"processing_status:{session_id}", "initializing", ex=14400)
-            safe_redis_set(f"processing_start_time:{session_id}", str(start_time), ex=14400)
-            safe_redis_set(f"processing_details:{session_id}", {
-                "start_time": datetime.now().isoformat(),
-                "files_count": len(files_data) if files_data else 0,
-                "user_id": user_id,
-                "pid": os.getpid(),
-                "worker_id": self.request.id,
-                "hostname": os.environ.get("HOSTNAME", "unknown"),
-                "task_id": self.request.id
-            }, ex=14400)
-            
-            logger.info(f"Session {session_id} - Initializing with {len(files_data) if files_data else 0} files for user {user_id}")
-            
-            # Wenn keine Dateien übergeben wurden, versuche den Auftrag von Redis wiederherzustellen
-            if not files_data or len(files_data) == 0:
-                stored_data = redis_client.get(f"upload_files_data:{session_id}")
-                if stored_data:
-                    files_data = json.loads(stored_data)
-                    logger.info(f"Wiederhergestellte Dateidaten aus Redis für Session {session_id}: {len(files_data)} Dateien")
-                    log_debug_info(session_id, f"Dateidaten aus Redis wiederhergestellt", files_count=len(files_data))
-                else:
-                    error_msg = f"Keine Dateidaten für Session {session_id} gefunden!"
+    try:
+        logger.info("Betrete Flask App-Kontext")
+        with flask_app.app_context():
+            logger.info("In Flask App-Kontext")
+            try:
+                # Initialisiere Redis-Status mit detaillierten Informationen
+                logger.info("Initialisiere Redis-Status")
+                safe_redis_set(f"processing_status:{session_id}", "initializing", ex=14400)
+                safe_redis_set(f"processing_start_time:{session_id}", str(start_time), ex=14400)
+                safe_redis_set(f"processing_details:{session_id}", {
+                    "start_time": datetime.now().isoformat(),
+                    "files_count": len(files_data) if files_data else 0,
+                    "user_id": user_id,
+                    "pid": os.getpid(),
+                    "worker_id": self.request.id,
+                    "hostname": os.environ.get("HOSTNAME", "unknown"),
+                    "task_id": self.request.id
+                }, ex=14400)
+                logger.info("Redis-Status erfolgreich initialisiert")
+                
+                logger.info(f"Session {session_id} - Initializing with {len(files_data) if files_data else 0} files for user {user_id}")
+                
+                # Wenn keine Dateien übergeben wurden, versuche den Auftrag von Redis wiederherzustellen
+                if not files_data or len(files_data) == 0:
+                    logger.info("Keine Dateien übergeben, versuche Redis-Wiederherstellung")
+                    stored_data = redis_client.get(f"upload_files_data:{session_id}")
+                    if stored_data:
+                        logger.info(f"Daten aus Redis gefunden: {len(stored_data)} Bytes")
+                        try:
+                            files_data = json.loads(stored_data)
+                            logger.info(f"Wiederhergestellte Dateidaten aus Redis für Session {session_id}: {len(files_data)} Dateien")
+                            log_debug_info(session_id, f"Dateidaten aus Redis wiederhergestellt", files_count=len(files_data))
+                        except json.JSONDecodeError as json_err:
+                            logger.error(f"Fehler beim Dekodieren der Redis-Daten: {str(json_err)}")
+                            raise ValueError(f"Ungültige JSON-Daten in Redis: {str(json_err)}")
+                    else:
+                        error_msg = f"Keine Dateidaten für Session {session_id} gefunden!"
+                        logger.error(error_msg)
+                        cleanup_processing_for_session(session_id, "no_files_found")
+                        safe_redis_set(f"error_details:{session_id}", {
+                            "message": error_msg,
+                            "error_type": "no_files_data",
+                            "timestamp": time.time()
+                        }, ex=14400)
+                        return {"error": "no_files_found", "message": error_msg}
+                
+                # Versuche, einen Lock für diese Session zu erhalten
+                logger.info(f"🔒 Versuche, Lock für Session {session_id} zu erhalten...")
+                if not acquire_session_lock(session_id):
+                    error_msg = f"Konnte keinen Lock für Session {session_id} erhalten - eine andere Instanz verarbeitet diese bereits."
                     logger.error(error_msg)
-                    cleanup_processing_for_session(session_id, "no_files_found")
-                    safe_redis_set(f"error_details:{session_id}", {
-                        "message": error_msg,
-                        "error_type": "no_files_data",
-                        "timestamp": time.time()
-                    }, ex=14400)
-                    return {"error": "no_files_found", "message": error_msg}
-            
-            # Versuche, einen Lock für diese Session zu erhalten
-            logger.info(f"🔒 Versuche, Lock für Session {session_id} zu erhalten...")
-            if not acquire_session_lock(session_id):
-                error_msg = f"Konnte keinen Lock für Session {session_id} erhalten - eine andere Instanz verarbeitet diese bereits."
-                logger.error(error_msg)
-                return {"error": "session_locked", "message": error_msg}
-            
-            logger.info(f"🔒 Session {session_id} - Lock acquired successfully")
-            
-            # Aktualisiere Datenbankstatus auf "processing"
-            try:
-                from core.models import Upload
+                    return {"error": "session_locked", "message": error_msg}
                 
-                logger.info(f"💾 Aktualisiere Datenbankstatus für Session {session_id} auf 'processing'")
-                upload = Upload.query.filter_by(session_id=session_id).first()
-                if upload:
-                    upload.processing_status = "processing"
-                    upload.started_at = datetime.utcnow()
-                    logger.info(f"💾 Upload-Eintrag gefunden und aktualisiert: ID={upload.id}")
-                    log_debug_info(session_id, "Datenbankstatus aktualisiert: processing", progress=5, stage="database_update")
-                else:
-                    logger.warning(f"⚠️ Kein Upload-Eintrag für Session {session_id} in der Datenbank gefunden")
+                logger.info(f"🔒 Session {session_id} - Lock acquired successfully")
                 
-                db.session.commit()
-                logger.info(f"💾 Datenbankaktualisierung erfolgreich für Session {session_id}")
-            except Exception as db_error:
-                db.session.rollback()
-                logger.error(f"❌ Datenbankfehler: {str(db_error)}")
-                logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
-                
-                # Speichere den Fehler in Redis für das Frontend
-                redis_client.set(f"processing_error:{session_id}", json.dumps({
-                    "error": "database_error",
-                    "message": str(db_error),
-                    "timestamp": datetime.now().isoformat()
-                }), ex=14400)
-                
-                # Gib den Lock frei
-                release_session_lock(session_id)
-                
-                # Wirf die Exception für Celery-Retry
-                raise Exception(f"Fehler beim Aktualisieren des Datenbankstatus: {str(db_error)}")
-            
-            # Heartbeat-Mechanismus starten
-            heartbeat_thread = None
-            heartbeat_stop_event = threading.Event()
-            try:
-                # Verbesserte Heartbeat-Funktion mit Stop-Event
-                def heartbeat():
-                    logger.info(f"Heartbeat-Thread für Session {session_id} gestartet")
-                    while not heartbeat_stop_event.is_set():
-                        try:
-                            # Aktualisiere den Zeitstempel
-                            current_time = str(time.time())
-                            redis_client.set(f"processing_heartbeat:{session_id}", current_time, ex=14400)
-                            redis_client.set(f"processing_last_update:{session_id}", current_time, ex=14400)
-                            
-                            # Log alle 5 Minuten einen Heartbeat zur besseren Nachverfolgung
-                            if int(float(current_time)) % 300 < 30:  # Etwa alle 5 Minuten
-                                logger.info(f"Heartbeat für Session {session_id} aktiv")
-                                
-                            # Kürzeres Sleep-Intervall für schnellere Reaktionszeit auf Stop-Event
-                            for _ in range(15):  # 15 x 2 Sekunden = 30 Sekunden
-                                if heartbeat_stop_event.is_set():
-                                    break
-                                time.sleep(2)
-                        except Exception as hb_error:
-                            logger.error(f"Heartbeat-Fehler für Session {session_id}: {str(hb_error)}")
-                            # Kurze Pause bei Fehler, dann weiterversuchen
-                            time.sleep(5)
-                    
-                    logger.info(f"Heartbeat-Thread für Session {session_id} beendet")
-                
-                # Starte den Heartbeat in einem separaten Thread
-                heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
-                heartbeat_thread.start()
-                
-                # Hauptverarbeitungslogik
+                # Aktualisiere Datenbankstatus auf "processing"
                 try:
-                    # Aktualisiere den Status
-                    redis_client.set(f"processing_status:{session_id}", "extracting_text", ex=14400)
+                    from core.models import Upload
                     
-                    # Verarbeite jede Datei
-                    results = []
-                    for i, file_data in enumerate(files_data):
-                        redis_client.set(f"processing_file_index:{session_id}", str(i), ex=14400)
-                        redis_client.set(f"processing_file_count:{session_id}", str(len(files_data)), ex=14400)
-                        
-                        file_name = file_data.get('file_name', f"file_{i}")
-                        file_content_b64 = file_data.get('file_content')
-                        file_type = file_data.get('mime_type', 'application/octet-stream')
-                        
-                        # Protokolliere Fortschritt
-                        logger.info(f"Session {session_id} - Processing file {i+1}/{len(files_data)}: {file_name}")
-                        
-                        # Setze den Status für diese Datei
-                        redis_client.set(f"processing_current_file:{session_id}", json.dumps({
-                            "index": i,
-                            "name": file_name,
-                            "type": file_type,
-                            "start_time": time.time()
-                        }), ex=14400)
-                        
-                        try:
-                            # Extrahiere Text aus der Datei
-                            file_bytes = base64.b64decode(file_content_b64)
-                            logger.info(f"📄 Extrahiere Text aus Datei {file_name} ({len(file_bytes)} Bytes)")
-                            extracted_text = extract_text_from_file(file_bytes, file_name, file_type)
-                            
-                            # Log für extrahierte Textlänge und erste Zeichen
-                            text_preview = extracted_text[:100] + "..." if len(extracted_text) > 100 else extracted_text
-                            logger.info(f"📄 Extrahierter Text: {len(extracted_text)} Zeichen, Vorschau: {text_preview}")
-                            
-                            # Aktualisiere Verarbeitungsstatus
-                            redis_client.set(f"processing_status:{session_id}", f"processing_file_{i+1}", ex=14400)
-                            
-                            # Verarbeite den extrahierten Text
-                            logger.info(f"🧠 Starte KI-Analyse des Textes für Datei {file_name}")
-                            logger.info(f"📊 Geschätzte Textgröße: ~{len(extracted_text)//4} Tokens")
-                            logger.info(f"🔍 Erkenne Sprache und starte Analyse...")
-                            file_result = process_extracted_text(session_id, extracted_text, file_name, user_id)
-                            
-                            # Log die Ergebnisse der Verarbeitung
-                            if file_result:
-                                total_entries = 0
-                                results_summary = []
-                                
-                                # Zusammenfassen der Ergebnisse
-                                if 'flashcards' in file_result:
-                                    flashcards_count = len(file_result['flashcards'])
-                                    total_entries += flashcards_count
-                                    results_summary.append(f"{flashcards_count} Karteikarten")
-                                    
-                                if 'questions' in file_result:
-                                    questions_count = len(file_result['questions'])
-                                    total_entries += questions_count
-                                    results_summary.append(f"{questions_count} Fragen")
-                                    
-                                if 'topics' in file_result:
-                                    topics_count = len(file_result['topics'])
-                                    total_entries += topics_count
-                                    results_summary.append(f"{topics_count} Themenbereiche")
-                                    
-                                if 'main_topic' in file_result and file_result['main_topic']:
-                                    results_summary.append(f"Hauptthema: {file_result['main_topic']}")
-                                
-                                if 'language' in file_result:
-                                    results_summary.append(f"Sprache: {file_result['language']}")
-                                
-                                logger.info(f"✅ Verarbeitung für {file_name} abgeschlossen: {', '.join(results_summary)}")
-                            else:
-                                logger.warning(f"⚠️ Keine Ergebnisse für Datei {file_name}")
-                            logger.info(f"✅ Textverarbeitung für Datei {file_name} abgeschlossen")
-                            results.append(file_result)
-                            
-                        except Exception as file_error:
-                            logger.error(f"❌ Fehler bei der Verarbeitung von Datei {file_name}: {str(file_error)}")
-                            logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
-                            # Füge Fehlerinformationen zum Ergebnis hinzu
-                            results.append({
-                                "file_name": file_name,
-                                "error": str(file_error),
-                                "status": "error"
-                            })
+                    logger.info(f"💾 Aktualisiere Datenbankstatus für Session {session_id} auf 'processing'")
+                    upload = Upload.query.filter_by(session_id=session_id).first()
+                    if upload:
+                        logger.info(f"Upload-Eintrag gefunden: ID={upload.id}")
+                        upload.processing_status = "processing"
+                        upload.started_at = datetime.utcnow()
+                        logger.info(f"💾 Upload-Eintrag gefunden und aktualisiert: ID={upload.id}")
+                        log_debug_info(session_id, "Datenbankstatus aktualisiert: processing", progress=5, stage="database_update")
+                    else:
+                        logger.warning(f"⚠️ Kein Upload-Eintrag für Session {session_id} in der Datenbank gefunden")
                     
-                    # Speichere die gesammelten Ergebnisse
-                    logger.info(f"💾 Speichere Verarbeitungsergebnisse für Session {session_id}: {len(results)} Dateiergebnisse")
-                    save_processing_results(session_id, results, user_id)
+                    db.session.commit()
+                    logger.info(f"💾 Datenbankaktualisierung erfolgreich für Session {session_id}")
+                except Exception as db_error:
+                    db.session.rollback()
+                    logger.error(f"❌ Datenbankfehler: {str(db_error)}")
+                    logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
                     
-                    # Aktualisiere den Status auf abgeschlossen
-                    redis_client.set(f"processing_status:{session_id}", "completed", ex=14400)
-                    redis_client.set(f"processing_end_time:{session_id}", str(time.time()), ex=14400)
-                    logger.info(f"✅ Verarbeitung für Session {session_id} abgeschlossen")
-                    
-                    # Aktualisiere den Datenbankstatus
-                    try:
-                        logger.info(f"💾 Aktualisiere Datenbankstatus auf 'completed' für Session {session_id}")
-                        upload = Upload.query.filter_by(session_id=session_id).first()
-                        if upload:
-                            upload.processing_status = "completed"
-                            upload.updated_at = datetime.now()
-                            upload.completion_time = datetime.now()
-                            db.session.commit()
-                            logger.info(f"💾 Datenbankstatus erfolgreich aktualisiert für Session {session_id}")
-                        else:
-                            logger.warning(f"⚠️ Kein Upload-Eintrag zum Aktualisieren gefunden für Session {session_id}")
-                    except Exception as db_error:
-                        logger.error(f"❌ Fehler beim Aktualisieren des Abschlussstatus: {str(db_error)}")
-                        logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
-                        db.session.rollback()
-                    
-                    # Gib den Lock frei
-                    release_session_lock(session_id)
-                    
-                    end_time = time.time()
-                    processing_time = end_time - start_time
-                    logger.info(f"===== WORKER TASK COMPLETED: {session_id} =====")
-                    logger.info(f"Total processing time: {processing_time:.2f} seconds")
-                    
-                    # Erfolgreiches Ergebnis zurückgeben
-                    return {
-                        "status": "completed",
-                        "session_id": session_id,
-                        "processing_time": processing_time,
-                        "files_processed": len(files_data)
-                    }
-                
-                except Exception as processing_error:
-                    # Fehlerbehandlung für die Hauptverarbeitung
-                    error_message = str(processing_error)
-                    logger.error(f"Kritischer Fehler bei der Verarbeitung von Session {session_id}: {error_message}")
-                    
-                    # Speichere den Fehler für das Frontend
+                    # Speichere den Fehler in Redis für das Frontend
                     redis_client.set(f"processing_error:{session_id}", json.dumps({
-                        "error": "processing_error",
-                        "message": error_message,
+                        "error": "database_error",
+                        "message": str(db_error),
                         "timestamp": datetime.now().isoformat()
                     }), ex=14400)
                     
-                    # Aktualisiere den Status auf Fehler
-                    redis_client.set(f"processing_status:{session_id}", "error", ex=14400)
-                    
-                    # Versuche, den Datenbankstatus zu aktualisieren
-                    try:
-                        upload = Upload.query.filter_by(session_id=session_id).first()
-                        if upload:
-                            upload.processing_status = "error"
-                            upload.updated_at = datetime.now()
-                            upload.error_message = error_message[:500]  # Begrenze die Länge
-                            db.session.commit()
-                    except Exception as db_error:
-                        logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
-                        db.session.rollback()
-                    
                     # Gib den Lock frei
                     release_session_lock(session_id)
                     
-                    # Wirf die Exception erneut, damit Celery sie als Fehler erkennt
-                    raise processing_error
-            
-            finally:
-                # Bereinige den Heartbeat-Thread, wenn er existiert
-                if heartbeat_thread and heartbeat_thread.is_alive():
-                    logger.info(f"Beende Heartbeat-Thread für Session {session_id}")
-                    heartbeat_stop_event.set()  # Signal zum Beenden des Threads
-                    # Wir können auf den Thread warten, aber mit Timeout um Blockieren zu vermeiden
-                    heartbeat_thread.join(timeout=5.0)
-                    # Erzwinge das Ablaufen von Heartbeat-Keys
-                    redis_client.delete(f"processing_heartbeat:{session_id}")
-        
-        except Exception as e:
-            # Oberste Fehlerbehandlungsebene - fängt alle nicht abgefangenen Fehler ab
-            logger.error(f"Kritischer Fehler bei der Verarbeitung von Session {session_id}: {str(e)}")
-            logger.error(traceback.format_exc())
-            
-            # Bereinige alle Ressourcen
-            cleanup_processing_for_session(session_id, str(e))
-            
-            # Erhöhe den Retry-Zähler für diese Task, falls es sich um einen vorübergehenden Fehler handelt
-            retry_count = self.request.retries
-            max_retries = self.max_retries
-            
-            if retry_count < max_retries:
-                logger.warning(f"Versuche Retry {retry_count + 1}/{max_retries} für Session {session_id}")
-                redis_client.set(f"processing_status:{session_id}", f"retrying_{retry_count + 1}", ex=14400)
-                raise self.retry(exc=e, countdown=120)  # Retry in 2 Minuten
-            else:
-                # Maximale Anzahl von Retries erreicht
-                logger.error(f"Maximale Anzahl von Retries erreicht für Session {session_id}")
-                redis_client.set(f"processing_status:{session_id}", "failed", ex=14400)
-                redis_client.set(f"processing_error:{session_id}", json.dumps({
-                    "error": "max_retries_exceeded",
-                    "message": str(e),
-                    "timestamp": datetime.now().isoformat()
-                }), ex=14400)
+                    # Wirf die Exception für Celery-Retry
+                    raise Exception(f"Fehler beim Aktualisieren des Datenbankstatus: {str(db_error)}")
                 
-                # Aktualisiere auch die Datenbank
+                # Herzschlag-Mechanismus starten
+                logger.info("Starte Heartbeat-Mechanismus")
+                heartbeat_thread = None
+                heartbeat_stop_event = threading.Event()
                 try:
-                    upload = Upload.query.filter_by(session_id=session_id).first()
-                    if upload:
-                        upload.processing_status = "failed"
-                        upload.updated_at = datetime.now()
-                        upload.error_message = f"Max retries exceeded: {str(e)}"[:500]
-                        db.session.commit()
-                except Exception as db_error:
-                    logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
+                    # Verbesserte Heartbeat-Funktion mit Stop-Event
+                    def heartbeat():
+                        logger.info(f"Heartbeat-Thread für Session {session_id} gestartet")
+                        while not heartbeat_stop_event.is_set():
+                            try:
+                                # Aktualisiere den Zeitstempel
+                                current_time = str(time.time())
+                                redis_client.set(f"processing_heartbeat:{session_id}", current_time, ex=14400)
+                                redis_client.set(f"processing_last_update:{session_id}", current_time, ex=14400)
+                                
+                                # Log alle 5 Minuten einen Heartbeat zur besseren Nachverfolgung
+                                if int(float(current_time)) % 300 < 30:  # Etwa alle 5 Minuten
+                                    logger.info(f"Heartbeat für Session {session_id} aktiv")
+                                    
+                                # Kürzeres Sleep-Intervall für schnellere Reaktionszeit auf Stop-Event
+                                for _ in range(15):  # 15 x 2 Sekunden = 30 Sekunden
+                                    if heartbeat_stop_event.is_set():
+                                        break
+                                    time.sleep(2)
+                            except Exception as hb_error:
+                                logger.error(f"Heartbeat-Fehler für Session {session_id}: {str(hb_error)}")
+                                # Kurze Pause bei Fehler, dann weiterversuchen
+                                time.sleep(5)
+                        
+                        logger.info(f"Heartbeat-Thread für Session {session_id} beendet")
+                    
+                    # Starte den Heartbeat in einem separaten Thread
+                    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+                    heartbeat_thread.start()
+                    logger.info("Heartbeat-Thread gestartet")
+                    
+                    # Hauptverarbeitungslogik
                     try:
-                        db.session.rollback()
-                    except:
-                        pass
-            
-            # Gib ein Fehlerergebnis zurück
-            return {
-                "status": "error",
-                "session_id": session_id,
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }
+                        logger.info("Beginne Hauptverarbeitungslogik")
+                        # Aktualisiere den Status
+                        redis_client.set(f"processing_status:{session_id}", "extracting_text", ex=14400)
+                        
+                        # Verarbeite jede Datei
+                        results = []
+                        logger.info(f"Beginne Verarbeitung von {len(files_data)} Dateien")
+                        for i, file_data in enumerate(files_data):
+                            logger.info(f"Verarbeite Datei {i+1}/{len(files_data)}")
+                            redis_client.set(f"processing_file_index:{session_id}", str(i), ex=14400)
+                            redis_client.set(f"processing_file_count:{session_id}", str(len(files_data)), ex=14400)
+                            
+                            try:
+                                # Prüfen, ob file_data ein Dict oder ein Tupel ist
+                                if isinstance(file_data, dict):
+                                    file_name = file_data.get('file_name', f"file_{i}")
+                                    file_content_b64 = file_data.get('file_content')
+                                    file_type = file_data.get('mime_type', 'application/octet-stream')
+                                elif isinstance(file_data, tuple) and len(file_data) >= 2:
+                                    file_name = file_data[0]
+                                    file_content_b64 = file_data[1]
+                                    file_type = 'application/octet-stream'  # Standard
+                                else:
+                                    logger.error(f"Unbekanntes Format für file_data: {type(file_data)}")
+                                    continue
+                            
+                                # Protokolliere Fortschritt
+                                logger.info(f"Session {session_id} - Processing file {i+1}/{len(files_data)}: {file_name}")
+                                
+                                # Setze den Status für diese Datei
+                                redis_client.set(f"processing_current_file:{session_id}", json.dumps({
+                                    "index": i,
+                                    "name": file_name,
+                                    "type": file_type,
+                                    "start_time": time.time()
+                                }), ex=14400)
+                                
+                                try:
+                                    # Extrahiere Text aus der Datei
+                                    logger.info(f"Dekodiere base64 für {file_name}")
+                                    file_bytes = base64.b64decode(file_content_b64)
+                                    logger.info(f"📄 Extrahiere Text aus Datei {file_name} ({len(file_bytes)} Bytes)")
+                                    from api.utils import extract_text_from_file
+                                    extracted_text = extract_text_from_file(file_bytes, file_name, file_type)
+                                    
+                                    # Log für extrahierte Textlänge und erste Zeichen
+                                    text_preview = extracted_text[:100] + "..." if len(extracted_text) > 100 else extracted_text
+                                    logger.info(f"📄 Extrahierter Text: {len(extracted_text)} Zeichen, Vorschau: {text_preview}")
+                                    
+                                    # Aktualisiere Verarbeitungsstatus
+                                    redis_client.set(f"processing_status:{session_id}", f"processing_file_{i+1}", ex=14400)
+                                    
+                                    # Verarbeite den extrahierten Text
+                                    logger.info(f"🧠 Starte KI-Analyse des Textes für Datei {file_name}")
+                                    logger.info(f"📊 Geschätzte Textgröße: ~{len(extracted_text)//4} Tokens")
+                                    logger.info(f"🔍 Erkenne Sprache und starte Analyse...")
+                                    file_result = process_extracted_text(session_id, extracted_text, file_name, user_id)
+                                    
+                                    # Log die Ergebnisse der Verarbeitung
+                                    if file_result:
+                                        logger.info(f"Ergebnisse der Verarbeitung für {file_name} erhalten")
+                                        results.append(file_result)
+                                    else:
+                                        logger.warning(f"⚠️ Keine Ergebnisse für Datei {file_name}")
+                                    logger.info(f"✅ Textverarbeitung für Datei {file_name} abgeschlossen")
+                                    
+                                except Exception as file_error:
+                                    logger.error(f"❌ Fehler bei der Verarbeitung von Datei {file_name}: {str(file_error)}")
+                                    logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
+                                    # Füge Fehlerinformationen zum Ergebnis hinzu
+                                    results.append({
+                                        "file_name": file_name,
+                                        "error": str(file_error),
+                                        "status": "error"
+                                    })
+                            except Exception as file_prep_error:
+                                logger.error(f"❌ Fehler bei der Vorbereitung von Datei {i}: {str(file_prep_error)}")
+                                logger.error(traceback.format_exc())
+                        
+                        # Speichere die gesammelten Ergebnisse
+                        logger.info(f"💾 Speichere Verarbeitungsergebnisse für Session {session_id}: {len(results)} Dateiergebnisse")
+                        save_processing_results(session_id, results, user_id)
+                        
+                        # Aktualisiere den Status auf abgeschlossen
+                        redis_client.set(f"processing_status:{session_id}", "completed", ex=14400)
+                        redis_client.set(f"processing_end_time:{session_id}", str(time.time()), ex=14400)
+                        logger.info(f"✅ Verarbeitung für Session {session_id} abgeschlossen")
+                        
+                        # Aktualisiere den Datenbankstatus
+                        try:
+                            logger.info(f"💾 Aktualisiere Datenbankstatus auf 'completed' für Session {session_id}")
+                            upload = Upload.query.filter_by(session_id=session_id).first()
+                            if upload:
+                                upload.processing_status = "completed"
+                                upload.updated_at = datetime.now()
+                                upload.completion_time = datetime.now()
+                                db.session.commit()
+                                logger.info(f"💾 Datenbankstatus erfolgreich aktualisiert für Session {session_id}")
+                            else:
+                                logger.warning(f"⚠️ Kein Upload-Eintrag zum Aktualisieren gefunden für Session {session_id}")
+                        except Exception as db_error:
+                            logger.error(f"❌ Fehler beim Aktualisieren des Abschlussstatus: {str(db_error)}")
+                            logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
+                            db.session.rollback()
+                        
+                        # Gib den Lock frei
+                        release_session_lock(session_id)
+                        
+                        end_time = time.time()
+                        processing_time = end_time - start_time
+                        logger.info(f"===== WORKER TASK COMPLETED: {session_id} =====")
+                        logger.info(f"Total processing time: {processing_time:.2f} seconds")
+                        
+                        # Erfolgreiches Ergebnis zurückgeben
+                        return {
+                            "status": "completed",
+                            "session_id": session_id,
+                            "processing_time": processing_time,
+                            "files_processed": len(files_data)
+                        }
+                    
+                    except Exception as processing_error:
+                        # Fehlerbehandlung für die Hauptverarbeitung
+                        error_message = str(processing_error)
+                        logger.error(f"Kritischer Fehler bei der Verarbeitung von Session {session_id}: {error_message}")
+                        logger.error(traceback.format_exc())
+                        
+                        # Speichere den Fehler für das Frontend
+                        redis_client.set(f"processing_error:{session_id}", json.dumps({
+                            "error": "processing_error",
+                            "message": error_message,
+                            "timestamp": datetime.now().isoformat()
+                        }), ex=14400)
+                        
+                        # Aktualisiere den Status auf Fehler
+                        redis_client.set(f"processing_status:{session_id}", "error", ex=14400)
+                        
+                        # Versuche, den Datenbankstatus zu aktualisieren
+                        try:
+                            upload = Upload.query.filter_by(session_id=session_id).first()
+                            if upload:
+                                upload.processing_status = "error"
+                                upload.updated_at = datetime.now()
+                                upload.error_message = error_message[:500]  # Begrenze die Länge
+                                db.session.commit()
+                        except Exception as db_error:
+                            logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
+                            db.session.rollback()
+                        
+                        # Gib den Lock frei
+                        release_session_lock(session_id)
+                        
+                        # Wirf die Exception erneut, damit Celery sie als Fehler erkennt
+                        raise processing_error
+                
+                finally:
+                    # Bereinige den Heartbeat-Thread, wenn er existiert
+                    if heartbeat_thread and heartbeat_thread.is_alive():
+                        logger.info(f"Beende Heartbeat-Thread für Session {session_id}")
+                        heartbeat_stop_event.set()  # Signal zum Beenden des Threads
+                        # Wir können auf den Thread warten, aber mit Timeout um Blockieren zu vermeiden
+                        heartbeat_thread.join(timeout=5.0)
+                        # Erzwinge das Ablaufen von Heartbeat-Keys
+                        redis_client.delete(f"processing_heartbeat:{session_id}")
+                    logger.info("Heartbeat-Thread beendet oder nicht vorhanden")
+                
+            except Exception as e:
+                # Fehlerbehandlung innerhalb des App-Kontexts
+                logger.error(f"Fehler im App-Kontext: {str(e)}")
+                logger.error(traceback.format_exc())
+                
+                # Bereinige Ressourcen
+                cleanup_processing_for_session(session_id, str(e))
+                
+                # Erhöhe den Retry-Zähler für diese Task
+                retry_count = self.request.retries
+                max_retries = self.max_retries
+                
+                if retry_count < max_retries:
+                    logger.warning(f"Versuche Retry {retry_count + 1}/{max_retries} für Session {session_id}")
+                    redis_client.set(f"processing_status:{session_id}", f"retrying_{retry_count + 1}", ex=14400)
+                    raise self.retry(exc=e, countdown=120)  # Retry in 2 Minuten
+                else:
+                    # Maximale Anzahl von Retries erreicht
+                    logger.error(f"Maximale Anzahl von Retries erreicht für Session {session_id}")
+                    redis_client.set(f"processing_status:{session_id}", "failed", ex=14400)
+                    redis_client.set(f"processing_error:{session_id}", json.dumps({
+                        "error": "max_retries_exceeded",
+                        "message": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    }), ex=14400)
+                    
+                    # Aktualisiere auch die Datenbank
+                    try:
+                        upload = Upload.query.filter_by(session_id=session_id).first()
+                        if upload:
+                            upload.processing_status = "failed"
+                            upload.updated_at = datetime.now()
+                            upload.error_message = f"Max retries exceeded: {str(e)}"[:500]
+                            db.session.commit()
+                    except Exception as db_error:
+                        logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
+                        try:
+                            db.session.rollback()
+                        except:
+                            pass
+                
+                # Gib ein Fehlerergebnis zurück
+                return {
+                    "status": "error",
+                    "session_id": session_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+    except Exception as e:
+        # Fehlerbehandlung außerhalb des App-Kontexts
+        logger.error(f"Kritischer Fehler außerhalb des App-Kontexts: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Bereinige Ressourcen
+        cleanup_processing_for_session(session_id, f"Kritischer Fehler: {str(e)}")
+        
+        return {
+            "status": "error",
+            "error": f"Kritischer Fehler außerhalb des App-Kontexts: {str(e)}"
+        }
 
 def cleanup_processing_for_session(session_id, error_reason="unknown"):
     """
@@ -683,32 +739,116 @@ def process_extracted_text(session_id, extracted_text, file_name, user_id=None):
     logger = logging.getLogger(__name__)
     
     try:
+        logger.info(f"[{session_id}] Beginne Verarbeitung von extrahiertem Text für {file_name}")
+        logger.info(f"[{session_id}] Textlänge: {len(extracted_text)} Zeichen")
+        
         # Bereinige den Text für die Datenbank
+        logger.info(f"[{session_id}] Bereinige Text für die Datenbank")
         cleaned_text = clean_text_for_database(extracted_text)
+        logger.info(f"[{session_id}] Text bereinigt: {len(cleaned_text)} Zeichen")
         
         # Initialisiere OpenAI-Client
-        client = OpenAI()
+        logger.info(f"[{session_id}] Initialisiere OpenAI-Client")
+        try:
+            client = OpenAI()
+            logger.info(f"[{session_id}] OpenAI-Client erfolgreich erstellt")
+        except Exception as client_error:
+            logger.error(f"[{session_id}] Fehler beim Erstellen des OpenAI-Clients: {str(client_error)}")
+            logger.error(traceback.format_exc())
+            raise
         
         # Verarbeite den Text mit unified_content_processing
-        result = unified_content_processing(
-            text=extracted_text,
-            client=client,
-            file_names=[file_name],
-            user_id=user_id,
-            session_id=session_id
-        )
+        logger.info(f"[{session_id}] Starte unified_content_processing")
+        try:
+            # Speichere Status für den Frontend-Fortschritt
+            redis_client.set(f"processing_progress:{session_id}", json.dumps({
+                "progress": 20,
+                "stage": "content_processing",
+                "message": "KI-Verarbeitung des Textes wird gestartet...",
+                "timestamp": datetime.now().isoformat()
+            }), ex=14400)
+            
+            result = unified_content_processing(
+                text=extracted_text,
+                client=client,
+                file_names=[file_name],
+                user_id=user_id,
+                session_id=session_id
+            )
+            logger.info(f"[{session_id}] unified_content_processing abgeschlossen")
+            
+            if result:
+                # Log Statistiken
+                stats = {}
+                if 'flashcards' in result:
+                    stats['flashcards'] = len(result['flashcards'])
+                if 'questions' in result:
+                    stats['questions'] = len(result['questions'])
+                if 'topics' in result:
+                    stats['topics'] = len(result['topics'])
+                if 'key_terms' in result:
+                    stats['key_terms'] = len(result['key_terms'])
+                
+                logger.info(f"[{session_id}] Verarbeitungsergebnis enthält: {json.dumps(stats)}")
+            else:
+                logger.warning(f"[{session_id}] unified_content_processing lieferte leeres Ergebnis")
+                
+        except Exception as processing_error:
+            logger.error(f"[{session_id}] Fehler in unified_content_processing: {str(processing_error)}")
+            logger.error(traceback.format_exc())
+            
+            # Speichere Fehler für das Frontend
+            redis_client.set(f"processing_error:{session_id}", json.dumps({
+                "error": "content_processing_error",
+                "message": str(processing_error),
+                "timestamp": datetime.now().isoformat()
+            }), ex=14400)
+            
+            # Aktualisiere auch Redis-Status
+            redis_client.set(f"processing_status:{session_id}", f"error:content_processing", ex=14400)
+            
+            raise
         
         if not result:
-            raise ValueError("Die Inhaltsverarbeitung lieferte ein leeres Ergebnis")
+            error_msg = "Die Inhaltsverarbeitung lieferte ein leeres Ergebnis"
+            logger.error(f"[{session_id}] {error_msg}")
+            
+            redis_client.set(f"processing_error:{session_id}", json.dumps({
+                "error": "empty_result",
+                "message": error_msg,
+                "timestamp": datetime.now().isoformat()
+            }), ex=14400)
+            
+            raise ValueError(error_msg)
         
         # Speichere die Ergebnisse in der Datenbank
-        save_processing_results(session_id, result, user_id)
+        logger.info(f"[{session_id}] Speichere Ergebnisse in der Datenbank")
+        try:
+            save_processing_results(session_id, result, user_id)
+            logger.info(f"[{session_id}] Ergebnisse erfolgreich gespeichert")
+        except Exception as db_error:
+            logger.error(f"[{session_id}] Fehler beim Speichern der Ergebnisse: {str(db_error)}")
+            logger.error(traceback.format_exc())
+            raise
         
-        logger.info(f"Textverarbeitung erfolgreich abgeschlossen für {file_name}")
+        logger.info(f"[{session_id}] Textverarbeitung erfolgreich abgeschlossen für {file_name}")
+        return result
         
     except Exception as e:
-        logger.error(f"Fehler bei der Textverarbeitung: {str(e)}")
+        logger.error(f"[{session_id}] Fehler bei der Textverarbeitung: {str(e)}")
         logger.error(traceback.format_exc())
+        
+        # Stell sicher, dass Fehler in Redis gespeichert wird
+        try:
+            redis_client.set(f"processing_error:{session_id}", json.dumps({
+                "error": "text_processing_error",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat(),
+                "file": file_name
+            }), ex=14400)
+        except:
+            pass
+            
         raise
 
 def save_processing_results(session_id, result, user_id):

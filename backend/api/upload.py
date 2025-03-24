@@ -1108,7 +1108,14 @@ def debug_session_status(session_id):
             f"processing_completed:{session_id}",
             f"processing_completed_at:{session_id}",
             f"processing_result:{session_id}",
-            f"debug:{session_id}:*"
+            f"debug:{session_id}:*",
+            f"processing_heartbeat:{session_id}",
+            f"processing_current_file:{session_id}",
+            f"processing_file_index:{session_id}",
+            f"processing_file_count:{session_id}",
+            f"upload_files_data:{session_id}",
+            f"session_lock:{session_id}",
+            f"session_lock_info:{session_id}"
         ]:
             # Bei Schlüsseln mit Wildcard
             if "*" in key_pattern:
@@ -1149,7 +1156,9 @@ def debug_session_status(session_id):
                 "file_name_1": upload.file_name_1,
                 "file_name_2": upload.file_name_2,
                 "file_name_3": upload.file_name_3,
-                "has_result": upload.result is not None
+                "has_result": upload.result is not None,
+                "has_content": bool(upload.content),
+                "content_length": len(upload.content) if upload.content else 0
             }
             
             # Zähle die Einträge in anderen Tabellen
@@ -1160,35 +1169,164 @@ def debug_session_status(session_id):
         
         # Status für Celery-Worker
         worker_status = "unknown"
+        task_id = redis_data.get(f"task_id:{session_id}")
+        if isinstance(task_id, dict) and "task_id" in task_id:
+            task_id = task_id["task_id"]
+        
         try:
-            from celery.task.control import inspect
-            i = inspect()
-            active = i.active()
-            if active:
-                # Suche nach dem Task für diese Session
-                for worker_name, tasks in active.items():
-                    for task in tasks:
-                        if task['id'] == redis_data.get(f"task_id:{session_id}"):
-                            worker_status = {
-                                "status": "running",
-                                "worker": worker_name,
-                                "task_info": task
-                            }
-                            break
+            # Versuche, den Task direkt anzuschauen
+            from celery.result import AsyncResult
+            if task_id:
+                task_result = AsyncResult(task_id)
+                worker_status = {
+                    "status": task_result.status,
+                    "ready": task_result.ready(),
+                    "task_id": task_id,
+                    "info": str(task_result.info) if task_result.info else None
+                }
+                
+                # Versuche, den aktiven Worker zu identifizieren
+                try:
+                    from celery.task.control import inspect
+                    i = inspect()
+                    active = i.active()
+                    reserved = i.reserved()
+                    scheduled = i.scheduled()
+                    
+                    worker_tasks = {}
+                    if active:
+                        for worker_name, tasks in active.items():
+                            for task in tasks:
+                                if task.get('id') == task_id:
+                                    worker_status["worker"] = worker_name
+                                    worker_status["state"] = "active"
+                                    worker_status["task_details"] = task
+                                    break
+                    
+                    if not worker_status.get("worker") and reserved:
+                        for worker_name, tasks in reserved.items():
+                            for task in tasks:
+                                if task.get('id') == task_id:
+                                    worker_status["worker"] = worker_name
+                                    worker_status["state"] = "reserved"
+                                    worker_status["task_details"] = task
+                                    break
+                    
+                    if not worker_status.get("worker") and scheduled:
+                        for worker_name, tasks in scheduled.items():
+                            for task in tasks:
+                                if task[0].get('id') == task_id:  # Scheduled tasks sind als (task, eta) Tupel
+                                    worker_status["worker"] = worker_name
+                                    worker_status["state"] = "scheduled"
+                                    worker_status["task_details"] = task[0]
+                                    worker_status["eta"] = task[1]
+                                    break
+                    
+                    # Hole alle laufenden Worker
+                    stats = i.stats()
+                    if stats:
+                        worker_status["all_workers"] = list(stats.keys())
+                except Exception as inspect_error:
+                    worker_status["inspect_error"] = str(inspect_error)
+            
         except Exception as e:
             worker_status = {"status": "error", "message": str(e)}
         
+        # Überprüfe auch Systemressourcen
+        system_info = {}
+        try:
+            import psutil
+            system_info = {
+                "cpu_percent": psutil.cpu_percent(interval=0.1),
+                "memory_percent": psutil.virtual_memory().percent,
+                "disk_usage": psutil.disk_usage('/').percent,
+                "num_processes": len(psutil.pids()),
+                "uptime": psutil.boot_time()
+            }
+        except:
+            # psutil könnte nicht verfügbar sein
+            pass
+            
+        # Zeitberechnung für verschiedene Aspekte
+        timing_info = {}
+        start_time = redis_data.get(f"processing_start_time:{session_id}")
+        if start_time:
+            start_time = float(start_time) if isinstance(start_time, str) else start_time
+            current_time = time.time()
+            elapsed = current_time - start_time
+            timing_info["elapsed_seconds"] = elapsed
+            timing_info["elapsed_formatted"] = f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+            
+            # Schätze verbleibende Zeit, wenn Fortschritt vorhanden
+            progress_data = redis_data.get(f"processing_progress:{session_id}")
+            if progress_data and isinstance(progress_data, dict) and "progress" in progress_data:
+                progress = progress_data["progress"]
+                if progress > 0:
+                    total_estimated = elapsed / (progress / 100)
+                    remaining = max(0, total_estimated - elapsed)
+                    timing_info["estimated_remaining_seconds"] = remaining
+                    timing_info["estimated_remaining_formatted"] = f"{int(remaining // 60)}m {int(remaining % 60)}s"
+                    timing_info["estimated_total_seconds"] = total_estimated
+                    timing_info["estimated_total_formatted"] = f"{int(total_estimated // 60)}m {int(total_estimated % 60)}s"
+        
+        # Zusammenfassung erstellen
+        status_summary = "Unbekannt"
+        status_value = redis_data.get(f"processing_status:{session_id}")
+        if status_value:
+            if isinstance(status_value, dict) and "status" in status_value:
+                status_summary = status_value["status"]
+            else:
+                status_summary = status_value
+                
+        if upload and upload.processing_status:
+            db_status = upload.processing_status
+            if db_status == "completed":
+                status_summary = "Abgeschlossen (DB)"
+            elif db_status == "failed" or db_status == "error":
+                status_summary = f"Fehler: {db_status} (DB)"
+            
+        # Problemidentifikation
+        issues = []
+        
+        # Prüfe auf Fehler in Redis
+        if status_summary and ("error" in status_summary.lower() or "failed" in status_summary.lower()):
+            issues.append(f"Fehler-Status: {status_summary}")
+        
+        # Prüfe auf Diskrepanz zwischen Redis und DB
+        if upload and status_value and upload.processing_status != status_value:
+            issues.append(f"Status-Diskrepanz: Redis={status_value}, DB={upload.processing_status}")
+        
+        # Prüfe auf Heartbeat-Alter
+        heartbeat = redis_data.get(f"processing_heartbeat:{session_id}")
+        if heartbeat:
+            heartbeat_time = float(heartbeat) if isinstance(heartbeat, str) else heartbeat
+            heartbeat_age = time.time() - heartbeat_time
+            if heartbeat_age > 120:  # 2 Minuten ohne Heartbeat
+                issues.append(f"Heartbeat ist alt: {int(heartbeat_age)}s")
+        
+        # Prüfe auf veralteten Lock
+        lock = redis_data.get(f"session_lock:{session_id}")
+        if lock and not redis_data.get(f"processing_heartbeat:{session_id}"):
+            issues.append("Session ist gesperrt, aber kein aktiver Heartbeat")
+            
         # Rückgabe aller gesammelten Informationen
         return jsonify({
             "redis_data": redis_data,
             "db_info": db_info,
             "worker_status": worker_status,
+            "system_info": system_info,
+            "timing_info": timing_info,
+            "status_summary": status_summary,
+            "issues": issues,
             "timestamp": datetime.now().isoformat()
         }), 200
         
     except Exception as e:
+        traceback_str = traceback.format_exc()
+        logger.error(f"Fehler beim Sammeln von Debug-Informationen: {str(e)}")
+        logger.error(traceback_str)
         return jsonify({
             "status": "error",
             "message": f"Fehler beim Sammeln von Debug-Informationen: {str(e)}",
-            "traceback": traceback.format_exc()
+            "traceback": traceback_str
         }), 500
