@@ -14,7 +14,7 @@ PyMuPDF==1.24.10         # Erweiterte PDF-Unterstützung
 pdfminer.six==20231228   # PDF-Textextraktion
 
 # Textverarbeitungsbibliotheken
-langdetect==0.9.0        # Spracherkennung
+langdetect==1.0.9        # Spracherkennung
 tiktoken                 # OpenAI Token-Zählung
 bleach==6.1.0            # HTML-Bereinigung
 
