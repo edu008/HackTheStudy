@@ -131,7 +131,7 @@ services:
       branch: main
       deploy_on_push: true
     source_dir: backend
-    dockerfile_path: backend/Dockerfile.api
+    dockerfile_path: docker/api/Dockerfile
     http_port: 8080
     # Ressourcen und Skalierung
     instance_count: 1
@@ -174,7 +174,7 @@ services:
       branch: main
       deploy_on_push: true
     source_dir: backend
-    dockerfile_path: backend/Dockerfile.worker
+    dockerfile_path: docker/worker/Dockerfile
     # Ressourcen und Skalierung (weniger Ressourcen für Worker nötig)
     instance_count: 1
     instance_size_slug: basic-xs
