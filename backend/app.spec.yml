@@ -100,13 +100,13 @@ services:
     instance_count: 1
     instance_size_slug: basic-s
     health_check:
-      http_path: /
+      http_path: /api/v1/health
       port: 8080
-      initial_delay_seconds: 300
-      period_seconds: 30
-      timeout_seconds: 20
+      initial_delay_seconds: 600
+      period_seconds: 60
+      timeout_seconds: 30
       success_threshold: 1
-      failure_threshold: 10
+      failure_threshold: 3
     envs:
       - key: DIGITAL_OCEAN_APP_NAME
         value: "hackthestudy-backend"
