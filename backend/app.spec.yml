@@ -1,0 +1,145 @@
+name: hackthestudy-backend
+region: fra
+
+# App Platform-spezifische Metadaten
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+# Gemeinsame Umgebungsvariablen für alle Services
+envs:
+  # Datenbank-Konfiguration
+  - key: DATABASE_URL
+    scope: RUN_TIME
+    type: SECRET
+  
+  # Redis-Konfiguration (jetzt lokaler Redis im Container)
+  - key: REDIS_URL
+    value: "redis://localhost:6379/0"
+  
+  # Server-Konfiguration
+  - key: FLASK_APP
+    value: app.py
+  - key: PORT
+    value: "8080"  # DigitalOcean erwartet Port 8080
+  - key: FLASK_DEBUG
+    value: "false"
+  
+  # Sicherheit
+  - key: JWT_SECRET
+    scope: RUN_TIME
+    type: SECRET
+  - key: FLASK_SECRET_KEY
+    scope: RUN_TIME
+    type: SECRET
+  
+  # OpenAI-Konfiguration
+  - key: OPENAI_API_KEY
+    scope: RUN_TIME
+    type: SECRET
+  - key: OPENAI_MODEL
+    value: "gpt-4o"
+  
+  # URL-Konfiguration
+  - key: FRONTEND_URL
+    value: "https://www.hackthestudy.ch"
+  - key: API_URL
+    scope: RUN_AND_BUILD_TIME
+    value: "${APP_URL}"
+  - key: CORS_ORIGINS
+    value: "https://www.hackthestudy.ch,${APP_URL}"
+  
+  # Payment-Konfiguration
+  - key: STRIPE_API_KEY
+    scope: RUN_TIME
+    type: SECRET
+  - key: STRIPE_WEBHOOK_SECRET
+    scope: RUN_TIME
+    type: SECRET
+  - key: STRIPE_PUBLISHABLE_KEY
+    scope: RUN_TIME
+    type: SECRET
+  
+  # OAuth-Konfiguration
+  - key: GOOGLE_CLIENT_ID
+    scope: RUN_TIME
+    type: SECRET
+  - key: GOOGLE_CLIENT_SECRET
+    scope: RUN_TIME
+    type: SECRET
+  - key: GITHUB_CLIENT_ID
+    scope: RUN_TIME
+    type: SECRET
+  - key: GITHUB_CLIENT_SECRET
+    scope: RUN_TIME
+    type: SECRET
+  
+  # Logging
+  - key: LOG_LEVEL
+    value: INFO
+  - key: USE_COLORED_LOGS
+    value: "false"
+  
+  # DigitalOcean App Platform spezifische Variablen
+  - key: DO_APP_PLATFORM
+    value: "true"
+  - key: PAYMENT_PORT
+    value: "5001"
+
+services:
+  # API-Service ohne Worker-Funktion
+  - name: backend
+    type: web
+    github:
+      repo: edu008/HackTheStudy
+      branch: main
+      deploy_on_push: true
+    source_dir: backend
+    dockerfile_path: backend/Dockerfile
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-s
+    health_check:
+      http_path: /
+      port: 8080
+      initial_delay_seconds: 300
+      period_seconds: 30
+      timeout_seconds: 20
+      success_threshold: 1
+      failure_threshold: 10
+    envs:
+      - key: DIGITAL_OCEAN_APP_NAME
+        value: "hackthestudy-backend"
+      - key: DIGITAL_OCEAN_DEPLOYMENT_ID
+        value: "${APP_DEPLOYMENT_ID}"
+      - key: RUN_MODE
+        value: "app"
+      - key: LOG_API_REQUESTS
+        value: "false"
+      - key: LOG_PREFIX
+        value: "[APP]"
+
+  # Separater Worker-Service 
+  - name: worker
+    type: worker
+    github:
+      repo: edu008/HackTheStudy
+      branch: main
+      deploy_on_push: true
+    source_dir: backend
+    dockerfile_path: backend/Dockerfile
+    instance_count: 1
+    instance_size_slug: basic-xs
+    health_check: null
+    run_command: python /app/app.py
+    envs:
+      - key: RUN_MODE
+        value: "worker"
+      - key: LOG_API_REQUESTS
+        value: "true"
+      - key: LOG_PREFIX
+        value: "[WORKER]"
+      - key: DIGITAL_OCEAN_APP_NAME
+        value: "hackthestudy-backend-worker"
+      - key: DIGITAL_OCEAN_DEPLOYMENT_ID
+        value: "${APP_DEPLOYMENT_ID}-worker"

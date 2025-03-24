@@ -1,52 +1,67 @@
 import os
 import stripe
-from flask import Blueprint, request, jsonify, current_app
-from models import db, User, Payment
-from flask_cors import cross_origin
+from flask import Blueprint, request, jsonify, current_app, redirect, url_for
+from . import api_bp
+from core.models import db, User, Payment
 from api.auth import token_required
 import json
+import logging
 
+# Blueprint erstellen und zentrale CORS-Konfiguration verwenden
 payment_bp = Blueprint('payment', __name__)
 
 # Initialisierung von Stripe mit dem API-Key
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
-stripe.api_version = '2023-10-16'  # Neueste API-Version verwenden
+stripe_key = os.getenv('STRIPE_API_KEY')
+if stripe_key:
+    stripe.api_key = stripe_key.strip()
+    logging.info("Stripe wurde mit API-Schlüssel initialisiert")
+    stripe.api_version = '2023-10-16'  # Neueste API-Version verwenden
+else:
+    # Zeige nur eine Warnung, ohne einen Dummy-Key zu setzen
+    logging.warning("STRIPE_API_KEY ist nicht gesetzt. Stripe-Zahlungen werden nicht funktionieren.")
 
-# CORS-Konfiguration für alle Endpoints
-CORS_CONFIG = {
-    "supports_credentials": True,
-    "origins": "*",
-    "methods": ["GET", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization"]
+# Definiere Preise und Credits
+PRICES = {
+    'standard': 1990,  # 19,90 CHF in Rappen
+    'premium': 2990,   # 29,90 CHF in Rappen
+    'ultimate': 4990   # 49,90 CHF in Rappen
 }
 
-# Die Preisstufen festlegen (in Rappen, da CHF)
-PRICE_TIERS = {
-    'tier1': {'amount': 500, 'credits': 250},  # 5 CHF für 250 Credits
-    'tier2': {'amount': 1000, 'credits': 500},  # 10 CHF für 500 Credits
-    'tier3': {'amount': 2500, 'credits': 1250},  # 25 CHF für 1250 Credits
-    'tier4': {'amount': 5000, 'credits': 2500}   # 50 CHF für 2500 Credits
+# Definiere Credits pro Paket
+CREDITS = {
+    'standard': 300,
+    'premium': 500,
+    'ultimate': 1000
 }
 
-# Funktion zur Berechnung der Credits basierend auf dem Zahlungsbetrag
+# Hilfsfunktion zum Berechnen der Credits
 def calculate_credits(amount_in_cents):
-    """Berechnet die Credits basierend auf dem Zahlungsbetrag
-    Die Credits sind das Doppelte der API-Kosten (hier als Beispiel)
-    """
-    # In diesem Beispiel: 100 Rappen = 50 Credits
-    return amount_in_cents // 2
+    """Berechnet die Credits basierend auf dem Betrag in Rappen"""
+    if amount_in_cents == PRICES['standard']:
+        return CREDITS['standard']
+    elif amount_in_cents == PRICES['premium']:
+        return CREDITS['premium']
+    elif amount_in_cents == PRICES['ultimate']:
+        return CREDITS['ultimate']
+    else:
+        # Fallback für unbekannte Beträge: 10 Credits pro Franken
+        return amount_in_cents // 100 * 10
 
-@payment_bp.route('/create-checkout-session', methods=['POST'])
-@cross_origin(**CORS_CONFIG)
+@payment_bp.route('/create-checkout-session', methods=['POST', 'OPTIONS'])
 @token_required
 def create_checkout_session():
+    # Bei OPTIONS-Anfragen gib sofort eine Antwort zurück
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+        
     data = request.get_json()
     tier = data.get('tier')
     
-    if tier not in PRICE_TIERS:
+    if tier not in PRICES:
         return jsonify({'error': 'Ungültige Preisstufe'}), 400
     
-    price_data = PRICE_TIERS[tier]
+    price_data = PRICES[tier]
     user_id = request.user_id
     
     try:
@@ -57,19 +72,19 @@ def create_checkout_session():
                 'price_data': {
                     'currency': 'chf',
                     'product_data': {
-                        'name': f'{price_data["credits"]} Credits',
+                        'name': f'{calculate_credits(price_data)} Credits',
                         'description': 'Credits für API-Abfragen'
                     },
-                    'unit_amount': price_data['amount'],
+                    'unit_amount': price_data,
                 },
                 'quantity': 1,
             }],
             mode='payment',
-            success_url=os.getenv('FRONTEND_URL') + '/payment/success?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url=os.getenv('FRONTEND_URL') + '/payment/cancel',
+            success_url=os.getenv('FRONTEND_URL').strip() + '/payment/success?session_id={CHECKOUT_SESSION_ID}',
+            cancel_url=os.getenv('FRONTEND_URL').strip() + '/payment/cancel',
             metadata={
                 'user_id': user_id,
-                'credits': price_data['credits']
+                'credits': calculate_credits(price_data)
             }
         )
         
@@ -78,21 +93,39 @@ def create_checkout_session():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@payment_bp.route('/webhook', methods=['POST'])
+@payment_bp.route('/webhook', methods=['POST', 'OPTIONS'])
 def stripe_webhook():
+    # Bei OPTIONS-Anfragen gib sofort eine Antwort zurück
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+        
     payload = request.get_data(as_text=True)
     sig_header = request.headers.get('Stripe-Signature')
     
-    try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, os.getenv('STRIPE_WEBHOOK_SECRET')
-        )
-    except ValueError as e:
-        # Ungültige Payload
-        return jsonify({'error': str(e)}), 400
-    except stripe.error.SignatureVerificationError as e:
-        # Ungültige Signatur
-        return jsonify({'error': str(e)}), 400
+    # Webhook-Secret abrufen - unterstützt mehrere Variablennamen
+    webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+    
+    if not webhook_secret:
+        logging.warning("STRIPE_WEBHOOK_SECRET ist nicht gesetzt. Webhook-Validierung wird übersprungen.")
+        try:
+            # Payload ohne Signaturprüfung verwenden
+            event = json.loads(payload)
+        except ValueError as e:
+            return jsonify({'error': 'Ungültige Payload'}), 400
+    else:
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, webhook_secret.strip()
+            )
+        except ValueError as e:
+            # Ungültige Payload
+            logging.error(f"Webhook-Fehler: Ungültige Payload - {str(e)}")
+            return jsonify({'error': str(e)}), 400
+        except stripe.error.SignatureVerificationError as e:
+            # Ungültige Signatur
+            logging.error(f"Webhook-Fehler: Ungültige Signatur - {str(e)}")
+            return jsonify({'error': str(e)}), 400
     
     # Handle the checkout.session.completed event
     if event['type'] == 'checkout.session.completed':
@@ -117,6 +150,7 @@ def stripe_webhook():
             user = User.query.get(user_id)
             if user:
                 user.credits += credits
+                logging.info(f"Zahlung erfolgreich: {credits} Credits für Benutzer {user_id} gutgeschrieben")
             
             # Speichern
             db.session.add(payment)
@@ -124,10 +158,14 @@ def stripe_webhook():
     
     return jsonify({'status': 'success'})
 
-@payment_bp.route('/payment-success', methods=['GET'])
-@cross_origin(**CORS_CONFIG)
+@payment_bp.route('/payment-success', methods=['GET', 'OPTIONS'])
 @token_required
 def payment_success():
+    # Bei OPTIONS-Anfragen gib sofort eine Antwort zurück
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+        
     session_id = request.args.get('session_id')
     
     if not session_id:
@@ -180,17 +218,34 @@ def payment_success():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@payment_bp.route('/get-credits', methods=['GET'])
-@cross_origin(**CORS_CONFIG)
+@payment_bp.route('/get-credits', methods=['GET', 'OPTIONS'])
 @token_required
-def get_credits():
+def get_user_credits():
+    # Bei OPTIONS-Anfragen gib sofort eine Antwort zurück
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
     user = User.query.get(request.user_id)
-    return jsonify({'credits': user.credits})
+    if not user:
+        return jsonify({
+            "success": False, 
+            "error": {"code": "USER_NOT_FOUND", "message": "User not found"}
+        }), 404
+    else:
+        return jsonify({
+            "success": True, 
+            "data": {"credits": user.credits}
+        }), 200
 
-@payment_bp.route('/payment-history', methods=['GET'])
-@cross_origin(**CORS_CONFIG)
+@payment_bp.route('/payment-history', methods=['GET', 'OPTIONS'])
 @token_required
 def payment_history():
+    # Bei OPTIONS-Anfragen gib sofort eine Antwort zurück
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+        
     payments = Payment.query.filter_by(user_id=request.user_id).order_by(Payment.created_at.desc()).all()
     
     history = []

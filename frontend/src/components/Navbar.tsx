@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
-import { GraduationCap, Menu, X, History, CreditCard, LogOut, User } from 'lucide-react';
+import { GraduationCap, Menu, X, History, CreditCard, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useTranslation } from 'react-i18next';
+import LanguageSelector from './LanguageSelector';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,8 +23,28 @@ interface NavbarProps {
 const Navbar = ({ onLoginClick }: NavbarProps) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { user, signOut } = useAuth();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyKey, setHistoryKey] = useState(Date.now());
+  const { user, signOut, refreshUserCredits } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { t } = useTranslation();
+
+  useEffect(() => {
+    const updateCredits = async () => {
+      if (user) {
+        const lastUpdateTime = parseInt(localStorage.getItem('last_nav_credit_update') || '0');
+        const currentTime = Date.now();
+        
+        if (currentTime - lastUpdateTime > 60000) {
+          await refreshUserCredits();
+          localStorage.setItem('last_nav_credit_update', currentTime.toString());
+        }
+      }
+    };
+
+    updateCredits();
+  }, [refreshUserCredits, user]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -33,299 +55,200 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  useEffect(() => {
+    if (user) {
+      const creditUpdateInterval = setInterval(() => {
+        refreshUserCredits();
+      }, 120000);
+
+      return () => {
+        clearInterval(creditUpdateInterval);
+      };
+    }
+  }, [user, refreshUserCredits]);
+
   const handleSignOut = () => {
     signOut();
     navigate('/');
   };
 
+  const handleOpenHistory = () => {
+    setHistoryKey(Date.now());  // Force re-render of UserHistory
+    setHistoryOpen(true);
+    refreshUserCredits();
+  };
+
   return (
-    <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-      isScrolled 
-        ? "py-3 bg-white/80 dark:bg-black/80 backdrop-blur-lg shadow-soft" 
-        : "py-5 bg-transparent"
-    }`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+    <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isScrolled ? 'bg-background/70 backdrop-blur-lg shadow-sm' : 'bg-transparent'}`}>
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between">
+          {/* Logo and Nav Links - Desktop */}
           <div className="flex items-center">
-            <Link 
-              to="/" 
-              className="flex items-center space-x-2 text-xl font-semibold"
-              onClick={(e) => {
-                e.preventDefault();
-                window.scrollTo(0, 0);
-                window.location.href = '/';
-              }}
-            >
-              <GraduationCap className="h-6 w-6 text-primary" />
-              <span className="animate-fade-in">HackTheStudy</span>
+            <Link to="/" className="flex items-center space-x-2">
+              <GraduationCap className="h-8 w-8 text-primary" />
+              <span className="text-xl font-bold">HackTheStudy</span>
             </Link>
           </div>
-          
+
           {/* Desktop Navigation */}
-          <div className="hidden md:block">
-            <div className="flex items-center space-x-6">
-              <Link 
-                to="/" 
-                className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.scrollTo(0, 0);
-                  window.location.href = '/';
-                }}
-              >
-                Home
-              </Link>
-              
-              {user && (
-                <>
-                  <Link 
-                    to="/#flashcards" 
-                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      const flashcardsElement = document.getElementById('flashcards');
-                      if (flashcardsElement) {
-                        flashcardsElement.scrollIntoView({ behavior: 'smooth' });
-                      }
-                    }}
-                  >
-                    Flashcards
-                  </Link>
-                  <Link 
-                    to="/#test-simulator" 
-                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      const testSimulatorElement = document.getElementById('test-simulator');
-                      if (testSimulatorElement) {
-                        testSimulatorElement.scrollIntoView({ behavior: 'smooth' });
-                      }
-                    }}
-                  >
-                    Test Simulator
-                  </Link>
-                  <Link 
-                    to="/#concept-mapper" 
-                    className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      const conceptMapperElement = document.getElementById('concept-mapper');
-                      if (conceptMapperElement) {
-                        conceptMapperElement.scrollIntoView({ behavior: 'smooth' });
-                      }
-                    }}
-                  >
-                    Mindmap
-                  </Link>
-                </>
-              )}
-              
-              {user ? (
-                <div className="flex items-center space-x-4">
+          <nav className="hidden md:flex items-center space-x-4">
+            {user ? (
+              <>
+                <div className="flex items-center space-x-1">
                   <div className="text-sm font-medium">
-                    Credits: {user.credits}
+                    {t('navigation.credits')}: {user.credits}
                   </div>
-                  
-                  <Sheet>
-                    <SheetTrigger asChild>
-                      <Button variant="outline" size="sm">
-                        <History className="h-4 w-4 mr-2" />
-                        History
-                      </Button>
-                    </SheetTrigger>
-                    <SheetContent side="right">
-                      <SheetHeader>
-                        <SheetTitle>Your History</SheetTitle>
-                        <SheetDescription>
-                          Your recent activities on HackTheStudy
-                        </SheetDescription>
-                      </SheetHeader>
-                      <UserHistory />
-                    </SheetContent>
-                  </Sheet>
-                  
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Avatar className="h-8 w-8 cursor-pointer">
+                </div>
+
+                <LanguageSelector />
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                      <Avatar className="h-8 w-8">
                         <AvatarImage src={user.avatar} alt={user.name} />
                         <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
                       </Avatar>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem className="cursor-pointer" onClick={() => navigate('/dashboard', { replace: true })}>
-                        <User className="mr-2 h-4 w-4" />
-                        Dashboard
-                      </DropdownMenuItem>
-                      <DropdownMenuItem className="cursor-pointer" onClick={() => navigate('/payment')}>
-                        <CreditCard className="mr-2 h-4 w-4" />
-                        Buy Credits
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem className="cursor-pointer" onClick={handleSignOut}>
-                        <LogOut className="mr-2 h-4 w-4" />
-                        Sign Out
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              ) : (
-                <Button size="sm" onClick={() => navigate('/signin')} className="ml-6 animate-fade-in">
-                  Sign In
-                </Button>
-              )}
-            </div>
-          </div>
-          
-          {/* Mobile Navigation Toggle */}
-          <div className="md:hidden">
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => navigate('/dashboard')}>
+                      {t('navigation.dashboard')}
+                    </DropdownMenuItem>
+                    
+                    <DropdownMenuItem onClick={() => navigate('/payment')}>
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      {t('navigation.buyCredits')}
+                    </DropdownMenuItem>
+                    
+                    <DropdownMenuItem onClick={handleOpenHistory}>
+                      <History className="h-4 w-4 mr-2" />
+                      {t('navigation.history')}
+                    </DropdownMenuItem>
+                    
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={signOut}>
+                      <LogOut className="h-4 w-4 mr-2" />
+                      {t('navigation.signOut')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                
+                {/* History Sheet - wird über handleOpenHistory geöffnet */}
+                <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+                  <SheetContent side="right" onCloseAutoFocus={() => {}}>
+                    <SheetHeader>
+                      <SheetTitle>{t('navigation.history')}</SheetTitle>
+                      <SheetDescription>
+                        {t('common.loading')}
+                      </SheetDescription>
+                    </SheetHeader>
+                    <UserHistory key={historyKey} />
+                  </SheetContent>
+                </Sheet>
+              </>
+            ) : (
+              <>
+                <LanguageSelector />
+              </>
+            )}
+          </nav>
+
+          {/* Mobile Menu Button */}
+          <div className="flex md:hidden">
             <Button 
               variant="ghost" 
               size="icon" 
               onClick={() => setIsMenuOpen(!isMenuOpen)}
-              aria-label="Toggle menu"
+              className="text-foreground"
             >
-              {isMenuOpen ? (
-                <X className="h-5 w-5" />
-              ) : (
-                <Menu className="h-5 w-5" />
-              )}
+              {isMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </Button>
           </div>
         </div>
       </div>
-      
+
       {/* Mobile Navigation Menu */}
       {isMenuOpen && (
-        <div className="md:hidden absolute top-full left-0 right-0 bg-white/95 dark:bg-black/95 backdrop-blur-md shadow-medium border-t">
-          <div className="px-4 pt-2 pb-4 space-y-3 flex flex-col">
-            <Link 
-              to="/" 
-              className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
-              onClick={(e) => {
-                e.preventDefault();
-                setIsMenuOpen(false);
-                window.scrollTo(0, 0);
-                window.location.href = '/';
-              }}
-            >
-              Home
-            </Link>
-            {user && (
-              <>
-                <Link 
-                  to="/#flashcards" 
-                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setIsMenuOpen(false);
-                    const flashcardsElement = document.getElementById('flashcards');
-                    if (flashcardsElement) {
-                      flashcardsElement.scrollIntoView({ behavior: 'smooth' });
-                    }
-                  }}
-                >
-                  Flashcards
-                </Link>
-                <Link 
-                  to="/#test-simulator" 
-                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setIsMenuOpen(false);
-                    const testSimulatorElement = document.getElementById('test-simulator');
-                    if (testSimulatorElement) {
-                      testSimulatorElement.scrollIntoView({ behavior: 'smooth' });
-                    }
-                  }}
-                >
-                  Test Simulator
-                </Link>
-                <Link 
-                  to="/#concept-mapper" 
-                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setIsMenuOpen(false);
-                    const conceptMapperElement = document.getElementById('concept-mapper');
-                    if (conceptMapperElement) {
-                      conceptMapperElement.scrollIntoView({ behavior: 'smooth' });
-                    }
-                  }}
-                >
-                  Mindmap
-                </Link>
-              </>
-            )}
-            
+        <div className="md:hidden bg-background border-b">
+          <div className="container mx-auto px-4 py-4 space-y-3">
             {user ? (
               <>
-                <div className="flex items-center justify-between px-3 py-2">
-                  <div className="flex items-center space-x-2">
-                    <Avatar className="h-8 w-8">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <Avatar className="h-10 w-10">
                       <AvatarImage src={user.avatar} alt={user.name} />
                       <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
                     </Avatar>
-                    <span className="font-medium">{user.name}</span>
+                    <div>
+                      <p className="text-sm font-medium">{user.name}</p>
+                      <p className="text-xs text-muted-foreground">{user.email}</p>
+                    </div>
                   </div>
-                  <div className="text-sm">Credits: {user.credits}</div>
+                  <div>
+                    <p className="text-sm font-medium">{t('navigation.credits')}: {user.credits}</p>
+                  </div>
                 </div>
-                <Link 
-                  to="/dashboard" 
-                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setIsMenuOpen(false);
-                    navigate('/dashboard', { replace: true });
-                  }}
-                >
-                  Dashboard
-                </Link>
-                <Link 
-                  to="/payment" 
-                  className="block px-3 py-2 text-foreground rounded-md hover:bg-secondary transition-colors duration-200"
+
+                <hr />
+
+                <Link
+                  to="/dashboard"
+                  className="flex items-center rounded-md px-3 py-2 text-sm hover:bg-accent"
                   onClick={() => setIsMenuOpen(false)}
                 >
-                  Buy Credits
+                  {t('navigation.dashboard')}
                 </Link>
-                <Sheet>
+                
+                <Link
+                  to="/payment"
+                  className="flex items-center rounded-md px-3 py-2 text-sm hover:bg-accent"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  {t('navigation.buyCredits')}
+                </Link>
+                <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
                   <SheetTrigger asChild>
-                    <Button variant="outline" size="sm" className="w-full justify-start">
+                    <Button variant="outline" size="sm" className="w-full justify-start" onClick={handleOpenHistory}>
                       <History className="h-4 w-4 mr-2" />
-                      History
+                      {t('navigation.history')}
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="right">
+                  <SheetContent side="right" onCloseAutoFocus={() => {}}>
                     <SheetHeader>
-                      <SheetTitle>Your History</SheetTitle>
+                      <SheetTitle>{t('navigation.history')}</SheetTitle>
                       <SheetDescription>
-                        Your recent activities on HackTheStudy
+                        {t('common.loading')}
                       </SheetDescription>
                     </SheetHeader>
-                    <UserHistory />
+                    <UserHistory key={historyKey} />
                   </SheetContent>
                 </Sheet>
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  className="justify-start"
-                  onClick={() => {
-                    handleSignOut();
-                    setIsMenuOpen(false);
-                  }}
-                >
-                  <LogOut className="h-4 w-4 mr-2" /> 
-                  Sign Out
-                </Button>
+                
+                <div className="flex items-center space-x-2 mt-2">
+                  <LanguageSelector />
+                  <Button 
+                    onClick={() => {
+                      signOut();
+                      setIsMenuOpen(false);
+                    }} 
+                    variant="destructive" 
+                    className="w-full"
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    {t('navigation.signOut')}
+                  </Button>
+                </div>
               </>
             ) : (
-              <Button size="sm" className="mt-2 w-full" onClick={() => navigate('/signin')}>
-                Sign In
-              </Button>
+              <div className="flex flex-col space-y-3">
+                <LanguageSelector />
+              </div>
             )}
           </div>
         </div>
       )}
-    </nav>
+    </header>
   );
 };
 

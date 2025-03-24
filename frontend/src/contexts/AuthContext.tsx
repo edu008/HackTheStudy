@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from '@/components/ui/use-toast';
 import axios from 'axios';
@@ -55,15 +55,18 @@ export const useAuth = () => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loadingInitial, setLoadingInitial] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [lastCreditRefresh, setLastCreditRefresh] = useState<number>(0);
   const navigate = useNavigate();
   const location = useLocation();
   
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-  const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://localhost:8080';
-  const PAYMENT_API_URL = import.meta.env.VITE_PAYMENT_API_URL || 'http://localhost:5001';
+  // Umgebungsvariablen
+  const windowEnv = (window as any).env || {};
+  const API_URL = windowEnv.VITE_API_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const PAYMENT_API_URL = windowEnv.VITE_PAYMENT_API_URL || import.meta.env.VITE_PAYMENT_API_URL || API_URL;
 
   // Check for auth callback
   useEffect(() => {
@@ -204,6 +207,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       }
+      setLoadingInitial(false);
       setIsLoading(false);
     };
     
@@ -379,40 +383,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Funktion, um die Kredite des Benutzers zu aktualisieren (nach erfolgreicher Zahlung)
-  const refreshUserCredits = async () => {
-    if (!user) return;
+  // Aktualisiere die Credits des Benutzers durch Abfrage des Backends
+  const refreshUserCredits = useCallback(async () => {
+    // Verhindere zu häufige Aufrufe - max. einmal alle 3 Sekunden
+    const now = Date.now();
+    if (now - lastCreditRefresh < 3000) {
+      return;
+    }
+    
+    setLastCreditRefresh(now);
     
     try {
       const token = localStorage.getItem('exammaster_token');
-      if (!token) return;
-      
-      const response = await axios.get(`${PAYMENT_API_URL}/api/payment/get-credits`, {
+      if (!token) return; // Keine Abfrage ohne Token
+
+      // Credits vom API-Server abrufen
+      const response = await axios.get(`${API_URL}/api/v1/payment/get-credits`, {
         withCredentials: true,
         headers: {
           Authorization: `Bearer ${token}`
-        }
+        },
+        timeout: 5000 // 5 Sekunden Timeout
       });
       
-      if (response.data) {
-        setUser(prev => prev ? { ...prev, credits: response.data.credits } : null);
+      if (response.data.success && response.data.credits !== undefined) {
+        // Aktualisiere den User-State mit den neuen Credits
+        setUser(prevUser => {
+          if (!prevUser) return prevUser;
+          return { ...prevUser, credits: response.data.credits };
+        });
         
-        // Auch den gespeicherten Benutzer aktualisieren
+        // Aktualisiere auch den gespeicherten User
         const storedUser = localStorage.getItem('exammaster_user');
         if (storedUser) {
           try {
             const parsedUser = JSON.parse(storedUser);
             parsedUser.credits = response.data.credits;
             localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
-          } catch (parseError) {
-            console.error('Error updating stored user credits:', parseError);
+          } catch (error) {
+            // Fehler beim Parsen des gespeicherten Benutzers - ignorieren
           }
         }
       }
     } catch (error) {
-      console.error('Error refreshing user credits:', error);
+      // Fehlerbehandlung - ignorieren
     }
-  };
+  }, [lastCreditRefresh]);
   
   const recordActivity = async (type: string, title: string, details?: any) => {
     if (!user) return;

@@ -128,3 +128,51 @@ For testing purposes, a demo account is created when you initialize the database
 - Email: demo@example.com
 - Name: Demo User
 - Credits: 500
+
+## Docker-Setup
+
+Das Projekt kann mit Docker ausgeführt werden, was die Einrichtung der Entwicklungsumgebung vereinfacht.
+
+### Voraussetzungen
+
+- Docker und Docker Compose müssen installiert sein
+
+### Erste Schritte mit Docker
+
+1. Kopieren Sie die `.env.example` Datei und benennen Sie sie in `.env` um:
+   ```
+   cp .env.example .env
+   ```
+
+2. Passen Sie die Umgebungsvariablen in der `.env` Datei an Ihre Anforderungen an
+
+3. Bauen und starten Sie die Container:
+   ```
+   docker-compose up -d
+   ```
+
+4. Das Frontend ist unter http://localhost erreichbar
+   Das Backend-API ist unter http://localhost/api verfügbar
+   PGAdmin ist unter http://localhost:8081 verfügbar (Login: admin@admin.com / admin123)
+
+### Entwicklung mit Docker
+
+- Logs anzeigen:
+  ```
+  docker-compose logs -f
+  ```
+
+- Container neustarten:
+  ```
+  docker-compose restart
+  ```
+
+- Container stoppen:
+  ```
+  docker-compose down
+  ```
+
+- Container neustarten und neu bauen (nach Änderungen an Abhängigkeiten):
+  ```
+  docker-compose up -d --build
+  ```

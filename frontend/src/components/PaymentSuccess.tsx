@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Check, RefreshCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
 
 // API Endpunkt
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -19,6 +20,7 @@ export default function PaymentSuccess() {
   const location = useLocation();
   const navigate = useNavigate();
   const { refreshUserCredits } = useAuth();
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (verified) return;
@@ -28,7 +30,7 @@ export default function PaymentSuccess() {
       const sessionId = searchParams.get('session_id');
       
       if (!sessionId) {
-        toast.error('Keine Zahlungsinformationen gefunden');
+        toast.error(t('payment.success.noInformation'));
         setPaymentStatus('error');
         setIsLoading(false);
         setVerified(true);
@@ -38,36 +40,41 @@ export default function PaymentSuccess() {
       try {
         const token = localStorage.getItem('exammaster_token');
         if (!token) {
-          toast.error('Bitte melden Sie sich an, um die Zahlung zu verifizieren');
-          navigate('/signin');
+          toast.error(t('payment.success.loginRequired'));
+          navigate('/');
           setVerified(true);
           return;
         }
         
+        setIsLoading(true);
+        
+        // Backend-Aufruf um Zahlung zu bestätigen und Guthaben gutzuschreiben
         const response = await axios.get(
-          `${PAYMENT_API_URL}/api/payment/payment-success?session_id=${sessionId}`,
-          { 
-            withCredentials: true,
+          `${API_URL}/api/v1/payment/payment-success?session_id=${sessionId}`,
+          {
             headers: {
               Authorization: `Bearer ${token}`
-            }
+            },
+            withCredentials: true
           }
         );
         
-        if (response.data.status === 'success') {
+        if (response.data.success) {
           setPaymentStatus('success');
-          setCredits(Number(response.data.credits));
-          toast.success('Zahlung erfolgreich!');
+          setCredits(response.data.credits || 0);
           
+          // Aktualisiere die Benutzer-Credits im Auth-Kontext
           await refreshUserCredits();
+          
+          toast.success(t('payment.success.confirmed'));
         } else {
-          setPaymentStatus('pending');
-          toast.info('Zahlung wird bearbeitet');
+          setPaymentStatus('error');
+          toast.error(response.data.message || t('payment.success.verificationFailed'));
         }
       } catch (error) {
-        console.error('Fehler beim Überprüfen der Zahlung:', error);
+        console.error('Fehler bei der Zahlungsverifizierung:', error);
         setPaymentStatus('error');
-        toast.error('Fehler beim Überprüfen der Zahlung');
+        toast.error(t('payment.success.processingError'));
       } finally {
         setIsLoading(false);
         setVerified(true);
@@ -75,55 +82,80 @@ export default function PaymentSuccess() {
     };
     
     verifyPayment();
-  }, [location.search, refreshUserCredits, navigate, verified]);
+  }, [location.search, navigate, refreshUserCredits, verified, t]);
+
+  const getStatusText = () => {
+    switch (paymentStatus) {
+      case 'success':
+        return t('payment.success.successMessage');
+      case 'pending':
+        return t('payment.success.pendingMessage');
+      case 'error':
+        return t('payment.success.errorMessage');
+    }
+  };
 
   return (
-    <div className="container mx-auto py-12 px-4 max-w-lg">
-      <Card className="w-full">
+    <div className="container mx-auto px-4 max-w-4xl">
+      <div className="pt-12 pb-8 text-center">
+        <h1 className="text-3xl font-bold mb-2">{t('payment.success.title')}</h1>
+        <p className="text-muted-foreground max-w-2xl mx-auto">
+          {t('payment.success.statusCheck')}
+        </p>
+      </div>
+
+      <Card className="mb-8 border-blue-100 overflow-hidden">
+        <div className={`w-full h-2 ${
+          paymentStatus === 'success' ? 'bg-green-500' : 
+          paymentStatus === 'error' ? 'bg-red-500' : 'bg-blue-500'
+        }`}></div>
         <CardHeader>
-          <CardTitle className="text-2xl text-center">
-            {isLoading
-              ? 'Zahlung wird überprüft...'
-              : paymentStatus === 'success'
-              ? 'Zahlung erfolgreich!'
-              : paymentStatus === 'pending'
-              ? 'Zahlung wird bearbeitet'
-              : 'Fehler bei der Zahlung'}
-          </CardTitle>
-          <CardDescription className="text-center">
-            {isLoading
-              ? 'Bitte warten Sie, während wir Ihre Zahlung überprüfen'
-              : paymentStatus === 'success'
-              ? `${credits} Credits wurden Ihrem Konto gutgeschrieben`
-              : paymentStatus === 'pending'
-              ? 'Ihre Zahlung wird noch bearbeitet'
-              : 'Es gab ein Problem mit Ihrer Zahlung'}
-          </CardDescription>
+          <CardTitle>{t('payment.success.paymentStatus')}</CardTitle>
+          <CardDescription>{getStatusText()}</CardDescription>
         </CardHeader>
-        <CardContent className="flex justify-center py-6">
-          {isLoading ? (
-            <RefreshCcw className="h-16 w-16 animate-spin text-primary" />
-          ) : paymentStatus === 'success' ? (
-            <div className="rounded-full bg-green-100 p-3">
-              <Check className="h-16 w-16 text-green-600" />
-            </div>
-          ) : (
-            <div className="text-center">
-              <p className="text-muted-foreground">
-                {paymentStatus === 'pending'
-                  ? 'Die Verarbeitung der Zahlung kann einen Moment dauern.'
-                  : 'Bitte kontaktieren Sie den Support, wenn das Problem weiterhin besteht.'}
-              </p>
-            </div>
-          )}
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-10">
+            {isLoading ? (
+              <div className="flex flex-col items-center">
+                <RefreshCcw className="h-12 w-12 animate-spin text-blue-500 mb-4" />
+                <p className="text-muted-foreground">{t('payment.success.verifying')}</p>
+              </div>
+            ) : (
+              <div className="text-center flex flex-col items-center">
+                {paymentStatus === 'success' && (
+                  <>
+                    <div className="h-20 w-20 rounded-full bg-green-100 flex items-center justify-center mb-4">
+                      <Check className="h-10 w-10 text-green-600" />
+                    </div>
+                    <h3 className="text-xl font-semibold mb-1">{t('payment.success.thankyou')}</h3>
+                    <p className="mb-6">{t('payment.success.accountCredited')}</p>
+                    <div className="mb-4 bg-blue-50 py-3 px-6 rounded-md">
+                      <p className="text-sm text-gray-600">{t('payment.success.newBalance')}</p>
+                      <p className="text-2xl font-bold text-blue-600">{credits?.toLocaleString('de-CH') || 0} Credits</p>
+                    </div>
+                  </>
+                )}
+                
+                {paymentStatus === 'error' && (
+                  <>
+                    <div className="h-20 w-20 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-600">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                      </svg>
+                    </div>
+                    <h3 className="text-xl font-semibold mb-2">{t('payment.success.verificationFailed')}</h3>
+                    <p className="text-muted-foreground mb-6 max-w-md">{t('payment.success.contactSupport')}</p>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </CardContent>
         <CardFooter className="flex justify-center">
-          <Button
-            onClick={() => navigate('/dashboard')}
-            disabled={isLoading}
-            className="px-8"
-          >
-            Zum Dashboard
+          <Button onClick={() => navigate('/dashboard')}>
+            {t('payment.success.backToDashboard')}
           </Button>
         </CardFooter>
       </Card>

@@ -1,0 +1,6 @@
+{
+  "status": "healthy",
+  "service": "hackthestudy-frontend",
+  "version": "1.0.0",
+  "http_port": 8080
+} 

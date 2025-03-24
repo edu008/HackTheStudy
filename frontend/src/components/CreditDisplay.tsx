@@ -22,19 +22,16 @@ export default function CreditDisplay() {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('exammaster_token');
-      if (!token) {
-        setCredits(0);
-        setIsLoading(false);
-        return;
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
       
       const response = await axios.get(
-        `${PAYMENT_API_URL}/api/payment/get-credits`,
-        { 
-          withCredentials: true,
-          headers: { 
-            Authorization: `Bearer ${token}`
-          }
+        `${API_URL}/api/v1/payment/get-credits`,
+        {
+          headers,
+          withCredentials: true
         }
       );
       setCredits(response.data.credits);

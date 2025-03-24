@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, GraduationCap, RefreshCw, AlertCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GraduationCap, RefreshCw, AlertCircle, Loader2, Coins } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface Flashcard {
   id: string;
@@ -9,20 +10,30 @@ interface Flashcard {
   answer: string;
 }
 
+interface TokenInfo {
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
+
 interface FlashcardGeneratorProps {
   flashcards?: Flashcard[];
   onGenerateMore?: () => void;
   isGenerating?: boolean;
+  tokenInfo?: TokenInfo;
 }
 
 const FlashcardGenerator = ({ 
   flashcards = [], 
   onGenerateMore,
-  isGenerating = false
+  isGenerating = false,
+  tokenInfo
 }: FlashcardGeneratorProps) => {
   const [cards, setCards] = useState<Flashcard[]>(flashcards);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const { t } = useTranslation();
 
   useEffect(() => {
     // Reset wenn keine Flashcards vorhanden sind
@@ -42,14 +53,50 @@ const FlashcardGenerator = ({
         // Jump to the first new card (index is zero-based)
         setCurrentCardIndex(currentCount);
         setIsFlipped(false);
+        
+        // Scroll Effekt hinzufügen, um die neue Karte zu markieren
+        setTimeout(() => {
+          const cardIndicators = document.querySelectorAll('.card-indicator');
+          if (cardIndicators && cardIndicators[currentCount]) {
+            cardIndicators[currentCount].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Visuellen Effekt hinzufügen, um die neue Karte hervorzuheben
+            const indicator = cardIndicators[currentCount] as HTMLElement;
+            if (indicator) {
+              indicator.classList.add('pulse-animation');
+              setTimeout(() => {
+                indicator.classList.remove('pulse-animation');
+              }, 2000);
+            }
+          }
+        }, 300);
       } else {
         // Initial load or complete replacement
         setCards(flashcards);
-        setCurrentCardIndex(0);
+        
+        // Behalte den aktuellen Index bei, falls es nicht die erste Ladung ist
+        // und der aktuelle Index noch gültig ist
+        if (cards.length > 0 && currentCardIndex < flashcards.length) {
+          // Behalte den aktuellen Index
+        } else {
+          // Zurück zur ersten Karte
+          setCurrentCardIndex(0);
+        }
         setIsFlipped(false);
       }
     }
   }, [flashcards]);
+
+  // Scrolle zur aktuellen Karte, wenn sich der Index ändert
+  useEffect(() => {
+    // Scrolle zur aktuellen Karte
+    setTimeout(() => {
+      const cardIndicators = document.querySelectorAll('.card-indicator');
+      if (cardIndicators && cardIndicators[currentCardIndex]) {
+        cardIndicators[currentCardIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  }, [currentCardIndex]);
 
   const handleNext = () => {
     if (currentCardIndex < cards.length - 1) {
@@ -76,71 +123,58 @@ const FlashcardGenerator = ({
   };
   
   return (
-    <section id="flashcards" className="section-container bg-secondary/30">
-      <div className="max-w-4xl mx-auto">
+    <section className="py-14 md:py-20 bg-white">
+      <div className="container mx-auto">
         <div className="text-center mb-12 space-y-4">
           <h2 className="text-3xl md:text-4xl font-bold animate-fade-in">
-            KI-generierte Karteikarten
+            <GraduationCap className="inline-block mr-2 h-8 w-8 text-blue-500" />
+            {t('flashcards.title')}
           </h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto animate-fade-in">
-            Aus deinen Prüfungen erstellt unsere KI optimal strukturierte Karteikarten, die dir beim Lernen helfen.
+            {t('flashcards.description')}
           </p>
         </div>
         
-        <div className="flex flex-col md:flex-row gap-8 items-center">
-          <div className="flex-1 w-full">
+        <div className="flex flex-col md:flex-row gap-6">
+          <div className="flex-1 md:max-w-4xl">
             {cards.length > 0 ? (
               <>
-                <div className="relative mx-auto max-w-md perspective-1000">
+                <div className="relative mb-6 h-[300px] sm:h-[400px] perspective-1000 flex flex-col">
                   <div 
-                    className={`card-container relative w-full h-[320px] transition-transform duration-700 ${
+                    className={`relative w-full h-full rounded-xl border border-border/50 shadow-soft bg-background flex items-center justify-center backface-hidden transform-style-3d transition-all duration-700 cursor-pointer ${
                       isFlipped ? 'rotate-y-180' : ''
                     }`}
-                    style={{ transformStyle: 'preserve-3d' }}
                     onClick={handleFlip}
                   >
-                    {/* Front */}
-                    <Card className={`absolute inset-0 rounded-xl shadow-medium p-6 border border-border/50 flex flex-col justify-between transition-all backface-hidden ${
-                      isFlipped ? 'opacity-0' : 'opacity-100'
-                    }`}>
-                      <div className="flex justify-center mb-6">
-                        <div className="px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-sm text-primary flex items-center gap-1">
-                          <GraduationCap className="h-3.5 w-3.5" />
-                          <span>Frage {currentCardIndex + 1} von {cards.length}</span>
-                        </div>
+                    {/* Vorderseite */}
+                    <div className={`absolute inset-0 p-8 flex flex-col space-y-4 items-center backface-hidden ${isFlipped ? 'invisible' : ''}`}>
+                      <span className="text-xs text-muted-foreground uppercase tracking-widest font-medium">
+                        {t('flashcards.front')}
+                      </span>
+                      <div className="text-lg sm:text-xl text-center max-w-2xl">
+                        {cards[currentCardIndex]?.question}
                       </div>
-                      <div className="flex-1 flex items-center justify-center">
-                        <h3 className="text-xl font-medium text-center">
-                          {cards[currentCardIndex]?.question.replace(/\*\*/g, '')}
-                        </h3>
+                      <div className="absolute bottom-4 text-xs text-muted-foreground">
+                        {t('flashcards.clickToFlip')}
                       </div>
-                      <div className="text-sm text-muted-foreground text-center">
-                        Klicken zum Umdrehen
-                      </div>
-                    </Card>
+                    </div>
                     
-                    {/* Back */}
-                    <Card className={`absolute inset-0 rounded-xl shadow-medium p-6 border border-border/50 flex flex-col justify-between transition-all backface-hidden rotate-y-180 ${
-                      isFlipped ? 'opacity-100' : 'opacity-0'
-                    }`}>
-                      <div className="flex justify-center mb-4">
-                        <div className="px-3 py-1 rounded-full border border-green-500/20 bg-green-500/5 text-sm text-green-600 dark:text-green-400">
-                          Antwort
-                        </div>
+                    {/* Rückseite */}
+                    <div className={`absolute inset-0 p-8 flex flex-col space-y-4 items-center backface-hidden rotate-y-180 ${!isFlipped ? 'invisible' : ''}`}>
+                      <span className="text-xs text-muted-foreground uppercase tracking-widest font-medium">
+                        {t('flashcards.back')}
+                      </span>
+                      <div className="text-lg sm:text-xl text-center max-w-2xl">
+                        {cards[currentCardIndex]?.answer}
                       </div>
-                      <div className="flex-1 flex items-center justify-center">
-                        <p className="text-center">
-                          {cards[currentCardIndex]?.answer.replace(/\*\*/g, '')}
-                        </p>
+                      <div className="absolute bottom-4 text-xs text-muted-foreground">
+                        {t('flashcards.clickToFlip')}
                       </div>
-                      <div className="text-sm text-muted-foreground text-center">
-                        Klicken zum Umdrehen
-                      </div>
-                    </Card>
+                    </div>
                   </div>
                 </div>
                 
-                <div className="flex justify-between mt-6 max-w-md mx-auto">
+                <div className="flex items-center justify-center space-x-4 mb-8">
                   <Button
                     variant="outline"
                     size="icon"
@@ -150,11 +184,11 @@ const FlashcardGenerator = ({
                     <ChevronLeft className="h-5 w-5" />
                   </Button>
                   
-                  <div className="flex space-x-1 overflow-x-auto">
+                  <div className="flex items-center space-x-1.5 max-w-[250px] overflow-x-auto py-2 px-4 hide-scrollbar">
                     {cards.map((_, index) => (
                       <div 
                         key={index}
-                        className={`w-2 h-2 rounded-full transition-all ${
+                        className={`card-indicator w-2 h-2 rounded-full transition-all ${
                           index === currentCardIndex 
                             ? 'bg-primary w-4' 
                             : 'bg-primary/30'
@@ -175,7 +209,7 @@ const FlashcardGenerator = ({
               </>
             ) : (
               <div className="text-center text-muted-foreground">
-                Keine Karteikarten verfügbar. Lade eine Datei hoch, um welche zu generieren.
+                {t('flashcards.noCardsAvailable')}
               </div>
             )}
           </div>
@@ -185,18 +219,36 @@ const FlashcardGenerator = ({
               <CardContent className="pt-6">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Gesamt</span>
-                    <span className="text-sm">{cards.length} Karten</span>
+                    <span className="text-sm font-medium">{t('flashcards.total')}</span>
+                    <span className="text-sm">{cards.length} {t('flashcards.cards')}</span>
                   </div>
+                  
+                  {tokenInfo && (
+                    <div className="border-t pt-3 mt-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <Coins className="h-3.5 w-3.5 text-amber-500" />
+                          <span className="text-xs font-medium">{t('flashcards.tokenUsage')}</span>
+                        </div>
+                        <span className="text-xs font-medium text-amber-600">{tokenInfo.cost} Credits</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                        <span className="text-xs text-muted-foreground">{t('flashcards.input')}:</span>
+                        <span className="text-xs text-right">{tokenInfo.inputTokens}</span>
+                        <span className="text-xs text-muted-foreground">{t('flashcards.output')}:</span>
+                        <span className="text-xs text-right">{tokenInfo.outputTokens}</span>
+                      </div>
+                    </div>
+                  )}
                   
                   {cards.length === 0 && (
                     <div className="p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg mt-4">
                       <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
                         <AlertCircle className="h-4 w-4" />
-                        <span className="text-xs font-medium">Keine Karteikarten verfügbar</span>
+                        <span className="text-xs font-medium">{t('flashcards.noCardsAvailable')}</span>
                       </div>
                       <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                        Lade zuerst eine Prüfung hoch, um Karteikarten zu generieren.
+                        {t('flashcards.uploadFirst')}
                       </p>
                     </div>
                   )}
@@ -208,10 +260,10 @@ const FlashcardGenerator = ({
                     {isGenerating ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Generiere...
+                        {t('flashcards.generating')}
                       </>
                     ) : (
-                      "Mehr generieren"
+                      t('flashcards.generateMore')
                     )}
                   </Button>
                 </div>
@@ -220,6 +272,21 @@ const FlashcardGenerator = ({
           </div>
         </div>
       </div>
+      
+      {/* CSS für die Animation */}
+      <style>
+        {`
+        @keyframes pulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.5); }
+          100% { transform: scale(1); }
+        }
+        
+        .pulse-animation {
+          animation: pulse 0.5s ease-in-out 3;
+        }
+        `}
+      </style>
     </section>
   );
 };

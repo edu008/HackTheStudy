@@ -8,7 +8,6 @@ import { AuthProvider } from "./contexts/AuthContext";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Dashboard from "./pages/Dashboard";
-import SignIn from "./pages/SignIn";
 import PaymentPage from "./pages/PaymentPage";
 import PaymentSuccessPage from "./pages/PaymentSuccess";
 import AuthCallback from "./pages/AuthCallback";
@@ -21,7 +20,7 @@ const FlashcardsPage = () => {
   const { user } = useAuth();
   
   if (!user) {
-    return <Navigate to="/signin" />;
+    return <Navigate to="/" />;
   }
   
   // Use useEffect to handle the navigation with window.location
@@ -37,7 +36,7 @@ const TestSimulatorPage = () => {
   const { user } = useAuth();
   
   if (!user) {
-    return <Navigate to="/signin" />;
+    return <Navigate to="/" />;
   }
   
   // Use useEffect to handle the navigation with window.location
@@ -62,7 +61,6 @@ const App = () => {
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/signin" element={<SignIn />} />
               <Route path="/payment" element={<PaymentPage />} />
               <Route path="/payment/success" element={<PaymentSuccessPage />} />
               <Route path="/payment/cancel" element={<PaymentPage />} />

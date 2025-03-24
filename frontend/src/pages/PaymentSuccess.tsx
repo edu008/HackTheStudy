@@ -5,21 +5,23 @@ import { useEffect } from 'react';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import PaymentSuccessComponent from '@/components/PaymentSuccess';
+import { useTranslation } from 'react-i18next';
 
 const PaymentSuccessPage = () => {
   const { user, isLoading } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (!isLoading && !user) {
-      navigate('/signin');
+      navigate('/');
     }
   }, [user, isLoading, navigate]);
 
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="animate-pulse text-lg">Laden...</div>
+        <div className="animate-pulse text-lg">{t('common.loading')}</div>
       </div>
     );
   }

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { FcGoogle } from "react-icons/fc";
 import { Github, ArrowLeft, ArrowUp } from "lucide-react";
+import { useTranslation } from 'react-i18next';
 
 interface LoginSectionProps {
   onBackClick: () => void;
@@ -10,14 +11,16 @@ interface LoginSectionProps {
 }
 
 const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
+  const { t } = useTranslation();
+  
   return (
     <div className="container mx-auto px-6">
       <div className="max-w-md mx-auto transform transition-all duration-500">
         <Card className="shadow-lg border-blue-100 bg-white">
           <CardHeader className="text-center">
-            <CardTitle className="text-gray-800">Jetzt loslegen</CardTitle>
+            <CardTitle className="text-gray-800">{t('landing.login.title')}</CardTitle>
             <CardDescription className="text-gray-600">
-              Melde dich an, um alle Funktionen zu nutzen
+              {t('landing.login.description')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -27,7 +30,7 @@ const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
               onClick={() => onSignIn('google')}
             >
               <FcGoogle className="mr-2 h-4 w-4" />
-              Mit Google anmelden
+              {t('landing.login.googleButton')}
             </Button>
             <Button 
               variant="outline" 
@@ -35,10 +38,10 @@ const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
               onClick={() => onSignIn('github')}
             >
               <Github className="mr-2 h-4 w-4" />
-              Mit GitHub anmelden
+              {t('landing.login.githubButton')}
             </Button>
             <p className="text-xs text-center text-gray-500 mt-2">
-              Hinweis: Für die echte OAuth-Authentifizierung muss der Backend-Server laufen.
+              {t('landing.login.note')}
             </p>
           </CardContent>
           <CardFooter className="flex justify-center">
@@ -48,7 +51,7 @@ const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
               className="flex items-center text-blue-600 hover:bg-blue-50 gap-2"
             >
               <ArrowUp className="h-4 w-4" />
-              Zurück zur Startseite
+              {t('landing.login.backButton')}
             </Button>
           </CardFooter>
         </Card>

@@ -1,6 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, ArrowRight, ArrowUp, Upload, Brain, BookOpen, FlaskConical, GraduationCap, CheckCircle } from "lucide-react";
+import { useTranslation } from 'react-i18next';
 
 interface AboutSectionProps {
   onStartClick: () => void;
@@ -8,40 +9,42 @@ interface AboutSectionProps {
 }
 
 const AboutSection = ({ onStartClick, onBackClick }: AboutSectionProps) => {
+  const { t } = useTranslation();
+  
   const features = [
     {
       icon: Upload,
-      title: "Unterlagen hochladen",
-      description: "Lade deine Skripte, Vorlesungsnotizen oder Lehrbücher hoch. Unsere KI verarbeitet verschiedene Formate und extrahiert die wichtigsten Informationen."
+      titleKey: "landing.about.features.upload.title",
+      descriptionKey: "landing.about.features.upload.description"
     },
     {
       icon: Brain,
-      title: "KI-Analyse",
-      description: "Unsere fortschrittliche KI analysiert deine Unterlagen, identifiziert Schlüsselkonzepte und erstellt ein Konzeptnetzwerk für besseres Verständnis."
+      titleKey: "landing.about.features.analysis.title",
+      descriptionKey: "landing.about.features.analysis.description"
     },
     {
       icon: BookOpen,
-      title: "Lernmaterialien generieren",
-      description: "Mit nur einem Klick erstellst du personalisierte Karteikarten und Testfragen zu den wichtigsten Themen deiner Unterlagen."
+      titleKey: "landing.about.features.generate.title",
+      descriptionKey: "landing.about.features.generate.description"
     },
     {
       icon: FlaskConical,
-      title: "Wissen testen",
-      description: "Nutze den Testmodus, um dein Wissen zu überprüfen und Wissenslücken zu identifizieren, mit automatischer Anpassung an deine Fortschritte."
+      titleKey: "landing.about.features.test.title",
+      descriptionKey: "landing.about.features.test.description"
     },
     {
       icon: GraduationCap,
-      title: "Kontinuierliches Lernen",
-      description: "Generiere zusätzliche Karteikarten oder Testfragen zu den Themen, die dir noch Schwierigkeiten bereiten, und vertiefe dein Verständnis."
+      titleKey: "landing.about.features.learn.title",
+      descriptionKey: "landing.about.features.learn.description"
     }
   ];
 
   return (
     <div className="container mx-auto px-6">
       <div className="text-center max-w-3xl mx-auto mb-16">
-        <h2 className="text-3xl md:text-4xl font-bold mb-4 text-gray-800">Wie HackTheStudy funktioniert</h2>
+        <h2 className="text-3xl md:text-4xl font-bold mb-4 text-gray-800">{t('landing.about.title')}</h2>
         <p className="text-lg text-gray-600">
-          Revolutioniere dein Lernen in wenigen einfachen Schritten und erreiche mehr mit weniger Aufwand.
+          {t('landing.about.subtitle')}
         </p>
       </div>
       
@@ -59,16 +62,16 @@ const AboutSection = ({ onStartClick, onBackClick }: AboutSectionProps) => {
                 </div>
                 
                 <h3 className="text-xl font-semibold text-gray-800">
-                  {feature.title}
+                  {t(feature.titleKey)}
                 </h3>
                 
                 <p className="text-gray-600 text-sm">
-                  {feature.description}
+                  {t(feature.descriptionKey)}
                 </p>
                 
                 <div className="pt-2">
                   <div className="text-xs font-medium text-blue-500 flex items-center">
-                    <CheckCircle className="h-3 w-3 mr-1" /> Enthalten in allen Plänen
+                    <CheckCircle className="h-3 w-3 mr-1" /> {t('landing.about.included')}
                   </div>
                 </div>
               </CardContent>
@@ -79,32 +82,18 @@ const AboutSection = ({ onStartClick, onBackClick }: AboutSectionProps) => {
       
       {/* CTA Section */}
       <div className="mt-20 text-center">
-        <div className="max-w-2xl mx-auto p-8 rounded-xl bg-blue-50 border border-blue-100">
-          <h3 className="text-2xl font-bold mb-4 text-gray-800">Bereit, dein Lernen zu revolutionieren?</h3>
-          <p className="text-gray-600 mb-8">
-            Melde dich noch heute an und beginne mit einer effektiveren Lernmethode.
-          </p>
+        <h3 className="text-2xl md:text-3xl font-bold mb-8 text-gray-800">{t('landing.about.cta.title')}</h3>
+        
+        <div className="flex flex-col sm:flex-row justify-center gap-6">
+          <Button onClick={onBackClick} variant="outline" className="px-8 py-6 rounded-full">
+            <ArrowUp className="mr-2 h-5 w-5" />
+            {t('landing.about.cta.back')}
+          </Button>
           
-          <div className="flex flex-wrap justify-center gap-4">
-            <Button 
-              size="lg" 
-              className="rounded-full px-6 py-6 bg-blue-500 hover:bg-blue-600 transition-all duration-300 shadow-md hover:shadow-lg border-0"
-              onClick={onStartClick}
-            >
-              Jetzt anmelden und loslegen
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-            
-            <Button 
-              variant="outline" 
-              size="lg" 
-              className="rounded-full px-6 py-6 border-2 border-blue-200 text-blue-600 hover:bg-blue-50 transition-all duration-300 gap-2"
-              onClick={onBackClick}
-            >
-              <ArrowUp className="h-4 w-4" />
-              Zurück zur Startseite
-            </Button>
-          </div>
+          <Button onClick={onStartClick} className="px-8 py-6 rounded-full bg-blue-500 hover:bg-blue-600">
+            {t('landing.about.cta.start')}
+            <ArrowRight className="ml-2 h-5 w-5" />
+          </Button>
         </div>
       </div>
     </div>

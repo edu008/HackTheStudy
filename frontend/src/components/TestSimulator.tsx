@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { CheckCircle, XCircle, Loader2, AlertCircle } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, AlertCircle, Coins, RefreshCw, Check, X } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from 'react-i18next';
 
 interface Question {
   id?: string;
@@ -15,52 +16,109 @@ interface Question {
   explanation?: string;
 }
 
+interface TokenInfo {
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
+
 interface TestSimulatorProps {
   questions?: Question[];
   onGenerateMore?: () => void;
   isGenerating?: boolean;
+  tokenInfo?: TokenInfo;
 }
 
 const TestSimulator = ({
   questions: providedQuestions = [],
   onGenerateMore,
-  isGenerating = false
+  isGenerating = false,
+  tokenInfo
 }: TestSimulatorProps) => {
   const { toast } = useToast();
+  const { t } = useTranslation();
   
   // Main state
   const [processedQuestions, setProcessedQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answeredQuestions, setAnsweredQuestions] = useState<Record<string, number>>({});
   const [selectedOption, setSelectedOption] = useState<string | undefined>(undefined);
+  const [previousQuestionsLength, setPreviousQuestionsLength] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [totalQuestions, setTotalQuestions] = useState(0);
+  const [score, setScore] = useState({ correct: 0, total: 0 });
   
   // Current question
   const currentQuestion = processedQuestions[currentIndex] || null;
   
-  // Process provided questions when they change
+  // Vollständig initial laden
   useEffect(() => {
-    // Reset wenn keine Fragen vorhanden sind
-    if (providedQuestions.length === 0) {
-      setProcessedQuestions([]);
-      setCurrentIndex(0);
-      setAnsweredQuestions({});
-      setSelectedOption(undefined);
-      return;
-    }
+    // Beim ersten Laden einen längeren Ladebildschirm zeigen
+    setIsLoading(true);
     
-    // Wenn Fragen vorhanden sind, verarbeite diese
-    const processedQuestions = providedQuestions.map(q => ({
-      ...q,
-      correct: undefined
-    }));
+    // Verzögertes setzen der Fragen, um sicherzustellen, dass
+    // wir nie die falschen Werte anzeigen
+    const timer = setTimeout(() => {
+      // Reset wenn keine Fragen vorhanden sind
+      if (providedQuestions.length === 0) {
+        setProcessedQuestions([]);
+        setCurrentIndex(0);
+        setAnsweredQuestions({});
+        setSelectedOption(undefined);
+        setPreviousQuestionsLength(0);
+        setTotalQuestions(0); // Explizit auf 0 setzen
+        setIsLoading(false);
+        return;
+      }
+      
+      // Wenn Fragen vorhanden sind, verarbeite diese
+      const processedQuestions = providedQuestions.map(q => ({
+        ...q,
+        correct: undefined
+      }));
+      
+      // Prüfe, ob neue Fragen hinzugefügt wurden
+      if (previousQuestionsLength > 0 && providedQuestions.length > previousQuestionsLength) {
+        // Neue Fragen wurden hinzugefügt, setze den Index auf die erste neue Frage
+        setProcessedQuestions(processedQuestions);
+        setCurrentIndex(previousQuestionsLength);
+        
+        console.log(`Neue Testfragen erkannt: ${previousQuestionsLength} -> ${providedQuestions.length}`);
+      } else {
+        // Initiale Ladung oder vollständiger Ersatz, aber behalte den aktuellen Index, wenn möglich
+        setProcessedQuestions(processedQuestions);
+        
+        // Wenn es bereits Fragen gab und der aktuelle Index noch gültig ist
+        if (previousQuestionsLength > 0 && currentIndex < processedQuestions.length) {
+          // Index beibehalten
+        } else {
+          // Zurück zur ersten Frage
+          setCurrentIndex(0);
+        }
+      }
+      
+      // Aktualisiere die Länge für den nächsten Vergleich
+      setPreviousQuestionsLength(providedQuestions.length);
+      
+      // Verzögertes Setzen der totalQuestions NACH allen anderen Updates
+      setTimeout(() => {
+        // Setze totalQuestions explizit auf die Länge der providedQuestions
+        setTotalQuestions(providedQuestions.length);
+        
+        // Zum Schluss loading auf false setzen
+        setIsLoading(false);
+        
+        // Nach dem Laden zu den Fragen scrollen, falls neue hinzugefügt wurden
+        if (previousQuestionsLength > 0 && providedQuestions.length > previousQuestionsLength) {
+          setTimeout(() => {
+            document.getElementById('simulator')?.scrollIntoView({ behavior: 'smooth' });
+          }, 100);
+        }
+      }, 200); // Extra Verzögerung für die totalQuestions
+      
+    }, 500); // Erhöhte Verzögerung, um sicherzustellen, dass alle Daten verarbeitet sind
     
-    setProcessedQuestions(processedQuestions);
-    
-    // Create a new object with question IDs as keys
-    const questionsWithIds = processedQuestions.reduce((acc, curr) => {
-      acc[curr.id] = curr;
-      return acc;
-    }, {});
+    return () => clearTimeout(timer);
   }, [providedQuestions]);
   
   // Reset selected option when changing questions
@@ -87,7 +145,7 @@ const TestSimulator = ({
   
   // Navigate to next question
   const handleNext = () => {
-    if (currentIndex < processedQuestions.length - 1) {
+    if (currentIndex < totalQuestions - 1) {
       setCurrentIndex(currentIndex + 1);
     }
   };
@@ -138,152 +196,198 @@ const TestSimulator = ({
                                    answeredQuestions[currentQuestion.id!] !== undefined;
   
   return (
-    <section id="simulator" className="section-container">
-      <div className="max-w-4xl mx-auto">
-        <Card className="border border-border/50 shadow-soft overflow-hidden animate-slide-up">
-          <CardHeader className="pb-4 border-b bg-secondary/30">
-            <div className="flex justify-between items-center">
-              <CardTitle>Prüfungssimulation</CardTitle>
-              <div className="text-sm text-muted-foreground">
-                Frage {currentIndex + 1} von {processedQuestions.length}
-                {processedQuestions.length > 0 && (
-                  <span className="ml-2 text-xs">
-                  </span>
-                )}
-              </div>
-            </div>
+    <section className="py-14 md:py-20 bg-slate-50">
+      <div className="container mx-auto max-w-5xl">
+        <div className="text-center mb-12 space-y-4">
+          <h2 className="text-3xl md:text-4xl font-bold">
+            {t('tests.title')}
+          </h2>
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            {t('tests.description')}
+          </p>
+        </div>
+        
+        <Card className="border border-border/50 shadow-soft mb-4">
+          <CardHeader className="bg-secondary/30">
+            <CardTitle className="flex justify-between items-center">
+              {processedQuestions.length > 0 ? (
+                <div className="flex items-center">
+                  <span>{t('tests.question')} {currentIndex + 1}/{totalQuestions}</span>
+                </div>
+              ) : (
+                <span>{t('tests.title')}</span>
+              )}
+              
+              {processedQuestions.length > 0 && (
+                <div className="text-base">
+                  {score.total > 0 ? (
+                    <span className="text-muted-foreground">
+                      {t('tests.score')}: <span className="font-semibold">{score.correct}/{score.total}</span>
+                    </span>
+                  ) : null}
+                </div>
+              )}
+            </CardTitle>
+            {processedQuestions.length > 0 && (
+              <CardDescription>
+                {t('tests.selectAnswer')}
+              </CardDescription>
+            )}
           </CardHeader>
 
           <CardContent className="p-6">
             {currentQuestion ? (
               <div className="space-y-6">
-                <h3 className="text-xl font-medium mb-6">{currentQuestion.text.replace(/\*\*/g, '')}</h3>
+                <div className="text-xl font-medium">{currentQuestion.text}</div>
                 
-                <RadioGroup
-                  key={`question-${currentQuestion.id}-${isCurrentQuestionAnswered}`}
-                  value={selectedOption}
-                  onValueChange={handleAnswerSelect}
-                  className="space-y-4"
-                  disabled={isCurrentQuestionAnswered}
-                >
-                  {currentQuestion.options.map((option, index) => {
-                    const optionId = `question-${currentQuestion.id}-option-${index}`;
-                    const isSelected = isCurrentQuestionAnswered && 
-                                      answeredQuestions[currentQuestion.id!] === index;
-                    const correctAnswerIndex = getCorrectAnswerIndex(currentQuestion);
-                    const isCorrect = correctAnswerIndex === index;
-                    
-                    let optionClass = "flex items-start space-x-3 p-3 rounded-lg border transition-all ";
-                    
-                    if (isCurrentQuestionAnswered) {
-                      if (isSelected && isCorrect) {
-                        optionClass += "border-green-500 bg-green-50 dark:bg-green-950/20";
-                      } else if (isSelected) {
-                        optionClass += "border-red-500 bg-red-50 dark:bg-red-950/20";
-                      } else if (isCorrect) {
-                        optionClass += "border-green-500/50 bg-green-50/50 dark:bg-green-950/10";
-                      } else {
-                        optionClass += "border-border";
-                      }
-                    } else {
-                      optionClass += "border-border hover:border-primary/30 hover:bg-secondary/50";
-                    }
-                    
-                    return (
-                      <div key={optionId} className={optionClass}>
-                        <RadioGroupItem
-                          value={index.toString()}
-                          id={optionId}
-                          className="mt-1"
-                        />
-                        <div className="flex-1 flex justify-between">
-                          <Label
-                            htmlFor={optionId}
-                            className="cursor-pointer"
-                          >
-                            {option.replace(/\*\*/g, '')}
-                          </Label>
-                          {isCurrentQuestionAnswered && (
-                            <div className="flex items-center">
-                              {isCorrect ? (
-                                <CheckCircle className="h-5 w-5 text-green-500" />
-                              ) : isSelected ? (
-                                <XCircle className="h-5 w-5 text-red-500" />
-                              ) : null}
-                            </div>
+                <div className="space-y-3">
+                  {currentQuestion.options.map((option, index) => (
+                    <div 
+                      key={index}
+                      className={`p-4 rounded-lg border cursor-pointer transition-all ${
+                        selectedOption === index 
+                          ? 'border-primary bg-primary/5' 
+                          : 'border-border hover:border-primary/40 hover:bg-secondary/50'
+                      } ${
+                        isCurrentQuestionAnswered && index === getCorrectAnswerIndex(currentQuestion)
+                          ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                          : isCurrentQuestionAnswered && selectedOption === index && index !== getCorrectAnswerIndex(currentQuestion)
+                          ? 'border-red-500 bg-red-50 dark:bg-red-900/20'
+                          : ''
+                      }`}
+                      onClick={() => !isCurrentQuestionAnswered && handleAnswerSelect(index.toString())}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`flex items-center justify-center h-6 w-6 rounded-full shrink-0 text-sm ${
+                          selectedOption === index ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'
+                        } ${
+                          isCurrentQuestionAnswered && index === getCorrectAnswerIndex(currentQuestion)
+                            ? 'bg-green-500 text-white'
+                            : isCurrentQuestionAnswered && selectedOption === index && index !== getCorrectAnswerIndex(currentQuestion)
+                            ? 'bg-red-500 text-white'
+                            : ''
+                        }`}>
+                          {isCurrentQuestionAnswered && index === getCorrectAnswerIndex(currentQuestion) ? (
+                            <Check className="h-3 w-3" />
+                          ) : isCurrentQuestionAnswered && selectedOption === index && index !== getCorrectAnswerIndex(currentQuestion) ? (
+                            <X className="h-3 w-3" />
+                          ) : (
+                            String.fromCharCode(65 + index)
                           )}
                         </div>
+                        <div>{option}</div>
                       </div>
-                    );
-                  })}
-                </RadioGroup>
+                    </div>
+                  ))}
+                </div>
                 
-                {isCurrentQuestionAnswered && (
-                  <div className="mt-6 p-4 bg-secondary/50 rounded-lg">
-                    <p className="font-medium">Erklärung:</p>
-                    <p className="text-muted-foreground">
-                      {currentQuestion.explanation || 
-                       `Die richtige Antwort ist ${currentQuestion.options[getCorrectAnswerIndex(currentQuestion)].replace(/\*\*/g, '')}.`}
-                    </p>
+                {isCurrentQuestionAnswered && currentQuestion.explanation && (
+                  <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
+                    <div className="font-medium text-blue-800 dark:text-blue-300 mb-1">
+                      {t('tests.explanation')}:
+                    </div>
+                    <div className="text-blue-800 dark:text-blue-300">
+                      {currentQuestion.explanation}
+                    </div>
                   </div>
                 )}
               </div>
             ) : (
-              <div className="p-8 text-center">
-                <AlertCircle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
-                <h3 className="text-xl font-medium mb-2">Keine Testfragen verfügbar</h3>
+              <div className="py-12 text-center">
+                <h3 className="text-xl font-semibold mb-2">
+                  {t('tests.noQuestionsAvailable')}
+                </h3>
                 <p className="text-muted-foreground">
-                  Lade zuerst eine Prüfung hoch, um Testfragen zu generieren.
+                  {t('tests.uploadFirst')}
                 </p>
               </div>
             )}
           </CardContent>
 
-          {currentQuestion && (
-            <CardFooter className="flex justify-between border-t bg-secondary/30 pt-4">
-              <Button
-                variant="outline"
-                onClick={handlePrevious}
-                disabled={currentIndex === 0}
-              >
-                Zurück
-              </Button>
-              
-              {isCurrentQuestionAnswered ? (
-                currentIndex === processedQuestions.length - 1 ? (
-                  <Button onClick={resetTest}>Test zurücksetzen</Button>
-                ) : (
-                  <Button onClick={handleNext}>Weiter zur nächsten Frage</Button>
-                )
-              ) : (
+          {currentQuestion ? (
+            <CardFooter className="flex justify-between items-center border-t bg-secondary/30 pt-4">
+              <div className="flex space-x-2">
                 <Button
-                  onClick={handleSubmit}
-                  disabled={selectedOption === undefined}
+                  variant="outline"
+                  onClick={handlePrevious}
+                  disabled={currentIndex === 0}
                 >
-                  Antwort prüfen
+                  {t('tests.previous')}
                 </Button>
-              )}
+                <Button
+                  variant="outline"
+                  onClick={handleNext}
+                  disabled={currentIndex === totalQuestions - 1}
+                >
+                  {t('tests.next')}
+                </Button>
+              </div>
+              
+              <div className="flex space-x-2">
+                {!isCurrentQuestionAnswered && (
+                  <Button 
+                    onClick={handleSubmit}
+                    disabled={selectedOption === undefined}
+                  >
+                    {t('tests.checkAnswer')}
+                  </Button>
+                )}
+                
+                <Button 
+                  onClick={handleGenerateMore}
+                  disabled={isGenerating}
+                  variant="outline"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {t('tests.generating')}
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      {t('tests.moreQuestions')}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardFooter>
+          ) : (
+            <CardFooter className="bg-secondary/30 pt-4">
+              <Button 
+                onClick={handleGenerateMore}
+                disabled={isGenerating}
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t('tests.generatingQuestions')}
+                  </>
+                ) : (
+                  t('tests.generateQuestions')
+                )}
+              </Button>
             </CardFooter>
           )}
         </Card>
-
-        <div className="mt-8 flex justify-center">
-          <Button
-            variant="outline"
-            onClick={handleGenerateMore}
-            disabled={isGenerating}
-            className="gap-2"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Generiere neue Fragen...
-              </>
-            ) : (
-              <>Mehr Testfragen generieren</>
-            )}
-          </Button>
-        </div>
+        
+        {tokenInfo && (
+          <div className="mt-4 p-4 bg-white dark:bg-gray-950 rounded-lg border border-border/50 shadow-soft">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <Coins className="h-4 w-4 text-amber-500" />
+                <span className="text-sm font-medium">{t('tests.tokenUsage')}</span>
+              </div>
+              <span className="text-sm font-medium text-amber-600">{tokenInfo.cost} Credits</span>
+            </div>
+            <div className="grid grid-cols-2 text-sm">
+              <span className="text-muted-foreground">{t('tests.input')}:</span>
+              <span className="text-right">{tokenInfo.inputTokens}</span>
+              <span className="text-muted-foreground">{t('tests.output')}:</span>
+              <span className="text-right">{tokenInfo.outputTokens}</span>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

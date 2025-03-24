@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 import uuid
+from datetime import datetime
 
 def generate_uuid():
     return str(uuid.uuid4())
@@ -14,6 +15,9 @@ class User(db.Model):
     oauth_provider = db.Column(db.String(50))
     oauth_id = db.Column(db.String(100))
     credits = db.Column(db.Integer, default=0)
+    
+    # Beziehung zu TokenUsage-Modell hinzufügen
+    token_usages = db.relationship('TokenUsage', back_populates='user')
 
 class Upload(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
@@ -90,3 +94,28 @@ class OAuthToken(db.Model):
     access_token = db.Column(db.Text, nullable=False)
     refresh_token = db.Column(db.Text)
     expires_at = db.Column(db.DateTime, nullable=False)
+
+# Das neue TokenUsage-Modell (ersetzt ApiTokenUsage)
+class TokenUsage(db.Model):
+    """
+    Speichert die Nutzung von API-Tokens für verschiedene Funktionen.
+    Trackt detailliert Token-Nutzung, Kosten und Cache-Status.
+    """
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=True)
+    session_id = db.Column(db.String(255), nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    model = db.Column(db.String(50), nullable=False)
+    input_tokens = db.Column(db.Integer, nullable=False)
+    output_tokens = db.Column(db.Integer, nullable=False)
+    cost = db.Column(db.Float, nullable=False)
+    endpoint = db.Column(db.String(100), nullable=True)
+    function_name = db.Column(db.String(100), nullable=True)
+    cached = db.Column(db.Boolean, default=False)
+    request_metadata = db.Column(db.JSON, nullable=True)
+    
+    # Beziehung zu User
+    user = db.relationship("User", back_populates="token_usages")
+    
+    def __repr__(self):
+        return f"<TokenUsage {self.id} user_id={self.user_id} tokens={self.input_tokens}+{self.output_tokens} cost={self.cost}>"

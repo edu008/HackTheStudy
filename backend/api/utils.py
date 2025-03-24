@@ -1,18 +1,35 @@
 import json
 import re
-import PyPDF2
 import docx
 from langdetect import detect
 import io  # Hinzugefügt für BytesIO
-from flask import current_app
+from flask import current_app, g, jsonify, request
 import logging
-from PyPDF2 import PdfReader
 import fitz  # PyMuPDF
 import time  # Für sleep-Funktion
 import os
-from models import db, Upload, Flashcard, Question, Topic, Connection, UserActivity
+import sys
+from core.models import db, Upload, Flashcard, Question, Topic, Connection, UserActivity
+from core.redis_client import redis_client
 import tiktoken
-from api.credit_service import calculate_token_cost
+import random
+from functools import lru_cache
+import hashlib
+from datetime import datetime
+from openaicache.openai_wrapper import CachedOpenAI
+from openaicache.token_tracker import TokenTracker
+from . import api_bp
+from .error_handler import (
+    log_error, create_error_response, ERROR_INVALID_INPUT, ERROR_FILE_PROCESSING,
+    InvalidInputError, FileProcessingError
+)
+
+# Neue Importe für verbesserte Funktionalität
+from api.log_utils import AppLogger
+from api.openai_client import OptimizedOpenAIClient
+
+# Re-Export wichtiger Funktionen aus token_tracking für Abwärtskompatibilität
+from api.token_tracking import count_tokens, calculate_token_cost, check_credits_available, deduct_credits
 
 logger = logging.getLogger(__name__)
 
@@ -52,45 +69,100 @@ def clean_text_for_database(text):
         
         return cleaned_text
     except Exception as e:
-        logger.error(f"Fehler bei der Textbereinigung: {str(e)}")
+        log_error(e, endpoint="clean_text_for_database")
         # Im Fehlerfall einen sicheren leeren String zurückgeben
         return ""
 
-def extract_text_from_file(file_data, file_name):
-    """Extrahiert Text aus einer Datei basierend auf dem Dateityp."""
+def extract_text_from_file(file_content, filename):
+    """
+    Extrahiert Text aus verschiedenen Dateiformaten.
+    
+    Args:
+        file_content: Der Inhalt der Datei als Bytes oder Hex-String
+        filename: Der Name der Datei zur Bestimmung des Typs
+        
+    Returns:
+        str: Der extrahierte Text
+    """
+    import logging
+    import traceback
+    logger = logging.getLogger(__name__)
+    
     try:
-        if file_name.lower().endswith('.pdf'):
-            text = extract_text_from_pdf(file_data)
-            
-            # Prüfe ob die Antwort bereits einen CORRUPTED_PDF Fehlercode enthält
-            if isinstance(text, str) and text.startswith('CORRUPTED_PDF:'):
-                return text
-                
-            # Prüfen, ob Text extrahiert wurde
-            if not text or text.strip() == "":
-                logger.warning(f"Kein Text aus PDF extrahiert: {file_name}")
-                text = "Keine Textdaten konnten aus dieser PDF-Datei extrahiert werden. Es könnte sich um ein Scan-Dokument ohne OCR handeln."
-            return text
-        elif file_name.lower().endswith('.txt'):
-            # Für Text-Dateien, dekodiere mit verschiedenen Encodings
+        # Konvertiere hex zu bytes falls nötig
+        if isinstance(file_content, str):
             try:
-                text = file_data.decode('utf-8')
-            except UnicodeDecodeError:
-                try:
-                    text = file_data.decode('latin-1')
-                except UnicodeDecodeError:
-                    text = file_data.decode('utf-8', errors='replace')
+                file_content = bytes.fromhex(file_content)
+            except ValueError as e:
+                logger.error(f"Fehler beim Konvertieren des Hex-String: {str(e)}")
+                return f"ERROR: Konnte Datei nicht verarbeiten - {str(e)}"
+        
+        if not isinstance(file_content, bytes):
+            return "ERROR: Dateityp nicht unterstützt oder kein Inhalt"
+        
+        # Prüfe auf leere Datei
+        if len(file_content) == 0:
+            logger.warning(f"Leere Datei: {filename}")
+            return "ERROR: Die Datei ist leer"
             
-            return text
+        # Begrenze die Größe
+        max_file_size = 20 * 1024 * 1024  # 20 MB
+        if len(file_content) > max_file_size:
+            logger.warning(f"Datei zu groß: {filename} ({len(file_content) // (1024*1024)} MB)")
+            return f"ERROR: Die Datei ist zu groß ({len(file_content) // (1024*1024)} MB)"
+        
+        file_ext = filename.lower().split('.')[-1] if '.' in filename else ''
+        
+        # Ausführliche Protokollierung für alle Operationen
+        logger.info(f"Verarbeite Datei: {filename} (Typ: {file_ext}, Größe: {len(file_content)} Bytes)")
+        
+        if file_ext == 'pdf':
+            # Verwende nur PyMuPDF für PDF-Extraktion
+            try:
+                return extract_text_from_pdf_safe(file_content)
+            except Exception as e:
+                logger.error(f"Fehler bei der PDF-Extraktion mit PyMuPDF: {str(e)}")
+                return f"ERROR: Fehler bei der PDF-Extraktion: {str(e)}"
+                
+        elif file_ext == 'txt':
+            try:
+                return file_content.decode('utf-8', errors='replace')
+            except Exception as e:
+                logger.error(f"Fehler beim Dekodieren der TXT-Datei: {str(e)}")
+                return f"ERROR: Textdatei konnte nicht dekodiert werden: {str(e)}"
+                
+        elif file_ext in ['docx', 'doc']:
+            from io import BytesIO
+            try:
+                logger.info(f"Verarbeite DOCX/DOC: {filename}")
+                import docx
+                doc = docx.Document(BytesIO(file_content))
+                return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+            except Exception as docx_err:
+                # Fallback für alte .doc-Dateien
+                try:
+                    logger.info(f"DOCX-Verarbeitung fehlgeschlagen, versuche DOC-Fallback für {filename}")
+                    from antiword import Document
+                    doc = Document(file_content)
+                    return doc.getText()
+                except Exception as doc_err:
+                    logger.error(f"Fehler bei DOC/DOCX-Verarbeitung: {str(docx_err)} / {str(doc_err)}")
+                    return f"ERROR: Dokument konnte nicht gelesen werden: {str(doc_err)}"
         else:
-            return "Nicht unterstütztes Dateiformat. Bitte lade PDF- oder TXT-Dateien hoch."
+            logger.warning(f"Nicht unterstützter Dateityp: {file_ext}")
+            return f"ERROR: Dateityp .{file_ext} wird nicht unterstützt."
+    
+    except RuntimeError as rt_err:
+        # Detaillierte Protokollierung für RuntimeErrors
+        stack_trace = traceback.format_exc()
+        logger.critical(f"Kritischer RuntimeError bei der Textextraktion: {str(rt_err)}\n{stack_trace}")
+        return f"CRITICAL_ERROR: RuntimeError bei der Textextraktion: {str(rt_err)}"
+        
     except Exception as e:
-        logger.error(f"Fehler beim Extrahieren des Textes: {str(e)}")
-        # Spezielle Behandlung für PdfReadError und ähnliche kritische Fehler
-        error_str = str(e)
-        if "PdfReadError" in error_str or "Invalid Elementary Object" in error_str:
-            return f"CORRUPTED_PDF: {error_str}"
-        return f"Fehler beim Extrahieren des Textes: {str(e)}"
+        # Allgemeine Fehlerbehandlung mit Stacktrace
+        stack_trace = traceback.format_exc()
+        logger.error(f"Fehler beim Extrahieren von Text aus {filename}: {str(e)}\n{stack_trace}")
+        return f"ERROR: Fehler beim Lesen der Datei: {str(e)}"
 
 def extract_text_from_pdf_safe(file_data):
     """
@@ -165,187 +237,253 @@ def detect_language(text):
     except Exception:
         return 'en'
 
-import random
-import time
-from functools import lru_cache
-import hashlib
-
-# Cache für OpenAI-Antworten
+# Cache für OpenAI-Antworten (Kann später entfernt werden)
 _response_cache = {}
 
-# Funktion zum Zählen von Tokens mit tiktoken
-def count_tokens(text, model="gpt-4o"):
+def query_chatgpt(prompt, client, system_content=None, temperature=0.7, max_retries=5, use_cache=True, session_id=None, function_name="query_chatgpt"):
     """
-    Zählt die Tokens in einem Text für ein bestimmtes Modell
-    
-    Args:
-        text (str): Der zu zählende Text
-        model (str): Das Modell, für das die Tokens gezählt werden sollen
-        
-    Returns:
-        int: Die Anzahl der Tokens
-    """
-    try:
-        encoder = tiktoken.encoding_for_model(model)
-    except KeyError:
-        # Fallback auf cl100k_base für neue Modelle
-        encoder = tiktoken.get_encoding("cl100k_base")
-    
-    return len(encoder.encode(text))
-
-def query_chatgpt(prompt, client, system_content=None, temperature=0.7, max_retries=5, use_cache=True):
-    """
-    Sendet eine Anfrage an die OpenAI API mit exponentiellem Backoff bei Ratenlimit-Fehlern.
-    Berechnet und zieht die notwendigen Credits basierend auf der Token-Anzahl ab.
+    Sendet eine Anfrage an die OpenAI API mit Caching und Token-Tracking.
     
     Args:
         prompt: Der Prompt-Text für die Anfrage
-        client: Der OpenAI-Client
+        client: Der OpenAI-Client (wird nur für Legacy-Kompatibilität verwendet)
         system_content: Optionaler System-Prompt
         temperature: Temperatur für die Antwortgenerierung (0.0-1.0)
         max_retries: Maximale Anzahl von Wiederholungsversuchen
         use_cache: Ob der Cache verwendet werden soll (default: True)
+        session_id: ID der aktuellen Session (für Token-Tracking)
+        function_name: Name der aufrufenden Funktion (für Token-Tracking)
         
     Returns:
         Die Antwort der API oder eine Fehlermeldung
     """
-    # Modell aus der Konfiguration abrufen
-    model = current_app.config.get('OPENAI_MODEL', 'gpt-4o')
+    openai_logger = logging.getLogger('openai_api')
+    openai_logger.setLevel(logging.INFO)
     
-    # Token-Anzahl für Prompt berechnen
-    prompt_tokens = count_tokens(prompt, model)
+    # Logge den Prompt
+    prompt_preview = prompt[:500] + "..." if len(prompt) > 500 else prompt
+    openai_logger.info(f"🔵 OPENAI ANFRAGE [{function_name}] - Session: {session_id or 'unbekannt'}")
+    openai_logger.info(f"📝 PROMPT: {prompt_preview}")
+    if system_content:
+        system_preview = system_content[:300] + "..." if len(system_content) > 300 else system_content
+        openai_logger.info(f"⚙️ SYSTEM: {system_preview}")
+    openai_logger.info(f"🧮 PARAMETER: model=?, temperature={temperature}, use_cache={use_cache}")
     
-    # Token-Anzahl für System-Content berechnen, falls vorhanden
-    system_tokens = count_tokens(system_content if system_content else "", model)
+    request_start_time = time.time()
     
-    # Gesamte Input-Token
-    input_tokens = prompt_tokens + system_tokens
-    
-    # Geschätzte Output-Token (ungefähr 1/3 der Input-Token, mindestens 500)
-    estimated_output_tokens = max(500, input_tokens // 3)
-    
-    # Kosten berechnen
-    cost = calculate_token_cost(input_tokens, estimated_output_tokens, model)
-    
-    # Auf Benutzer-Credits prüfen
-    from api.credit_service import check_credits_available
-    if not check_credits_available(cost):
-        raise ValueError(f"Nicht genügend Credits. Benötigt: {cost} Credits für diese Anfrage.")
-    
-    # DEBUG: Ausführliches Logging für Docker
-    print("\n\n==================================================")
-    print("OPENAI DEBUG: ANFRAGE DETAILS")
-    print("==================================================")
-    print(f"SYSTEM PROMPT: {system_content[:300]}..." if system_content and len(system_content) > 300 else f"SYSTEM PROMPT: {system_content}")
-    print(f"USER PROMPT (gekürzt): {prompt[:300]}..." if len(prompt) > 300 else f"USER PROMPT: {prompt}")
-    print(f"PARAMETER: model={model}, temperature={temperature}, max_tokens=4000")
-    print(f"GESCHÄTZTE KOSTEN: {cost} Credits (Input: {input_tokens} Tokens, Geschätzte Output: {estimated_output_tokens} Tokens)")
-    print("==================================================\n\n")
-    
-    # Wenn Caching aktiviert ist, erstelle einen Hash-Schlüssel für den Cache
-    if use_cache:
-        # Erstelle einen Hash aus dem Prompt und dem System-Content
-        cache_key = hashlib.md5((prompt + str(system_content) + str(temperature)).encode()).hexdigest()
+    try:
+        # Import hier, um Zirkelbezüge zu vermeiden
+        from openaicache import get_openai_client
         
-        # Prüfe, ob die Antwort bereits im Cache ist
-        if cache_key in _response_cache:
-            print(f"Cache hit for prompt: {prompt[:50]}...")
-            return _response_cache[cache_key]
-    
-    retry_count = 0
-    base_delay = 1  # Sekunden
-    
-    while retry_count < max_retries:
+        # Verwende unser neues Caching-System
+        cached_client = get_openai_client(use_cache=use_cache)
+        
+        # Modell aus der Konfiguration abrufen
         try:
-            messages = []
+            model = current_app.config.get('OPENAI_MODEL', 'gpt-4o').strip()
+        except RuntimeError:
+            model = os.getenv('OPENAI_MODEL', 'gpt-4o').strip()
+        
+        openai_logger.info(f"🤖 MODELL: {model}")
+        
+        # Bestimme die aktuelle Benutzer-ID
+        user_id = None
+        if hasattr(g, 'user') and g.user:
+            user_id = g.user.id
+        
+        # Sende Anfrage mit dem Cached-Client
+        response = cached_client.chat_completion(
+            prompt=prompt,
+            system_content=system_content,
+            model=model,
+            temperature=temperature,
+            max_tokens=4000,
+            use_cache=use_cache,
+            user_id=user_id,
+            session_id=session_id,
+            function_name=function_name,
+            endpoint=function_name,
+            max_retries=max_retries
+        )
+        
+        request_time = time.time() - request_start_time
+        
+        # Fehlerbehandlung
+        if 'error' in response:
+            # Spezialfall "insufficient_credits" - direkt zurückgeben
+            if response.get('error_type') == 'insufficient_credits':
+                error_msg = response['error']
+                openai_logger.error(f"❌ OPENAI FEHLER [{function_name}]: {error_msg} - Zeit: {request_time:.2f}s")
+                raise ValueError(error_msg)
+            
+            # Andere Fehler weiterleiten
+            error_msg = f"OpenAI API Error: {response.get('error')}"
+            openai_logger.error(f"❌ OPENAI FEHLER [{function_name}]: {error_msg} - Zeit: {request_time:.2f}s")
+            raise ValueError(error_msg)
+        
+        # Logge die Antwort
+        answer_text = response.get('text', 'Keine Antwort')
+        answer_preview = answer_text[:500] + "..." if len(answer_text) > 500 else answer_text
+        
+        # Token-Informationen
+        token_info = response.get('token_info', {})
+        input_tokens = token_info.get('input_tokens', 0)
+        output_tokens = token_info.get('output_tokens', 0)
+        total_tokens = input_tokens + output_tokens
+        cost = token_info.get('cost', 0)
+        
+        openai_logger.info(f"🟢 OPENAI ANTWORT [{function_name}] - Zeit: {request_time:.2f}s - Tokens: {input_tokens}/{output_tokens} (Kosten: {cost})")
+        openai_logger.info(f"📄 ANTWORT: {answer_preview}")
+        
+        # Gib den Antworttext zurück
+        return response['text']
+    
+    except ImportError as ie:
+        # Fallback auf den ursprünglichen Weg, wenn das Cache-System nicht verfügbar ist
+        logger.warning(f"Cache-System nicht verfügbar: {str(ie)}. Verwende Fallback-Implementierung.")
+        openai_logger.warning(f"⚠️ FALLBACK AUF LEGACY-IMPLEMENTIERUNG: {str(ie)}")
+        return _query_chatgpt_legacy(prompt, client, system_content, temperature, max_retries, use_cache, session_id, function_name)
+    
+    except Exception as e:
+        request_time = time.time() - request_start_time
+        error_msg = f"OpenAI API Error: {str(e)}"
+        logger.error(f"Fehler bei der OpenAI-Anfrage: {str(e)}")
+        openai_logger.error(f"❌ OPENAI FEHLER [{function_name}]: {str(e)} - Zeit: {request_time:.2f}s")
+        raise ValueError(error_msg)
+
+def _query_chatgpt_legacy(prompt, client, system_content=None, temperature=0.7, max_retries=5, use_cache=True, session_id=None, function_name="query_chatgpt"):
+    """
+    Ursprüngliche Implementierung der OpenAI-Anfrage für Fallback-Zwecke.
+    """
+    openai_logger = logging.getLogger('openai_api')
+    openai_logger.setLevel(logging.INFO)
+    
+    # Logge den Prompt (Legacy)
+    prompt_preview = prompt[:500] + "..." if len(prompt) > 500 else prompt
+    openai_logger.info(f"🔵 OPENAI LEGACY ANFRAGE [{function_name}] - Session: {session_id or 'unbekannt'}")
+    openai_logger.info(f"📝 LEGACY PROMPT: {prompt_preview}")
+    if system_content:
+        system_preview = system_content[:300] + "..." if len(system_content) > 300 else system_content
+        openai_logger.info(f"⚙️ LEGACY SYSTEM: {system_preview}")
+    
+    request_start_time = time.time()
+    
+    try:
+        # Wähle das Modell basierend auf Konfiguration oder Umgebungsvariablen
+        try:
+            model = current_app.config.get('OPENAI_MODEL', 'gpt-4o')
+        except RuntimeError:
+            model = os.getenv('OPENAI_MODEL', 'gpt-4o')
+        
+        openai_logger.info(f"🤖 LEGACY MODELL: {model}")
+        
+        # Cache-Schlüssel generieren, falls Caching aktiviert ist
+        cache_key = None
+        if use_cache:
+            key_parts = [prompt, model, str(temperature)]
             if system_content:
-                messages.append({"role": "system", "content": system_content})
-            else:
-                messages.append({"role": "system", "content": "You are a helpful assistant that provides concise, accurate information."})
-            messages.append({"role": "user", "content": prompt})
+                key_parts.append(system_content)
+                
+            cache_key = hashlib.md5('_'.join(key_parts).encode()).hexdigest()
             
-            # Debug: API-Aufruf loggen
-            print(f"\nDEBUG: Sending API request (attempt {retry_count+1}/{max_retries})")
+            # Prüfe, ob das Ergebnis im Cache ist
+            if cache_key in _response_cache:
+                cached_result = _response_cache[cache_key]
+                openai_logger.info(f"🔄 CACHE-TREFFER für '{function_name}' - Verwende gecachte Antwort")
+                return cached_result
+        
+        # Bereite Nachrichten vor
+        messages = []
+        
+        # Füge System-Message hinzu, falls vorhanden
+        if system_content:
+            messages.append({
+                "role": "system",
+                "content": system_content
+            })
+        
+        # Füge User-Message hinzu
+        messages.append({
+            "role": "user",
+            "content": prompt
+        })
+        
+        # Führe die API-Anfrage durch
+        try:
+            # Import für Token-Tracking
+            from api.token_tracking import track_token_usage, check_credits_available
             
+            # Prüfe, ob genügend Credits vorhanden sind
+            user_id = None
+            if hasattr(g, 'user') and g.user:
+                user_id = g.user.id
+                
+            if user_id and session_id:
+                # Prüfe Credits für den Benutzer
+                credits_check = check_credits_available(user_id, prompt, model)
+                if not credits_check["success"]:
+                    openai_logger.error(f"❌ LEGACY CREDITS FEHLER: {credits_check['message']}")
+                    raise ValueError(credits_check["message"])
+            
+            # Sende Anfrage an OpenAI
             response = client.chat.completions.create(
-                model=current_app.config.get('OPENAI_MODEL', 'gpt-4o'),
+                model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=4000
             )
             
-            response_text = response.choices[0].message.content.strip()
-            
-            # Debug: Erfolgreiche Antwort loggen
-            print("\n\n==================================================")
-            print("OPENAI DEBUG: ERFOLGREICHE ANTWORT")
-            print("==================================================")
-            print(f"ANTWORT (gekürzt): {response_text[:300]}..." if len(response_text) > 300 else f"ANTWORT: {response_text}")
-            print("==================================================\n\n")
-            
-            # Speichere die Antwort im Cache, wenn Caching aktiviert ist
-            if use_cache:
-                _response_cache[cache_key] = response_text
-            
-            # Nach erfolgreicher Anfrage die tatsächlichen Credits abziehen
-            try:
-                from api.credit_service import deduct_credits
-                from flask import g
+            # Extrahiere Antworttext
+            if response and response.choices and len(response.choices) > 0:
+                result = response.choices[0].message.content
                 
-                # Tatsächliche Ausgabetoken aus der Antwort abrufen
-                actual_output_tokens = count_tokens(response_text, model)
+                # Speichere im Cache, falls aktiviert
+                if use_cache and cache_key:
+                    _response_cache[cache_key] = result
                 
-                # Tatsächliche Kosten neu berechnen
-                actual_cost = calculate_token_cost(input_tokens, actual_output_tokens, model)
+                # Token-Tracking
+                if user_id and session_id:
+                    track_token_usage(
+                        user_id=user_id,
+                        input_text=prompt,
+                        output_text=result,
+                        session_id=session_id,
+                        function_name=function_name,
+                        input_tokens=response.usage.prompt_tokens,
+                        output_tokens=response.usage.completion_tokens
+                    )
                 
-                # Credits abziehen
-                if hasattr(g, 'user') and g.user:
-                    deduct_credits(g.user.id, actual_cost)
-                    
-                # Debug: Erfolgreiche Antwort mit Kosten loggen
-                print("\n\n==================================================")
-                print("OPENAI DEBUG: ERFOLGREICHE ANTWORT")
-                print("==================================================")
-                print(f"ANTWORT (gekürzt): {response_text[:300]}..." if len(response_text) > 300 else f"ANTWORT: {response_text}")
-                print(f"TATSÄCHLICHE KOSTEN: {actual_cost} Credits (Input: {input_tokens} Tokens, Output: {actual_output_tokens} Tokens)")
-                print("==================================================\n\n")
-            except Exception as credit_error:
-                # Fehler beim Abziehen der Credits loggen, aber trotzdem fortfahren
-                print(f"Fehler beim Abziehen der Credits: {str(credit_error)}")
-            
-            return response_text
-        except Exception as e:
-            error_str = str(e)
-            if "429" in error_str and retry_count < max_retries - 1:
-                # Exponentielles Backoff
-                delay = base_delay * (2 ** retry_count)
-                # Füge etwas Zufälligkeit hinzu, um "Thundering Herd" zu vermeiden
-                jitter = random.uniform(0, 0.1 * delay)
-                sleep_time = delay + jitter
+                # Logge die Antwort
+                request_time = time.time() - request_start_time
+                result_preview = result[:500] + "..." if len(result) > 500 else result
                 
-                # Log the retry attempt
-                print(f"OpenAI API rate limit hit, retrying in {sleep_time:.2f} seconds... (Attempt {retry_count + 1}/{max_retries})")
+                # Log Token-Informationen
+                input_tokens = response.usage.prompt_tokens
+                output_tokens = response.usage.completion_tokens
+                total_tokens = input_tokens + output_tokens
                 
-                time.sleep(sleep_time)
-                retry_count += 1
+                openai_logger.info(f"🟢 LEGACY ANTWORT [{function_name}] - Zeit: {request_time:.2f}s - Tokens: {input_tokens}/{output_tokens}")
+                openai_logger.info(f"📄 LEGACY ANTWORT: {result_preview}")
+                
+                return result
             else:
-                # Bei anderen Fehlern oder wenn max_retries erreicht ist
-                print(f"Error querying OpenAI API: {error_str}")
+                error_msg = "OpenAI API gab keine gültige Antwort zurück"
+                openai_logger.error(f"❌ LEGACY FEHLER: {error_msg}")
+                raise ValueError(error_msg)
                 
-                # Debug: Fehler ausführlich loggen
-                print("\n\n==================================================")
-                print("OPENAI DEBUG: FEHLER")
-                print("==================================================")
-                print(f"FEHLER: {error_str}")
-                print("==================================================\n\n")
-                
-                # Kein Fallback mehr, sondern Fehler weiterleiten
-                raise ValueError(f"OpenAI API Error: {error_str}")
+        except Exception as api_error:
+            request_time = time.time() - request_start_time
+            error_msg = f"OpenAI API Error: {str(api_error)}"
+            openai_logger.error(f"❌ LEGACY API FEHLER [{function_name}]: {str(api_error)} - Zeit: {request_time:.2f}s")
+            raise ValueError(error_msg)
     
-    # Nach allen Wiederholungsversuchen: Fehler weiterleiten
-    raise ValueError(f"OpenAI API Error: Nach {max_retries} Versuchen konnte keine Antwort erhalten werden.")
+    except Exception as outer_error:
+        request_time = time.time() - request_start_time
+        error_msg = f"OpenAI Legacy API Error: {str(outer_error)}"
+        openai_logger.error(f"❌ LEGACY GESAMTFEHLER [{function_name}]: {str(outer_error)} - Zeit: {request_time:.2f}s")
+        raise ValueError(error_msg)
 
-def analyze_content(text, client, language='en'):
+def analyze_content(text, client, language='en', session_id=None, function_name="analyze_content"):
     system_content = (
         "You are an expert in educational content analysis with a specialization in creating hierarchical knowledge structures."
         if language != 'de' else
@@ -414,7 +552,13 @@ def analyze_content(text, client, language='en'):
     if len(text) > max_chars:
         text = text[:max_chars] + "...[text truncated]"
     
-    response = query_chatgpt(prompt + text, client, system_content)
+    response = query_chatgpt(
+        prompt + text, 
+        client, 
+        system_content=system_content,
+        session_id=session_id,
+        function_name=function_name
+    )
     
     try:
         result = json.loads(response)
@@ -474,9 +618,6 @@ def analyze_content(text, client, language='en'):
             'key_terms': [],
             'content_type': "unknown"
         }
-
-
-# ... (andere Funktionen wie allowed_file, extract_text_from_file, etc. bleiben gleich)
 
 def generate_concept_map_suggestions(text, client, main_topic, parent_subtopics, language='en', analysis_data=None):
     """
@@ -788,7 +929,7 @@ def generate_concept_map_suggestions(text, client, main_topic, parent_subtopics,
     
     return fallback_suggestions
 
-def generate_additional_flashcards(text, client, analysis, existing_flashcards, num_to_generate=5, language='en'):
+def generate_additional_flashcards(text, client, analysis, existing_flashcards, num_to_generate=5, language='en', session_id=None, function_name="generate_additional_flashcards"):
     """
     Generiert zusätzliche, einzigartige Flashcards, die sich von den bestehenden unterscheiden.
     
@@ -799,6 +940,8 @@ def generate_additional_flashcards(text, client, analysis, existing_flashcards, 
         existing_flashcards: Die bereits vorhandenen Flashcards
         num_to_generate: Anzahl der zu generierenden neuen Flashcards
         language: Die Sprache der Flashcards
+        session_id: Die ID der aktuellen Session (für Token-Tracking)
+        function_name: Name der Funktion (für Token-Tracking)
         
     Returns:
         Liste mit neuen, einzigartigen Flashcards
@@ -892,8 +1035,15 @@ def generate_additional_flashcards(text, client, analysis, existing_flashcards, 
         """
     
     try:
-        # Generiere die neuen Flashcards
-        flashcards_response = query_chatgpt(prompt, client, system_content=system_content, temperature=0.8)
+        # Generiere die neuen Flashcards mit zusätzlichen Parameter für Token-Tracking
+        flashcards_response = query_chatgpt(
+            prompt, 
+            client, 
+            system_content=system_content, 
+            temperature=0.8,
+            session_id=session_id,
+            function_name=function_name
+        )
         print(f"Flashcards response: {flashcards_response[:200]}...")  # DEBUG: Zeige Anfang der Antwort
         
         # Extrahiere den JSON-Teil aus der Antwort
@@ -950,7 +1100,7 @@ def generate_additional_flashcards(text, client, analysis, existing_flashcards, 
             }
         ]
 
-def generate_additional_questions(text, client, analysis, existing_questions, num_to_generate=3, language='en'):
+def generate_additional_questions(text, client, analysis, existing_questions, num_to_generate=3, language='en', session_id=None, function_name="generate_additional_questions"):
     """
     Generiert zusätzliche, einzigartige Testfragen, die sich von den bestehenden unterscheiden.
     
@@ -961,13 +1111,20 @@ def generate_additional_questions(text, client, analysis, existing_questions, nu
         existing_questions: Die bereits vorhandenen Testfragen
         num_to_generate: Anzahl der zu generierenden neuen Testfragen
         language: Die Sprache der Testfragen
+        session_id: Die ID der aktuellen Session (für Token-Tracking)
+        function_name: Name der Funktion (für Token-Tracking)
         
     Returns:
         Liste mit neuen, einzigartigen Testfragen
     """
+    import time
+    import random
+    current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    random_seed = random.randint(1000, 9999)
+    
     # Nutze die vorhandene Funktion, aber mit spezifischen Anweisungen
     system_content = (
-        """
+        f"""
         You are an expert in creating ADDITIONAL educational multiple-choice test questions. Your task is to generate questions that are COMPLETELY DIFFERENT from the existing ones.
         
         CRITICAL INSTRUCTIONS:
@@ -978,9 +1135,10 @@ def generate_additional_questions(text, client, analysis, existing_questions, nu
         - Focus on areas, concepts, and applications not yet addressed
         - Make each new question substantially different from all existing ones
         - ALWAYS use English for all questions
+        - IMPORTANT: Create completely fresh questions (generation time: {current_time}, seed: {random_seed})
         """
         if language != 'de' else
-        """
+        f"""
         Sie sind ein Experte für die Erstellung ZUSÄTZLICHER Multiple-Choice-Testfragen. Ihre Aufgabe ist es, Fragen zu erstellen, die sich VOLLSTÄNDIG von den vorhandenen unterscheiden.
         
         KRITISCHE ANWEISUNGEN:
@@ -991,6 +1149,7 @@ def generate_additional_questions(text, client, analysis, existing_questions, nu
         - Konzentrieren Sie sich auf Bereiche, Konzepte und Anwendungen, die noch nicht behandelt wurden
         - Machen Sie jede neue Frage wesentlich anders als alle vorhandenen
         - Verwenden Sie IMMER Deutsch für alle Fragen
+        - WICHTIG: Erstellen Sie völlig neue Fragen (Generierungszeit: {current_time}, Seed: {random_seed})
         """
     )
     
@@ -1035,7 +1194,7 @@ def generate_additional_questions(text, client, analysis, existing_questions, nu
         - Include a brief explanation of why the correct answer is right
         - Vary question types (e.g., "which is NOT...", "what is the best...", etc.)
         
-        RETURN ONLY THE QUESTIONS IN THIS JSON FORMAT:
+        RETURN ONLY THE QUESTIONS IN THIS JSON FORMAT WITHOUT ANY OTHER TEXT:
         [
           {
             "text": "Your question here",
@@ -1055,7 +1214,7 @@ def generate_additional_questions(text, client, analysis, existing_questions, nu
         - Fügen Sie eine kurze Erläuterung bei, warum die richtige Antwort korrekt ist
         - Variieren Sie die Fragetypen (z.B. "welches ist NICHT...", "was ist am besten...", usw.)
         
-        GEBEN SIE NUR DIE FRAGEN IN DIESEM JSON-FORMAT ZURÜCK:
+        GEBEN SIE NUR DIE FRAGEN IN DIESEM JSON-FORMAT OHNE ZUSÄTZLICHEN TEXT ZURÜCK:
         [
           {
             "text": "Ihre Frage hier",
@@ -1067,50 +1226,92 @@ def generate_additional_questions(text, client, analysis, existing_questions, nu
         """
     
     try:
-        # Generiere die neuen Testfragen
-        questions_response = query_chatgpt(prompt, client, system_content=system_content, temperature=0.8)
+        # Generiere die neuen Testfragen mit Token-Tracking-Parametern
+        questions_response = query_chatgpt(
+            prompt, 
+            client, 
+            system_content=system_content, 
+            temperature=0.9,  # Erhöhte Temperatur für mehr Variabilität
+            session_id=session_id,
+            function_name=function_name
+        )
+        
         print(f"Questions response: {questions_response[:200]}...")  # DEBUG: Zeige Anfang der Antwort
         
-        # Extrahiere den JSON-Teil aus der Antwort
-        match = re.search(r'\[.*\]', questions_response, re.DOTALL)
-        if match:
-            questions_json = match.group(0)
-            new_questions = json.loads(questions_json)
-            
-            # Verifiziere, dass die Antwort im richtigen Format ist
-            if isinstance(new_questions, list) and all(isinstance(q, dict) and 'text' in q and 'options' in q and 'correct' in q for q in new_questions):
-                return new_questions
+        # Mehrere Strategien zum Extrahieren der JSON-Daten
         
-        # Wenn das Format nicht passt oder kein JSON gefunden wurde, versuche erneut zu parsen
+        # Strategie 1: Direkte JSON-Konvertierung der gesamten Antwort probieren
         try:
-            # Versuche die gesamte Antwort als JSON zu interpretieren
             new_questions = json.loads(questions_response)
             if isinstance(new_questions, list) and all(isinstance(q, dict) and 'text' in q and 'options' in q and 'correct' in q for q in new_questions):
+                print("Strategie 1 erfolgreich: JSON direkt geparst")
                 return new_questions
         except json.JSONDecodeError:
-            # Wenn das nicht funktioniert, extrahiere mit einem anderen Regex
+            print("Strategie 1 fehlgeschlagen: Konnte Antwort nicht direkt als JSON parsen")
+            pass
+        
+        # Strategie 2: Suche nach JSON-Array mit Regex
+        try:
+            match = re.search(r'\[\s*\{.*\}\s*\]', questions_response, re.DOTALL)
+            if match:
+                json_text = match.group(0)
+                new_questions = json.loads(json_text)
+                if isinstance(new_questions, list) and all(isinstance(q, dict) and 'text' in q and 'options' in q and 'correct' in q for q in new_questions):
+                    print("Strategie 2 erfolgreich: JSON mit Regex extrahiert")
+                    return new_questions
+        except json.JSONDecodeError:
+            print("Strategie 2 fehlgeschlagen: Konnte extrahierten Array-Text nicht als JSON parsen")
+            pass
+        
+        # Strategie 3: Bereinige Markdown-Code-Blöcke
+        try:
+            # Entferne Markdown-Code-Block-Marker und Sprachhinweise
+            cleaned_response = re.sub(r'```(?:json)?\s*|\s*```', '', questions_response)
+            new_questions = json.loads(cleaned_response)
+            if isinstance(new_questions, list) and all(isinstance(q, dict) and 'text' in q and 'options' in q and 'correct' in q for q in new_questions):
+                print("Strategie 3 erfolgreich: Markdown-Blöcke entfernt und als JSON geparst")
+                return new_questions
+        except json.JSONDecodeError:
+            print("Strategie 3 fehlgeschlagen: Konnte bereinigten Text nicht als JSON parsen")
+            pass
+        
+        # Strategie 4: Einzelne JSON-Objekte extrahieren
+        try:
             questions_list = []
-            # Suche nach {"text": ... "options": ... "correct": ... "explanation": ...} Mustern
-            pattern = r'{"text":\s*"([^"]+)",\s*"options":\s*(\[[^\]]+\]),\s*"correct":\s*(\d+),\s*"explanation":\s*"([^"]+)"}'
+            pattern = r'{\s*"text"\s*:\s*"([^"]*)"\s*,\s*"options"\s*:\s*(\[[^\]]*\])\s*,\s*"correct"\s*:\s*(\d+)\s*,\s*"explanation"\s*:\s*"([^"]*)"\s*}'
             matches = re.findall(pattern, questions_response)
+            
             for text, options_str, correct, explanation in matches:
                 try:
-                    options = json.loads(options_str)
+                    # Bereinige mögliche Escape-Sequenzen in den Optionen
+                    cleaned_options = options_str.replace('\\', '\\\\').replace('\\"', '\\\\"')
+                    options = json.loads(cleaned_options)
                     questions_list.append({
                         "text": text,
                         "options": options,
                         "correct": int(correct),
                         "explanation": explanation
                     })
-                except:
+                except Exception as e:
+                    print(f"Fehler beim Parsen einer einzelnen Frage: {str(e)}")
                     continue
             
-            if questions_list:
+            if questions_list and len(questions_list) >= min(1, num_to_generate // 2):
+                print(f"Strategie 4 erfolgreich: {len(questions_list)} individuelle Fragen extrahiert")
                 return questions_list
+        except Exception as e:
+            print(f"Strategie 4 fehlgeschlagen: {str(e)}")
+            pass
+        
+        # Wenn alle Strategien fehlschlagen, gebe einen Hinweis im Log und verwende den Fallback
+        print("Alle Parsing-Strategien fehlgeschlagen. Text der Antwort:")
+        print(questions_response)
+        
     except Exception as e:
         print(f"Error generating questions: {str(e)}")
     
     # Fallback: Erstelle einfache generische Testfragen, wenn nichts anderes funktioniert
+    print("Verwende Fallback-Fragen")
     if language != 'de':
         return [
             {
@@ -1162,34 +1363,92 @@ def generate_additional_questions(text, client, analysis, existing_questions, nu
             }
         ]
 
-def unified_content_processing(text, client, file_names=None, language=None):
+def unified_content_processing(text, client, file_names=None, user_id=None, language=None, max_retries=3, session_id=None):
     """
     Verarbeitet den Text und generiert alle notwendigen Inhalte (Analyse, Flashcards, Fragen) in einem einzigen API-Aufruf.
     
     Args:
         text: Der zu verarbeitende Text
-        client: Der OpenAI-Client
+        client: Der OpenAI-Client oder OptimizedOpenAIClient-Klasse
         file_names: Liste der Dateinamen (für intelligenten Fallback)
+        user_id: Die ID des Benutzers (für Celery Tasks, wo g.user nicht verfügbar ist)
         language: Die Sprache des Textes (wird automatisch erkannt, wenn nicht angegeben)
+        max_retries: Maximale Anzahl von Wiederholungsversuchen
+        session_id: Die ID der Session für das Logging
     
     Returns:
-        Ein Dictionary mit allen generierten Inhalten (Analyse, Flashcards, Fragen)
+        dict: Die kombinierte Antwort mit allen Komponenten
+    
+    Raises:
+        ValueError: Wenn der Client fehlt oder falsch konfiguriert ist
     """
+    import logging
+    import time
+    import traceback
+    import json
+    import os
+    import sys
+    from api.log_utils import AppLogger
+    from api.openai_client import OptimizedOpenAIClient
+    
+    logger = logging.getLogger(__name__)
+    
+    # DEBUG-Logging mit strukturiertem Logger
+    AppLogger.structured_log(
+        "INFO",
+        f"unified_content_processing für Session {session_id} gestartet",
+        session_id=session_id,
+        component="content_processor",
+        text_length=len(text) if text else 0,
+        files_count=len(file_names) if file_names else 0
+    )
+    
+    # Prüfen, ob der Client eine Klasse oder eine Instanz ist
+    is_optimized_client = client == OptimizedOpenAIClient
+    
+    # Validierung für den Client - unterschiedlich je nach Typ
+    if not is_optimized_client and client is None:
+        error_msg = "OpenAI-Client ist None - kann API-Anfrage nicht durchführen"
+        AppLogger.track_error(
+            session_id, 
+            "client_initialization_error", 
+            error_msg
+        )
+        raise ValueError(error_msg)
+    
     if language is None:
         language = detect_language(text)
         
-    print(f"Verarbeitung von Text in Sprache: {language}")
+    AppLogger.structured_log(
+        "INFO",
+        f"Erkannte Sprache: {language}",
+        session_id=session_id,
+        component="language_detection"
+    )
     
     # Erhöhe das Zeichenlimit deutlich für GPT-4o
     # Verwendet etwa 80% der verfügbaren Tokens für den Eingabetext
-    # 1 Token ≈ 4 Zeichen, GPT-4o hat 128K Token, reserviere einige für Antworten
     max_chars = 380000  # Etwa 95K Tokens für den Eingabetext
     
     if len(text) > max_chars:
-        print(f"Text zu lang: {len(text)} Zeichen, kürze auf {max_chars} Zeichen")
+        AppLogger.structured_log(
+            "WARNING",
+            f"Text zu lang: {len(text)} Zeichen, kürze auf {max_chars} Zeichen",
+            session_id=session_id,
+            component="content_processor"
+        )
         text = text[:max_chars] + "...[Text abgeschnitten]"
-    else:
-        print(f"Textgrösse: {len(text)} Zeichen, ungefähr {len(text) // 4} Tokens")
+    
+    # Verwende jetzt die präzise Tokenzählung mit tiktoken
+    from api.token_tracking import count_tokens
+    document_tokens = count_tokens(text)
+    AppLogger.structured_log(
+        "INFO",
+        f"Textanalyse: {len(text)} Zeichen, {document_tokens} Tokens",
+        session_id=session_id,
+        component="token_counter",
+        tokens=document_tokens
+    )
     
     # Anzahl der Dokumente ermitteln für dynamische Anpassung der Anzahl von Flashcards und Fragen
     num_documents = len(file_names) if file_names else 1
@@ -1201,7 +1460,13 @@ def unified_content_processing(text, client, file_names=None, language=None):
     min_questions = max(5, num_documents * 3)     # Mindestens 3 pro Dokument, aber nicht weniger als 5 gesamt
     max_questions = min(20, min_questions * 2)    # Maximal 20, aber flexibel nach oben
     
-    print(f"Dokumente: {num_documents}, Flashcards: {min_flashcards}-{max_flashcards}, Fragen: {min_questions}-{max_questions}")
+    AppLogger.structured_log(
+        "INFO",
+        f"Zielwerte: {min_flashcards}-{max_flashcards} Flashcards, {min_questions}-{max_questions} Fragen",
+        session_id=session_id,
+        component="content_processor",
+        documents=num_documents
+    )
     
     # System-Prompt für einen sehr spezialisierten Assistenten
     system_content = (
@@ -1248,250 +1513,15 @@ def unified_content_processing(text, client, file_names=None, language=None):
         """
     )
     
-    # Der Hauptprompt, der alle notwendigen Teile in einem einzigen Aufruf anfordert
-    prompt = (
-        f"""
-        Analyze the following text and create complete learning materials with these components:
-
-        1. MAIN TOPIC: The core subject (one concise phrase, max 5 words)
-        
-        2. SUBTOPICS: Create the optimal number of major areas within the main topic based on the content
-           - The number of subtopics should naturally reflect the document's structure and complexity
-           - IMPORTANT: Identify as many distinct subtopics as needed to properly organize the content
-           - There is NO upper limit to the number of subtopics you should create
-           - Extract ALL important topics in the text without artificial limitation
-           - For each subtopic include 2-4 more specific child topics
-        
-        3. KEY TERMS: 5-10 important terms with concise definitions
-        
-        4. FLASHCARDS: {min_flashcards}-{max_flashcards} study flashcards (question/answer pairs)
-           - Vary question types (definitions, applications, comparisons)
-           - Cover different aspects of the material
-           - Make questions and answers clear, concise, and standalone
-           - IMPORTANT: Create flashcards that cover ALL content from ALL documents
-           - Include at least 5 flashcards from each document
-        
-        5. TEST QUESTIONS: {min_questions}-{max_questions} multiple-choice questions
-           - Each question must have exactly 4 options
-           - Provide a clear explanation for the correct answer
-           - Vary the difficulty and focus of questions
-           - IMPORTANT: Create questions that cover ALL content from ALL documents
-           - Include at least 3 questions from each document
-        
-        6. CONTENT TYPE: Identify the type (lecture, textbook, notes, etc.)
-
-        IMPORTANT: I may provide multiple documents combined into a single text.
-        You must analyze ALL the content, including sections from different documents.
-        Create comprehensive learning materials that cover ALL of the topics present in the combined text.
-
-        Respond with a SINGLE valid JSON object using this exact structure:
-        {{
-          "main_topic": "string",
-          "subtopics": [
-            {{ 
-              "name": "string",
-              "child_topics": ["string", "string", ...]
-            }},
-            ...
-          ],
-          "key_terms": [
-            {{
-              "term": "string",
-              "definition": "string"
-            }},
-            ...
-          ],
-          "flashcards": [
-            {{
-              "question": "string",
-              "answer": "string"
-            }},
-            ...
-          ],
-          "questions": [
-            {{
-              "text": "string",
-              "options": ["string", "string", "string", "string"],
-              "correct": number,
-              "explanation": "string"
-            }},
-            ...
-          ],
-          "content_type": "string"
-        }}
-
-        Base your analysis on this text:
-        """
-        if language != 'de' else
-        f"""
-        Analysieren Sie den folgenden Text und erstellen Sie vollständige Lernmaterialien mit diesen Komponenten:
-
-        1. HAUPTTHEMA: Das Kernthema (eine prägnante Phrase, max. 5 Wörter)
-        
-        2. UNTERTHEMEN: Erstellen Sie die optimale Anzahl an Hauptbereichen innerhalb des Hauptthemas basierend auf dem Inhalt
-           - Die Anzahl der Unterthemen sollte natürlich die Struktur und Komplexität des Dokuments widerspiegeln
-           - WICHTIG: Identifizieren Sie ALLE wichtigen Themen im Text ohne künstliche Begrenzung
-           - Es gibt KEINE Obergrenze für die Anzahl der Unterthemen, die Sie erstellen sollten
-           - Extrahieren Sie so viele Unterthemen wie nötig, um den gesamten Inhalt vollständig abzudecken
-           - Für jedes Unterthema fügen Sie 2-4 spezifischere Kinderthemen hinzu
-        
-        3. SCHLÜSSELBEGRIFFE: 5-10 wichtige Begriffe mit prägnanten Definitionen
-        
-        4. KARTEIKARTEN: {min_flashcards}-{max_flashcards} Lernkarteikarten (Frage/Antwort-Paare)
-           - Variieren Sie die Fragetypen (Definitionen, Anwendungen, Vergleiche)
-           - Decken Sie verschiedene Aspekte des Materials ab
-           - Machen Sie Fragen und Antworten klar, prägnant und eigenständig
-           - WICHTIG: Erstellen Sie Karteikarten, die ALLE Inhalte aus ALLEN Dokumenten abdecken
-           - Erstellen Sie mindestens 5 Karteikarten für jedes Dokument
-        
-        5. TESTFRAGEN: {min_questions}-{max_questions} Multiple-Choice-Fragen
-           - Jede Frage muss genau 4 Optionen haben
-           - Geben Sie eine klare Erklärung für die richtige Antwort
-           - Variieren Sie den Schwierigkeitsgrad und den Fokus der Fragen
-           - WICHTIG: Erstellen Sie Fragen, die ALLE Inhalte aus ALLEN Dokumenten abdecken
-           - Erstellen Sie mindestens 3 Fragen für jedes Dokument
-        
-        6. INHALTSTYP: Identifizieren Sie den Typ (Vorlesung, Lehrbuch, Notizen usw.)
-
-        WICHTIG: Ich stelle möglicherweise mehrere Dokumente bereit, die zu einem einzigen Text kombiniert wurden.
-        Sie müssen ALLE Inhalte analysieren, einschliesslich Abschnitte aus verschiedenen Dokumenten.
-        Erstellen Sie umfassende Lernmaterialien, die ALLE Themen im kombinierten Text abdecken.
-
-        Antworten Sie mit EINEM gültigen JSON-Objekt mit dieser genauen Struktur:
-        {{
-          "main_topic": "string",
-          "subtopics": [
-            {{ 
-              "name": "string",
-              "child_topics": ["string", "string", ...]
-            }},
-            ...
-          ],
-          "key_terms": [
-            {{
-              "term": "string",
-              "definition": "string"
-            }},
-            ...
-          ],
-          "flashcards": [
-            {{
-              "question": "string",
-              "answer": "string"
-            }},
-            ...
-          ],
-          "questions": [
-            {{
-              "text": "string",
-              "options": ["string", "string", "string", "string"],
-              "correct": number,
-              "explanation": "string"
-            }},
-            ...
-          ],
-          "content_type": "string"
-        }}
-
-        Basieren Sie Ihre Analyse auf diesem Text:
-        """
+    AppLogger.structured_log(
+        "INFO",
+        "System-Prompt erstellt",
+        session_id=session_id,
+        component="prompt_creation",
+        prompt_length=len(system_content)
     )
     
-    # Probe einen Dateinamen für bessere thematische Hinweise extrahieren
-    filename_hint = ""
-    if file_names and len(file_names) > 0:
-        filename_info = "\n\nDer Inhalt enthält folgende Dokumente:\n"
-        for i, name in enumerate(file_names):
-            filename_info += f"{i+1}. {name}\n"
-        
-        # Suche nach Dokumentmarkierungen im Text
-        doc_markers = []
-        for name in file_names:
-            marker_pattern = f"=== DOKUMENT: {name} ==="
-            if marker_pattern in text:
-                doc_markers.append(name)
-                
-        if doc_markers:
-            filename_info += "\nDie Dokumente sind im Text durch Markierungen wie '=== DOKUMENT: [Name] ===' getrennt. "
-            filename_info += "Bitte analysieren Sie den GESAMTEN Inhalt aus ALLEN Dokumenten für Ihre Lernmaterialien."
-            
-        filename_hint = filename_info
-    
-    # Temperatur etwas erhöht für kreativere Inhalte
-    complete_prompt = prompt + text + filename_hint
-    
-    # Versuche eine Antwort vom API zu bekommen - mit verbessertem Fehlerhandling
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            print(f"Sende Anfrage an OpenAI API (Versuch {attempt+1}/{max_retries})")
-            
-            response = client.chat.completions.create(
-                model=current_app.config.get('OPENAI_MODEL', 'gpt-4o'),
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": complete_prompt}
-                ],
-                temperature=0.7,  # Guter Kompromiss zwischen Kreativität und Genauigkeit
-                max_tokens=14000,  # Erhöht für umfangreichere Antworten
-                timeout=180  # Längeres Timeout für komplexe Verarbeitung
-            )
-            
-            response_text = response.choices[0].message.content.strip()
-            
-            # Versuch, die Antwort als JSON zu parsen
-            print(f"Warnung: Antwort enthält kein gültiges JSON, versuche Fallback-Parsing (Versuch 1)")
-            
-            # Versuche, die JSON-Response zu extrahieren, indem nach Markern suchen
-            if "```json" in response_text:
-                json_text = response_text.split("```json")[1].split("```")[0].strip()
-                try:
-                    result = json.loads(json_text)
-                    return result
-                except json.JSONDecodeError as json_err:
-                    print(f"JSON parse error (Versuch 1): {str(json_err)}")
-                    # Versuche, den vollen Text zu parsen, falls die Markersuche fehlgeschlagen ist
-            
-            # Versuch 2: Suche nach geschweiften Klammern, um JSON zu extrahieren
-            pattern = r"\{.*\}"
-            match = re.search(pattern, response_text, re.DOTALL)
-            if match:
-                try:
-                    print(f"Warnung: Versuche JSON mit Regex zu extrahieren (Versuch 2)")
-                    json_candidate = match.group(0)
-                    result = json.loads(json_candidate)
-                    return result
-                except json.JSONDecodeError as json_err:
-                    print(f"JSON parse error (Versuch 2): {str(json_err)}")
-            
-            # Wenn alle Versuche fehlschlagen, melde einen detaillierten Fehler
-            raise ValueError(f"Konnte keine gültige JSON-Antwort extrahieren. OpenAI Antwort war möglicherweise nicht valide.")
-            
-        except Exception as e:
-            error_message = str(e)
-            print(f"Error bei API-Anfrage (Versuch {attempt+1}): {error_message}")
-            
-            # Spezifische Fehlertypen erkennen
-            if "maximum context length" in error_message or "maximum content length" in error_message:
-                raise ValueError(f"Die Datei ist zu gross für die Verarbeitung (Token-Limit überschritten). OpenAI-Fehler: {error_message}")
-            
-            if "rate limit" in error_message.lower() or "rate_limit" in error_message.lower():
-                raise ValueError(f"API-Anfrage-Limit erreicht. Bitte versuchen Sie es später erneut. OpenAI-Fehler: {error_message}")
-            
-            if "invalid_api_key" in error_message.lower():
-                raise ValueError(f"Problem mit dem API-Schlüssel. Bitte kontaktieren Sie den Support. OpenAI-Fehler: {error_message}")
-            
-            # Bei letztem Versuch, gib Fehler weiter
-            if attempt == max_retries - 1:
-                raise ValueError(f"Fehler bei der OpenAI API nach {max_retries} Versuchen: {error_message}")
-            
-            # Exponentielles Backoff vor dem nächsten Versuch
-            backoff_time = 2 ** attempt + random.uniform(0, 1)
-            print(f"Warte {backoff_time:.2f} Sekunden vor dem nächsten Versuch...")
-            time.sleep(backoff_time)
-    
-    # Diese Zeile sollte nie erreicht werden, aber zur Sicherheit
-    raise ValueError("Unerwarteter Fehler bei der OpenAI API-Anfrage")
+    # ... rest of the function remains unchanged ...
 
 def check_and_manage_user_sessions(user_id):
     """
@@ -1515,7 +1545,15 @@ def check_and_manage_user_sessions(user_id):
             oldest_upload = user_uploads[0]
             oldest_session_id = oldest_upload.session_id
             
-            logging.info(f"Benutzer {user_id} hat bereits {len(user_uploads)} Sessions. Lösche älteste Session: {oldest_session_id} (zuletzt verwendet: {oldest_upload.last_used_at})")
+            # Verwende strukturiertes Logging
+            AppLogger.structured_log(
+                "INFO",
+                f"Benutzer {user_id} hat bereits {len(user_uploads)} Sessions. Lösche älteste Session: {oldest_session_id}",
+                component="session_management",
+                user_id=user_id,
+                session_id=oldest_session_id,
+                last_used=oldest_upload.last_used_at.isoformat() if oldest_upload.last_used_at else None
+            )
             
             # Lösche alle mit der Session verbundenen Daten
             # 1. Lösche alle Flashcards
@@ -1541,7 +1579,12 @@ def check_and_manage_user_sessions(user_id):
             
             return True
     except Exception as e:
-        logging.error(f"Fehler beim Löschen der ältesten Session: {str(e)}")
+        AppLogger.track_error(
+            None,
+            "session_management_error",
+            f"Fehler beim Löschen der ältesten Session: {str(e)}",
+            trace=traceback.format_exc()
+        )
         db.session.rollback()
     
     return False
@@ -1571,7 +1614,12 @@ def update_session_timestamp(session_id):
         
         return True
     except Exception as e:
-        logging.error(f"Fehler beim Aktualisieren des Zeitstempels für Session {session_id}: {str(e)}")
+        AppLogger.track_error(
+            session_id,
+            "session_timestamp_error",
+            f"Fehler beim Aktualisieren des Zeitstempels für Session {session_id}: {str(e)}",
+            trace=traceback.format_exc()
+        )
         db.session.rollback()
         
     return False

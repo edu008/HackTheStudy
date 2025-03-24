@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 
 // API Endpunkt
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -18,6 +19,10 @@ interface Payment {
 export default function PaymentHistory() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const { t, i18n } = useTranslation();
+  
+  // Lokale für die Formatierung basierend auf der aktuellen Sprache
+  const currentLocale = i18n.language === 'de' ? 'de-DE' : 'en-US';
 
   useEffect(() => {
     fetchPaymentHistory();
@@ -33,7 +38,7 @@ export default function PaymentHistory() {
       }
 
       const response = await axios.get(
-        `${PAYMENT_API_URL}/api/payment/payment-history`,
+        `${API_URL}/api/v1/payment/payment-history`,
         {
           withCredentials: true,
           headers: {
@@ -47,20 +52,20 @@ export default function PaymentHistory() {
       }
     } catch (error) {
       console.error('Fehler beim Abrufen der Zahlungshistorie:', error);
-      toast.error('Fehler beim Laden der Zahlungshistorie');
+      toast.error(t('payment.errors.fetchHistory', 'Fehler beim Laden der Zahlungshistorie'));
     } finally {
       setIsLoading(false);
     }
   };
 
   if (isLoading) {
-    return <div className="text-center py-4">Zahlungshistorie wird geladen...</div>;
+    return <div className="text-center py-4">{t('common.loading')}</div>;
   }
 
   if (payments.length === 0) {
     return (
       <div className="text-center py-4 text-muted-foreground">
-        Keine Zahlungen gefunden
+        {t('payment.history.noPayments', 'Keine Zahlungen gefunden')}
       </div>
     );
   }
@@ -68,7 +73,7 @@ export default function PaymentHistory() {
   // Hilfsfunktion zum Formatieren des Datums
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return new Intl.DateTimeFormat('de-DE', {
+    return new Intl.DateTimeFormat(currentLocale, {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
@@ -79,13 +84,13 @@ export default function PaymentHistory() {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-medium">Zahlungshistorie</h3>
+      <h3 className="text-lg font-medium">{t('payment.history', 'Zahlungshistorie')}</h3>
       
       {payments.map((payment) => (
         <Card key={payment.id} className="bg-card">
           <CardHeader className="pb-2">
             <div className="flex justify-between items-center">
-              <CardTitle className="text-base">{payment.credits} Credits</CardTitle>
+              <CardTitle className="text-base">{payment.credits.toLocaleString(currentLocale)} Credits</CardTitle>
               <CardDescription>
                 {formatDate(payment.created_at)}
               </CardDescription>
@@ -93,15 +98,15 @@ export default function PaymentHistory() {
           </CardHeader>
           <CardContent>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Betrag:</span>
+              <span className="text-muted-foreground">{t('payment.amount', 'Betrag')}:</span>
               <span className="font-medium">{payment.amount.toFixed(2)} CHF</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Status:</span>
+              <span className="text-muted-foreground">{t('payment.status', 'Status')}:</span>
               <span className={`font-medium ${
                 payment.status === 'completed' ? 'text-green-600' : 'text-yellow-600'
               }`}>
-                {payment.status === 'completed' ? 'Abgeschlossen' : payment.status}
+                {payment.status === 'completed' ? t('payment.completed', 'Abgeschlossen') : payment.status}
               </span>
             </div>
           </CardContent>

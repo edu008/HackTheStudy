@@ -1,0 +1,40 @@
+name: hackthestudy-frontend
+region: fra
+services:
+  - name: frontend
+    github:
+      repo: edu008/HackTheStudy
+      branch: main
+      deploy_on_push: true
+    source_dir: frontend
+    build_command: npm install && npm run build
+    run_command: npm start
+    http_port: 80
+    health_check:
+      http_path: /.well-known/healthcheck
+      port: 8080
+      initial_delay_seconds: 10
+      period_seconds: 5
+    instance_count: 1
+    instance_size_slug: basic-xs
+    routes:
+      - path: /
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: API_URL
+        scope: RUN_AND_BUILD_TIME
+        value: "${API_SERVICE_URL}"
+      - key: VITE_API_URL
+        scope: BUILD_TIME
+        value: "${API_SERVICE_URL}/api"
+      - key: FRONTEND_URL
+        scope: RUN_AND_BUILD_TIME
+        value: "${APP_URL}"
+      - key: VITE_FRONTEND_URL
+        scope: BUILD_TIME
+        value: "${APP_URL}"
+      # Optional: Analytics-ID, falls verwendet
+      - key: VITE_ANALYTICS_ID
+        scope: BUILD_TIME
+        type: SECRET 

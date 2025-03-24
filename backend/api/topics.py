@@ -1,27 +1,34 @@
-from flask import request, jsonify, current_app, g
+from flask import request, jsonify, current_app, g, Blueprint
 from . import api_bp
 from .utils import query_chatgpt, detect_language, generate_concept_map_suggestions, check_and_manage_user_sessions
-from models import db, Upload, Topic, UserActivity, Connection, User
+from core.models import db, Upload, Topic, UserActivity, Connection, User
 import logging
 from .auth import token_required
 import uuid
-from tasks import process_upload
-from flask_cors import cross_origin
 from datetime import datetime
 import tiktoken
 import json
 import time
-from api.credit_service import check_credits_available, calculate_token_cost
+from api.token_tracking import check_credits_available, calculate_token_cost, deduct_credits
+import os
+from openai import OpenAI
+from api.error_handler import InvalidInputError, ResourceNotFoundError, InsufficientCreditsError
 
 logger = logging.getLogger(__name__)
 
-@api_bp.route('/load-topics', methods=['POST'])
-@token_required
+@api_bp.route('/load-topics', methods=['POST', 'OPTIONS'])
 def load_topics():
-    """
-    Endpoint zum Zurücksetzen der Session und Starten einer neuen Session.
-    Dieser Endpunkt wird aufgerufen, wenn der Benutzer auf "Neue Themen laden" klickt.
-    """
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+        
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
     try:
         user_id = getattr(request, 'user_id', None)
         
@@ -44,9 +51,19 @@ def load_topics():
         logger.error(f"Error resetting session: {str(e)}")
         return jsonify({"success": False, "message": f"Fehler beim Zurücksetzen der Session: {str(e)}"}), 500
 
-@api_bp.route('/generate-related-topics', methods=['POST'])
-@token_required
+@api_bp.route('/generate-related-topics', methods=['POST', 'OPTIONS'])
 def generate_related_topics():
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+
+    # Führe Authentifizierung durch
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
     data = request.json
     session_id = data.get('session_id')
     if not session_id:
@@ -60,7 +77,6 @@ def generate_related_topics():
     subtopics = Topic.query.filter_by(upload_id=upload.id, parent_id=main_topic.id).all() if main_topic else []
     language = detect_language(upload.content)
     
-    from openai import OpenAI
     client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
     prompt = (
         f"""
@@ -122,6 +138,7 @@ def generate_related_topics():
     )
     
     try:
+        # Verwende die query_chatgpt Funktion anstatt direkten API-Aufrufs
         response = query_chatgpt(prompt, client)
         logger.info(f"OpenAI response for related topics:\n{response}")
         new_topics = []
@@ -308,14 +325,19 @@ def generate_related_topics():
         db.session.rollback()
         return jsonify({"success": False, "error": {"code": "GENERATION_FAILED", "message": str(e)}}), 500
 
-@api_bp.route('/topics/<session_id>', methods=['GET'])
-@token_required
+@api_bp.route('/topics/<session_id>', methods=['GET', 'OPTIONS'])
 def get_topics(session_id):
-    """
-    Gibt das Hauptthema, die direkten Subtopics und die Verbindungen für eine Session zurück.
-    Child-Topics werden nicht zurückgegeben - diese werden erst bei explizitem Aufruf von
-    '/generate-concept-map-suggestions' generiert.
-    """
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+    
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
     try:
         upload = Upload.query.filter_by(session_id=session_id).first()
         if not upload:
@@ -393,13 +415,19 @@ def get_topics(session_id):
         logger.error(f"Error retrieving topics: {str(e)}")
         return jsonify({"success": False, "error": {"code": "RETRIEVAL_FAILED", "message": str(e)}}), 500
 
-@api_bp.route('/generate-concept-map-suggestions', methods=['POST'])
-@token_required
-def concept_map_suggestions():
-    """
-    Generiert KI-Vorschläge für Kinder-Unterthemen für eine Concept-Map.
-    Zeigt zunächst nur die übergeordneten Themen und generiert dann die Kinder-Unterthemen auf Anfrage.
-    """
+@api_bp.route('/generate-concept-map-suggestions', methods=['POST', 'OPTIONS'])
+def generate_concept_map_suggestions():
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+        
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
     data = request.json
     session_id = data.get('session_id')
     parent_subtopics = data.get('parent_subtopics', [])
@@ -424,7 +452,6 @@ def concept_map_suggestions():
     language = detect_language(upload.content)
     
     # Initialisiere den OpenAI-Client
-    from openai import OpenAI
     client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
     
     try:
@@ -619,9 +646,19 @@ def generate_fallback_suggestions(main_topic, parent_subtopics, language='en'):
     
     return result
 
-@api_bp.route('/generate/<session_id>', methods=['POST'])
-@token_required
-def generate_topics(session_id):
+@api_bp.route('/generate/<session_id>', methods=['POST', 'OPTIONS'])
+def generate_topics_for_session(session_id):
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+        
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
     upload = Upload.query.filter_by(session_id=session_id).first()
     if not upload:
         return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
@@ -641,10 +678,18 @@ def generate_topics(session_id):
         
     # Schätze die Kosten basierend auf der Länge des Inhalts
     estimated_prompt_tokens = min(content_length // 3, 100000)  # Ungefähre Schätzung: 1 Token pro 3 Zeichen
-    estimated_output_tokens = 4000  # Geschätzte Ausgabe für Topics und Verbindungen (mehr als Fragen)
+    
+    # Anpassung der Output-Token-Schätzung basierend auf der Eingabegröße
+    if estimated_prompt_tokens < 100:
+        estimated_output_tokens = 200  # Minimale Ausgabe für winzige Dokumente
+    elif estimated_prompt_tokens < 500:
+        estimated_output_tokens = 500  # Reduzierte Ausgabe für kleine Dokumente
+    else:
+        estimated_output_tokens = 4000  # Geschätzte Ausgabe für Topics und Verbindungen
     
     # Berechne die ungefähren Kosten
-    estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens)
+    content_tokens = count_tokens(upload.content)
+    estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens, document_tokens=content_tokens)
     
     # Prüfe, ob der Benutzer genügend Credits hat
     if not check_credits_available(estimated_cost):
@@ -662,4 +707,131 @@ def generate_topics(session_id):
             }
         }), 402
     
-    # ... existing code ...
+    try:
+        # Einrichten des OpenAI Clients
+        client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
+        
+        # Analyse des Inhalts und Generierung der Topics
+        prompt = f"""
+        Analyze the following text and extract a hierarchical knowledge structure:
+        
+        1. MAIN TOPIC: Identify the primary topic of the text as a concise phrase (2-5 words)
+        
+        2. SUBTOPICS: Extract 5-8 key concepts or areas within the main topic. These should be the most important concepts covered in the text.
+        
+        Return the result as a JSON object:
+        {{
+          "main_topic": "The main topic name",
+          "subtopics": ["Subtopic 1", "Subtopic 2", "Subtopic 3", ...]
+        }}
+        
+        Text to analyze:
+        {content[:50000]}  <!-- Limit content to prevent token limits -->
+        """
+        
+        # Berechne die tatsächlichen Tokens vor dem API-Aufruf
+        from .utils import count_tokens
+        input_tokens = count_tokens(prompt)
+        
+        # OpenAI API Anfrage
+        response = query_chatgpt(prompt, client)
+        
+        # Verarbeite die Antwort
+        import re
+        
+        # Versuche, die JSON-Antwort zu extrahieren
+        try:
+            match = re.search(r'\{.*\}', response, re.DOTALL)
+            if match:
+                topics_data = json.loads(match.group(0))
+            else:
+                # Falls kein JSON-Pattern gefunden wird
+                raise ValueError("Konnte keine JSON-Struktur in der Antwort finden")
+        except (json.JSONDecodeError, ValueError) as e:
+            # Fallback für Nicht-JSON-Antworten
+            # Extrahiere Teile mit Regex
+            main_topic_match = re.search(r'"main_topic"\s*:\s*"([^"]+)"', response)
+            subtopics_match = re.search(r'"subtopics"\s*:\s*\[(.*?)\]', response, re.DOTALL)
+            
+            main_topic = main_topic_match.group(1) if main_topic_match else "Unbekanntes Thema"
+            
+            subtopics = []
+            if subtopics_match:
+                subtopics_str = subtopics_match.group(1)
+                # Extrahiere alle in Anführungszeichen stehenden Strings
+                subtopics = re.findall(r'"([^"]+)"', subtopics_str)
+            
+            # Wenn keine Subtopics gefunden wurden, erstelle generische
+            if not subtopics:
+                subtopics = ["Thema 1", "Thema 2", "Thema 3", "Thema 4", "Thema 5"]
+            
+            topics_data = {
+                "main_topic": main_topic,
+                "subtopics": subtopics
+            }
+        
+        # Speichere das Hauptthema in der Datenbank
+        main_topic = Topic(
+            upload_id=upload.id,
+            name=topics_data["main_topic"],
+            is_main_topic=True,
+            parent_id=None
+        )
+        db.session.add(main_topic)
+        db.session.flush()  # Flush, um die ID des Hauptthemas zu erhalten
+        
+        # Speichere die Subtopics mit dem Hauptthema als parent_id
+        for subtopic_name in topics_data["subtopics"]:
+            subtopic = Topic(
+                upload_id=upload.id,
+                name=subtopic_name,
+                is_main_topic=False,
+                parent_id=main_topic.id
+            )
+            db.session.add(subtopic)
+        
+        # Markiere den Upload als verarbeitet
+        upload.processed = True
+        upload.last_used_at = db.func.current_timestamp()
+        
+        # Speichere Benutzeraktivität
+        activity = UserActivity(
+            user_id=getattr(request, 'user_id', None),
+            activity_type='generate',
+            title=f"Generated topics for: {topics_data['main_topic']}",
+            main_topic=topics_data["main_topic"],
+            subtopics=topics_data["subtopics"],
+            session_id=session_id,
+            details={"main_topic": topics_data["main_topic"], "subtopics": topics_data["subtopics"]}
+        )
+        db.session.add(activity)
+        
+        # Commit der Änderungen in der Datenbank
+        db.session.commit()
+        
+        # Nach erfolgreicher Verarbeitung die Credits abziehen
+        # Die Berechnung der Kosten erfolgt bereits in query_chatgpt, 
+        # das deduct_credits wird dort bereits aufgerufen
+        
+        # Hole die aktuellen Credits des Benutzers
+        user = User.query.get(g.user.id)
+        
+        return jsonify({
+            "success": True,
+            "message": "Topics successfully generated",
+            "data": {
+                "main_topic": topics_data["main_topic"],
+                "subtopics": topics_data["subtopics"]
+            },
+            "credits_available": user.credits if user else 0  # Füge aktuelle Credits in der Antwort hinzu
+        }), 200
+    except Exception as e:
+        logger.error(f"Error generating topics: {str(e)}")
+        db.session.rollback()
+        return jsonify({
+            "success": False,
+            "error": {
+                "code": "GENERATION_FAILED",
+                "message": f"Fehler bei der Generierung: {str(e)}"
+            }
+        }), 500

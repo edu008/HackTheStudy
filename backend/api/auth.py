@@ -1,38 +1,69 @@
-from flask import Blueprint, request, jsonify, redirect, url_for, current_app
+from flask import Blueprint, request, jsonify, redirect, url_for, current_app, g
 import os
 import requests
 import uuid
 from authlib.integrations.flask_client import OAuth
 from datetime import datetime, timedelta
 import jwt
-from models import db, User, OAuthToken, UserActivity, Payment
+import functools
+from . import api_bp
+from core.models import db, User, OAuthToken, UserActivity, Payment
 from functools import wraps
+import logging
 
+# Blueprint erstellen und zentrale CORS-Konfiguration verwenden
 auth_bp = Blueprint('auth', __name__)
+
+logger = logging.getLogger(__name__)
+
+# OAuth-Objekt für die spätere Initialisierung
 oauth = OAuth()
 
 def setup_oauth(app):
-    oauth.register(
-        name='google',
-        client_id=os.getenv('GOOGLE_CLIENT_ID'),
-        client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-        client_kwargs={
-            'scope': 'openid email profile',
-            'token_endpoint_auth_method': 'client_secret_post',
-            'code_challenge_method': None
-        }
-    )
-    oauth.register(
-        name='github',
-        client_id=os.getenv('GITHUB_CLIENT_ID'),
-        client_secret=os.getenv('GITHUB_CLIENT_SECRET'),
-        access_token_url='https://github.com/login/oauth/access_token',
-        authorize_url='https://github.com/login/oauth/authorize',
-        api_base_url='https://api.github.com/',
-        client_kwargs={'scope': 'user:email'},
-    )
+    # Prüfe zuerst, ob die OAuth-Konfiguration vorhanden ist
+    google_client_id = os.getenv('GOOGLE_CLIENT_ID')
+    google_client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
+    github_client_id = os.getenv('GITHUB_CLIENT_ID')
+    github_client_secret = os.getenv('GITHUB_CLIENT_SECRET')
+    
+    # Initialisiere OAuth mit der App
     oauth.init_app(app)
+    
+    # Stelle sicher, dass oauth im App-Kontext verfügbar ist
+    app.extensions['oauth'] = oauth
+    
+    # Registriere OAuth-Provider nur, wenn die notwendigen Schlüssel vorhanden sind
+    if google_client_id and google_client_secret:
+        oauth.register(
+            name='google',
+            client_id=google_client_id.strip(),
+            client_secret=google_client_secret.strip(),
+            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+            client_kwargs={
+                'scope': 'openid email profile',
+                'token_endpoint_auth_method': 'client_secret_post',
+                'code_challenge_method': None
+            }
+        )
+        logger.info("Google OAuth konfiguriert.")
+    else:
+        logger.warning("WARNUNG: Google OAuth nicht konfiguriert (fehlende Umgebungsvariablen).")
+    
+    if github_client_id and github_client_secret:
+        oauth.register(
+            name='github',
+            client_id=github_client_id.strip(),
+            client_secret=github_client_secret.strip(),
+            access_token_url='https://github.com/login/oauth/access_token',
+            authorize_url='https://github.com/login/oauth/authorize',
+            api_base_url='https://api.github.com/',
+            client_kwargs={'scope': 'user:email'},
+        )
+        logger.info("GitHub OAuth konfiguriert.")
+    else:
+        logger.warning("WARNUNG: GitHub OAuth nicht konfiguriert (fehlende Umgebungsvariablen).")
+    
+    return oauth
 
 def get_user_info(provider, token):
     if provider == 'google':
@@ -58,29 +89,70 @@ def get_user_info(provider, token):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        # OPTIONS-Anfragen immer erlauben, ohne Token zu überprüfen
+        if request.method == 'OPTIONS':
+            return f(*args, **kwargs)
+        
+        token = None
+        auth_header = request.headers.get('Authorization')
+        
+        if auth_header:
+            if auth_header.startswith('Bearer '):
+                token = auth_header.split(' ')[1]
+        else:
+            # Versuche den Token aus dem Cookie zu bekommen, falls vorhanden
+            token = request.cookies.get('token')
+        
         if not token:
-            return jsonify({"success": False, "error": {"code": "NO_TOKEN", "message": "Token missing"}}), 401
+            # Mit CORS-Headern antworten, auch bei Authentifizierungsfehlern
+            response = jsonify({
+                'success': False,
+                'error': {
+                    'code': 'NO_TOKEN',
+                    'message': 'Token is missing'
+                }
+            }), 401
+            
+            return response
+            
         try:
-            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-            request.user_id = data['user_id']  # Speichere user_id in request
-        except jwt.ExpiredSignatureError:
-            return jsonify({"success": False, "error": {"code": "TOKEN_EXPIRED", "message": "Token expired"}}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({"success": False, "error": {"code": "INVALID_TOKEN", "message": "Invalid token"}}), 401
+            # Token dekodieren
+            jwt_secret = os.getenv('JWT_SECRET')
+            data = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+            request.user_id = data['user_id']
+        except:
+            # Mit CORS-Headern antworten, auch bei Token-Dekodierungsfehlern
+            response = jsonify({
+                'success': False,
+                'error': {
+                    'code': 'INVALID_TOKEN',
+                    'message': 'Token is invalid or expired'
+                }
+            }), 401
+            
+            return response
+        
         return f(*args, **kwargs)
     return decorated
 
-@auth_bp.route('/login/<provider>')
+@auth_bp.route('/login/<provider>', methods=['GET', 'OPTIONS'])
 def login(provider):
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
     if provider not in ['google', 'github']:
         return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid provider"}}), 400
     # Use the exact redirect URI that matches the GitHub OAuth app configuration
     redirect_uri = url_for('api.auth.callback', provider=provider, _external=True)
     return oauth.create_client(provider).authorize_redirect(redirect_uri)
 
-@auth_bp.route('/callback/<provider>')
+@auth_bp.route('/callback/<provider>', methods=['GET', 'OPTIONS'])
 def callback(provider):
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
     if provider not in ['google', 'github']:
         return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid provider"}}), 400
     token = oauth.create_client(provider).authorize_access_token()
@@ -108,26 +180,39 @@ def callback(provider):
         db.session.commit()
     
     jwt_token = jwt.encode({'user_id': user.id, 'exp': datetime.utcnow() + timedelta(hours=24)}, current_app.config['SECRET_KEY'], algorithm='HS256')
-    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:8080')
+    frontend_url = os.getenv('FRONTEND_URL').strip()
+    if isinstance(jwt_token, bytes):
+        jwt_token = jwt_token.decode('utf-8')
+    jwt_token = jwt_token.strip()
     return redirect(f"{frontend_url}/auth-callback?token={jwt_token}")
 
-@auth_bp.route('/user', methods=['GET'])
+@auth_bp.route('/user', methods=['GET', 'OPTIONS'])
 @token_required
 def get_user():
+    # Bei OPTIONS-Anfragen gib sofort eine Antwort zurück
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+        
     user = User.query.get(request.user_id)
     if not user:
         return jsonify({"success": False, "error": {"code": "USER_NOT_FOUND", "message": "User not found"}}), 404
-    return jsonify({
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "avatar": user.avatar,
-        "credits": user.credits
-    }), 200
+    else:
+        return jsonify({
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "avatar": user.avatar,
+            "credits": user.credits
+        }), 200
 
-@auth_bp.route('/activity', methods=['GET'])
+@auth_bp.route('/activity', methods=['GET', 'OPTIONS'])
 @token_required
-def get_activity():
+def get_user_activity():
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
     activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.desc()).limit(20).all()
     return jsonify({
         "success": True,
@@ -145,9 +230,13 @@ def get_activity():
         }
     }), 200
 
-@auth_bp.route('/activity', methods=['POST'])
+@auth_bp.route('/activity', methods=['POST', 'OPTIONS'])
 @token_required
-def record_activity():
+def create_user_activity():
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
     data = request.json
     if not data or 'type' not in data or 'title' not in data:
         return jsonify({"success": False, "error": {"code": "INVALID_REQUEST", "message": "Invalid request"}}), 400
@@ -184,9 +273,13 @@ def record_activity():
         }
     }), 201
 
-@auth_bp.route('/payment', methods=['POST'])
+@auth_bp.route('/payment', methods=['POST', 'OPTIONS'])
 @token_required
-def process_payment():
+def create_payment():
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
     data = request.json
     if not data or 'amount' not in data or 'credits' not in data or 'payment_method' not in data:
         return jsonify({"success": False, "error": {"code": "INVALID_REQUEST", "message": "Invalid request"}}), 400
@@ -226,9 +319,13 @@ def process_payment():
         }
     }), 201
 
-@auth_bp.route('/payments', methods=['GET'])
+@auth_bp.route('/payments', methods=['GET', 'OPTIONS'])
 @token_required
 def get_payments():
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
     payments = Payment.query.filter_by(user_id=request.user_id).order_by(Payment.created_at.desc()).all()
     return jsonify({
         "success": True,

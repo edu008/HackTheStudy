@@ -4,6 +4,7 @@ import axios from "axios";
 import { useMutation } from "@tanstack/react-query";
 import { v4 as uuidv4 } from 'uuid';
 import { Button } from "@/components/ui/button";
+import { useTranslation } from 'react-i18next';
 
 // UI Components
 import Navbar from '@/components/Navbar';
@@ -38,6 +39,7 @@ interface Question {
   text: string;
   options: string[];
   correctAnswer: number;
+  correct?: number;
   explanation?: string;
 }
 
@@ -47,10 +49,16 @@ interface UploadResponse {
   flashcards?: Flashcard[];
   questions?: Question[];
   session_id?: string;
+  credits_available?: number;
   data?: {
     flashcards?: Flashcard[];
     questions?: Question[];
     test_questions?: Question[];
+  };
+  token_info?: {
+    input_tokens: number;
+    output_tokens: number;
+    cost: number;
   };
 }
 
@@ -62,23 +70,65 @@ interface SessionData {
     subtopics: string[];
     content_type?: string;
     language?: string;
+    files?: Array<any>;
+    processing_status?: string;
+  };
+  session_id: string;
+  topics?: {
+    main_topic: {
+      id: string;
+      name: string;
+    };
+    subtopics: Array<{
+      id: string;
+      name: string;
+    }>;
+  };
+  connections?: Array<{
+    id: string;
+    source_id: string;
+    target_id: string;
+    label: string;
+  }>;
+  concept_map?: {
+    nodes: Array<any>;
+    edges: Array<any>;
+    topics?: any;
   };
 }
 
 const Index = () => {
   const { toast } = useToast();
-  const { user, isLoading, signIn } = useAuth();
+  const { user, isLoading, signIn, refreshUserCredits } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   
   // App state for logged-in functionality
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [conceptMapData, setConceptMapData] = useState<{
+    topics: SessionData['topics'];
+    connections: SessionData['connections'];
+  } | null>(null);
+  
+  // Token-Tracking-Zustände hinzufügen
+  const [tokenInfoFlashcards, setTokenInfoFlashcards] = useState<{
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+  } | undefined>(undefined);
+  
+  const [tokenInfoQuestions, setTokenInfoQuestions] = useState<{
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+  } | undefined>(undefined);
   
   // Landing page navigation state
-  const [currentView, setCurrentView] = useState<'hero' | 'about' | 'login'>('hero');
+  const [currentView, setCurrentView] = useState<'hero' | 'about' | 'login' | 'test-simulator'>('hero');
   const heroSectionRef = useRef<HTMLDivElement>(null);
   const aboutSectionRef = useRef<HTMLDivElement>(null);
   const loginSectionRef = useRef<HTMLDivElement>(null);
@@ -109,6 +159,7 @@ const Index = () => {
     try {
       // Cache-busting Parameter hinzufügen, um sicherzustellen, dass wir frische Daten erhalten
       const timestamp = new Date().getTime();
+      const token = localStorage.getItem('exammaster_token');
       const response = await axios.get<{ success: boolean; data: SessionData }>(
         `${API_URL}/api/v1/results/${sessionIdToLoad}?nocache=${timestamp}`,
         { 
@@ -116,19 +167,60 @@ const Index = () => {
           headers: {
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
-            'Expires': '0'
+            'Expires': '0',
+            'Authorization': token ? `Bearer ${token}` : ''
           }
         }
       );
       
       if (response.data.success && response.data.data) {
         const sessionData = response.data.data;
-        console.log('DEBUG: Loaded session data:', sessionData);
+        console.log('DEBUG: Successfully loaded session data:', sessionData);
         
         // Immer die neuen Daten verwenden, unabhängig von früheren Zuständen
         setFlashcards(sessionData.flashcards || []);
         setQuestions(sessionData.test_questions || []);
         setSessionId(sessionIdToLoad);
+        
+        // Concept Map-Daten setzen, falls vorhanden
+        if (sessionData.concept_map) {
+          // Wir haben direkt concept_map-Daten
+          setConceptMapData({
+            topics: sessionData.concept_map.topics || sessionData.topics,
+            connections: sessionData.concept_map.edges || sessionData.connections || []
+          });
+        } else if (sessionData.topics || sessionData.connections) {
+          // Falls keine concept_map-Daten, aber topics/connections vorhanden sind
+          setConceptMapData({
+            topics: sessionData.topics,
+            connections: sessionData.connections
+          });
+        } else {
+          // Falls keine Concept Map-Daten vorhanden sind, versuchen wir diese getrennt zu laden
+          try {
+            const token = localStorage.getItem('exammaster_token');
+            const topicsResponse = await fetch(`${API_URL}/api/v1/topics/${sessionIdToLoad}`, {
+              headers: {
+                'Authorization': token ? `Bearer ${token}` : ''
+              }
+            });
+            
+            if (topicsResponse.ok) {
+              const topicsData = await topicsResponse.json();
+              
+              if (topicsData.success) {
+                setConceptMapData({
+                  topics: topicsData.topics,
+                  connections: topicsData.connections || []
+                });
+                console.log('DEBUG: Loaded concept map data separately:', topicsData);
+              }
+            }
+          } catch (error) {
+            console.error('DEBUG: Error loading concept map data separately:', error);
+            // Fehler beim Laden der Concept Map-Daten sind nicht kritisch und werden nur geloggt
+          }
+        }
         
         toast({
           title: "Analyse geladen",
@@ -264,9 +356,22 @@ const Index = () => {
 
   // Handle upload success
   const handleUploadSuccess = (data: UploadResponse) => {
+    // Setze zunächst die grundlegenden Daten
     setFlashcards(data.flashcards || []);
     setQuestions(data.questions || []);
     setSessionId(data.session_id);
+
+    // Wenn eine Session-ID vorhanden ist, lade die vollständigen Daten inklusive ConceptMap
+    if (data.session_id) {
+      console.log("Lade vollständige Session-Daten nach Upload:", data.session_id);
+      
+      // Kurze Verzögerung, damit die Datenbank Zeit hat, alle Daten zu speichern
+      setTimeout(() => {
+        loadSessionData(data.session_id!);
+      }, 500);
+    }
+
+    // Scrolle zu den Flashcards
     document.getElementById('flashcards')?.scrollIntoView({ behavior: 'smooth' });
   };
 
@@ -337,16 +442,79 @@ const Index = () => {
       return response.data;
     },
     onSuccess: (data) => {
+      console.log("FLASHCARDS API SUCCESS RESPONSE:", data);
       const newFlashcardsArray = data.data?.flashcards || data.flashcards || [];
+      console.log("New flashcards array:", newFlashcardsArray);
+      
+      // Token-Tracking-Informationen aktualisieren, falls vorhanden
+      if (data.token_info) {
+        setTokenInfoFlashcards({
+          inputTokens: data.token_info.input_tokens,
+          outputTokens: data.token_info.output_tokens,
+          cost: data.token_info.cost
+        });
+        console.log("Token usage updated for flashcards:", data.token_info);
+      }
+      
+      if (!newFlashcardsArray || newFlashcardsArray.length === 0) {
+        console.error("No flashcards found in response data");
+        toast({
+          title: "Keine Karteikarten erhalten",
+          description: "Es wurden keine neuen Karteikarten vom Server empfangen.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
       const newFlashcardsWithUniqueIds = newFlashcardsArray.map(f => ({
         ...f,
         id: uuidv4()
       }));
-      setFlashcards([...flashcards, ...newFlashcardsWithUniqueIds]);
+      
+      // State-Update mit Callback für Debugging
+      setFlashcards(prevFlashcards => {
+        const updatedFlashcards = [...prevFlashcards, ...newFlashcardsWithUniqueIds];
+        console.log(`Flashcards updated: ${prevFlashcards.length} -> ${updatedFlashcards.length}`);
+        return updatedFlashcards;
+      });
+      
+      // Aktualisiere die Benutzer-Credits, wenn sie in der Antwort enthalten sind
+      if (data.credits_available !== undefined && user) {
+        // Aktualisiere den lokalen User im localStorage
+        const storedUser = localStorage.getItem('exammaster_user');
+        if (storedUser) {
+          try {
+            const parsedUser = JSON.parse(storedUser);
+            parsedUser.credits = data.credits_available;
+            localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
+            
+            // Aktualisiere den Benutzer im Auth-Kontext
+            refreshUserCredits();
+            
+            // Aktualisiere den Benutzer im lokalen State
+            user.credits = data.credits_available;
+          } catch (error) {
+            console.error('Error updating user credits:', error);
+          }
+        }
+      }
+      
       toast({
         title: "Neue Karteikarten generiert",
         description: `${newFlashcardsWithUniqueIds.length} neue Karteikarten wurden erstellt.`,
       });
+      
+      // Nachdem wir neue Flashcards hinzugefügt haben, laden wir die aktuelle Session neu,
+      // um sicherzustellen, dass alle Daten konsistent sind
+      const sessionIdToReload = getCurrentSessionId();
+      if (sessionIdToReload) {
+        console.log("Reloading session data after generating flashcards:", sessionIdToReload);
+        
+        // Kurze Verzögerung, damit die Datenbank Zeit hat, die neuen Flashcards zu speichern
+        setTimeout(() => {
+          loadSessionData(sessionIdToReload);
+        }, 500);
+      }
     },
     onError: (error: any) => {
       // Spezielle Behandlung für 402 Payment Required (nicht genügend Credits)
@@ -355,6 +523,27 @@ const Index = () => {
         const message = errorData.message || "Nicht genügend Credits für diese Aktion.";
         const creditsRequired = errorData.credits_required || 0;
         const creditsAvailable = errorData.credits_available || 0;
+        
+        // Aktualisiere die Benutzer-Credits in der UI, falls verfügbar
+        if (user && creditsAvailable !== undefined && user.credits !== creditsAvailable) {
+          // Aktualisiere den lokalen User im localStorage
+          const storedUser = localStorage.getItem('exammaster_user');
+          if (storedUser) {
+            try {
+              const parsedUser = JSON.parse(storedUser);
+              parsedUser.credits = creditsAvailable;
+              localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
+              
+              // Aktualisiere den Benutzer im Auth-Kontext
+              refreshUserCredits();
+              
+              // Aktualisiere den Benutzer im lokalen State
+              user.credits = creditsAvailable;
+            } catch (error) {
+              console.error('Error updating user credits:', error);
+            }
+          }
+        }
         
         toast({
           title: "Credits nicht ausreichend",
@@ -397,13 +586,22 @@ const Index = () => {
         throw new Error('Nicht eingeloggt. Bitte melde dich an, um diese Funktion zu nutzen.');
       }
       
+      // Füge einen Timestamp hinzu, um Cache-Probleme zu vermeiden
+      const timestamp = new Date().getTime();
+      
       const response = await axios.post<UploadResponse>(
-        `${API_URL}/api/v1/generate-more-questions`,
-        { session_id: currentSessionId, count: 5 },
+        `${API_URL}/api/v1/generate-more-questions?t=${timestamp}`,
+        { 
+          session_id: currentSessionId, 
+          count: 3,
+          timestamp: timestamp // Zusätzlich im Body für Server
+        },
         { 
           headers: { 
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
+            "Authorization": `Bearer ${token}`,
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
           }, 
           withCredentials: true 
         }
@@ -411,49 +609,84 @@ const Index = () => {
       return response.data;
     },
     onSuccess: (data) => {
-      console.log('DEBUG: Adding new questions to state', data);
+      console.log("QUESTIONS API SUCCESS RESPONSE:", data);
+      const newQuestionsArray = data.data?.questions || data.questions || [];
+      console.log("New questions array:", newQuestionsArray);
       
-      let newQuestionsArray = [];
-      if (data.data && Array.isArray(data.data.questions)) {
-        newQuestionsArray = data.data.questions;
-      } else if (data.data && typeof data.data === 'object' && 'questions' in data.data) {
-        newQuestionsArray = data.data.questions;
-      } else if (Array.isArray(data.questions)) {
-        newQuestionsArray = data.questions;
-      } else {
-        console.warn('DEBUG: Could not find questions in response:', data);
-        newQuestionsArray = [];
+      // Token-Tracking-Informationen aktualisieren, falls vorhanden
+      if (data.token_info) {
+        setTokenInfoQuestions({
+          inputTokens: data.token_info.input_tokens,
+          outputTokens: data.token_info.output_tokens,
+          cost: data.token_info.cost
+        });
+        console.log("Token usage updated for questions:", data.token_info);
       }
       
-      const validQuestionsArray = newQuestionsArray.filter(q => 
-        q && q.text && !q.text.includes("Could not generate") && 
-        q.options && Array.isArray(q.options) && q.options.length >= 2
-      );
-      
-      const newQuestionsWithUniqueIds = validQuestionsArray.map(q => ({
-        ...q,
-        id: uuidv4(),
-        correctAnswer: q.correctAnswer !== undefined ? q.correctAnswer : (q as any).correct !== undefined ? (q as any).correct : 0
-      }));
-      
-      const existingTexts = new Set(questions.map(q => q.text.toLowerCase().trim()));
-      const filteredNewQuestions = newQuestionsWithUniqueIds.filter(q => !existingTexts.has(q.text.toLowerCase().trim()));
-      
-      if (filteredNewQuestions.length === 0) {
+      if (!newQuestionsArray || newQuestionsArray.length === 0) {
+        console.error("No questions found in response data");
         toast({
-          title: "Keine neuen Fragen",
-          description: "Es konnten keine neuen Fragen generiert werden.",
+          title: "Keine Testfragen erhalten",
+          description: "Es wurden keine neuen Testfragen vom Server empfangen.",
           variant: "destructive",
         });
         return;
       }
       
-      const updatedQuestions = [...questions, ...filteredNewQuestions];
-      setQuestions(updatedQuestions);
+      const newQuestionsWithUniqueIds = newQuestionsArray.map(q => ({
+        ...q,
+        id: uuidv4(),
+        // Sicherstellen, dass alle notwendigen Felder für die Frage-Komponente vorhanden sind
+        text: q.text,
+        options: q.options || [],
+        correctAnswer: q.correct,
+        explanation: q.explanation || ''
+      }));
+      
+      // State-Update mit Callback für Debugging
+      setQuestions(prevQuestions => {
+        const updatedQuestions = [...prevQuestions, ...newQuestionsWithUniqueIds];
+        console.log(`Questions updated: ${prevQuestions.length} -> ${updatedQuestions.length}`);
+        return updatedQuestions;
+      });
+      
+      // Aktualisiere die Benutzer-Credits, wenn sie in der Antwort enthalten sind
+      if (data.credits_available !== undefined && user) {
+        // Aktualisiere den lokalen User im localStorage
+        const storedUser = localStorage.getItem('exammaster_user');
+        if (storedUser) {
+          try {
+            const parsedUser = JSON.parse(storedUser);
+            parsedUser.credits = data.credits_available;
+            localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
+            
+            // Aktualisiere den Benutzer im Auth-Kontext
+            refreshUserCredits();
+            
+            // Aktualisiere den Benutzer im lokalen State
+            user.credits = data.credits_available;
+          } catch (error) {
+            console.error('Error updating user credits:', error);
+          }
+        }
+      }
+      
       toast({
         title: "Neue Testfragen generiert",
-        description: `${filteredNewQuestions.length} neue Testfragen wurden erstellt.`,
+        description: `${newQuestionsWithUniqueIds.length} neue Testfragen wurden erstellt.`,
       });
+      
+      // Nachdem wir neue Testfragen hinzugefügt haben, laden wir die aktuelle Session neu,
+      // um sicherzustellen, dass alle Daten konsistent sind
+      const sessionIdToReload = getCurrentSessionId();
+      if (sessionIdToReload) {
+        console.log("Reloading session data after generating questions:", sessionIdToReload);
+        
+        // Kurze Verzögerung, damit die Datenbank Zeit hat, die neuen Testfragen zu speichern
+        setTimeout(() => {
+          loadSessionData(sessionIdToReload);
+        }, 500);
+      }
     },
     onError: (error: any) => {
       // Spezielle Behandlung für 402 Payment Required (nicht genügend Credits)
@@ -462,6 +695,27 @@ const Index = () => {
         const message = errorData.message || "Nicht genügend Credits für diese Aktion.";
         const creditsRequired = errorData.credits_required || 0;
         const creditsAvailable = errorData.credits_available || 0;
+        
+        // Aktualisiere die Benutzer-Credits in der UI, falls verfügbar
+        if (user && creditsAvailable !== undefined && user.credits !== creditsAvailable) {
+          // Aktualisiere den lokalen User im localStorage
+          const storedUser = localStorage.getItem('exammaster_user');
+          if (storedUser) {
+            try {
+              const parsedUser = JSON.parse(storedUser);
+              parsedUser.credits = creditsAvailable;
+              localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
+              
+              // Aktualisiere den Benutzer im Auth-Kontext
+              refreshUserCredits();
+              
+              // Aktualisiere den Benutzer im lokalen State
+              user.credits = creditsAvailable;
+            } catch (error) {
+              console.error('Error updating user credits:', error);
+            }
+          }
+        }
         
         toast({
           title: "Credits nicht ausreichend",
@@ -577,7 +831,7 @@ const Index = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="animate-pulse text-lg">Loading...</div>
+        <div className="animate-pulse text-lg">{t('common.loading')}</div>
       </div>
     );
   }
@@ -680,8 +934,8 @@ const Index = () => {
                   
                   // Zeige eine Benachrichtigung
                   toast({
-                    title: "Neue Session gestartet",
-                    description: "Die alte Session wurde entfernt und eine neue Session wird erstellt.",
+                    title: t('index.newSession.title'),
+                    description: t('index.newSession.description'),
                   });
                 }}
               />
@@ -689,12 +943,6 @@ const Index = () => {
             <section id="flashcards" className="section-container">
               <div className="max-w-5xl mx-auto">
                 <div className="text-center mb-12 space-y-4">
-                  <h2 className="text-3xl md:text-4xl font-bold animate-fade-in">
-                    Interaktive Karteikarten
-                  </h2>
-                  <p className="text-lg text-muted-foreground max-w-2xl mx-auto animate-fade-in">
-                    Erstelle personalisierte Karteikarten und lerne mit deinem eigenen Tempo.
-                  </p>
                 </div>
                 
                 {/* Credits-Fehlerbox anzeigen, wenn nicht genügend Credits vorhanden sind */}
@@ -707,10 +955,12 @@ const Index = () => {
                         <line x1="12" y1="16" x2="12.01" y2="16" />
                       </svg>
                       <div>
-                        <h3 className="font-medium">Nicht genügend Credits</h3>
+                        <h3 className="font-medium">{t('index.insufficientCredits.title')}</h3>
                         <p className="text-sm text-muted-foreground">
-                          Für neue Karteikarten benötigst du {insufficientCredits.creditsRequired} Credits.
-                          Aktuell verfügbar: {insufficientCredits.creditsAvailable} Credits.
+                          {t('index.insufficientCredits.flashcardsNeeded', { 
+                            required: insufficientCredits.creditsRequired,
+                            available: insufficientCredits.creditsAvailable 
+                          })}
                         </p>
                       </div>
                     </div>
@@ -724,7 +974,7 @@ const Index = () => {
                         <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
                         <line x1="1" y1="10" x2="23" y2="10" />
                       </svg>
-                      Credits aufladen
+                      {t('index.buyCredits')}
                     </Button>
                   </div>
                 )}
@@ -733,18 +983,13 @@ const Index = () => {
                   flashcards={flashcards}
                   onGenerateMore={() => generateMoreFlashcardsMutation.mutate()}
                   isGenerating={generateMoreFlashcardsMutation.isPending}
+                  tokenInfo={tokenInfoFlashcards}
                 />
               </div>
             </section>
             <section id="test-simulator" className="section-container bg-secondary/30">
               <div className="max-w-5xl mx-auto">
                 <div className="text-center mb-12 space-y-4">
-                  <h2 className="text-3xl md:text-4xl font-bold animate-fade-in">
-                    Simulations-Test
-                  </h2>
-                  <p className="text-lg text-muted-foreground max-w-2xl mx-auto animate-fade-in">
-                    Überprüfe dein Wissen mit einer Sammlung von Übungsfragen.
-                  </p>
                 </div>
                 
                 {/* Credits-Fehlerbox anzeigen, wenn nicht genügend Credits vorhanden sind */}
@@ -757,10 +1002,12 @@ const Index = () => {
                         <line x1="12" y1="16" x2="12.01" y2="16" />
                       </svg>
                       <div>
-                        <h3 className="font-medium">Nicht genügend Credits</h3>
+                        <h3 className="font-medium">{t('index.insufficientCredits.title')}</h3>
                         <p className="text-sm text-muted-foreground">
-                          Für neue Testfragen benötigst du {insufficientCredits.creditsRequired} Credits.
-                          Aktuell verfügbar: {insufficientCredits.creditsAvailable} Credits.
+                          {t('index.insufficientCredits.questionsNeeded', { 
+                            required: insufficientCredits.creditsRequired,
+                            available: insufficientCredits.creditsAvailable 
+                          })}
                         </p>
                       </div>
                     </div>
@@ -774,20 +1021,33 @@ const Index = () => {
                         <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
                         <line x1="1" y1="10" x2="23" y2="10" />
                       </svg>
-                      Credits aufladen
+                      {t('index.buyCredits')}
                     </Button>
                   </div>
                 )}
                 
-                <TestSimulator
+                <TestSimulator 
                   questions={questions}
                   onGenerateMore={() => generateMoreQuestionsMutation.mutate()}
                   isGenerating={generateMoreQuestionsMutation.isPending}
+                  tokenInfo={tokenInfoQuestions}
                 />
               </div>
             </section>
             <section id="concept-mapper">
-              <ConceptMapper sessionId={sessionId} />
+              {sessionId && sessionId.length > 0 ? (
+                <ConceptMapper 
+                  sessionId={sessionId} 
+                  conceptMapData={conceptMapData}
+                />
+              ) : (
+                <div className="max-w-5xl mx-auto py-20 px-4 text-center">
+                  <h2 className="text-3xl md:text-4xl font-bold mb-6">{t('conceptMap.title')}</h2>
+                  <p className="text-lg text-muted-foreground mb-8">
+                    {t('index.conceptMap.uploadPrompt')}
+                  </p>
+                </div>
+              )}
             </section>
           </main>
           

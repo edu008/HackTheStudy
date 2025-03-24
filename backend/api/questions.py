@@ -1,260 +1,195 @@
 from flask import request, jsonify, current_app, g
 from . import api_bp
 from .utils import generate_additional_questions, detect_language
-from models import db, Upload, Question, UserActivity, Topic, User
+from core.models import db, Upload, Question, UserActivity, Topic, User
 from marshmallow import Schema, fields, ValidationError
 import logging
-from .auth import token_required
-from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
+from api.token_tracking import check_credits_available, calculate_token_cost, deduct_credits
 import tiktoken
 import json
+from .auth import token_required
+from openai import OpenAI
+import os
 
 logger = logging.getLogger(__name__)
+
+# CORS-Konfiguration für alle Endpoints
+CORS_CONFIG = {
+    "supports_credentials": True,
+    "origins": os.environ.get('CORS_ORIGINS', '*'),
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization"]
+}
 
 class QuestionRequestSchema(Schema):
     session_id = fields.Str(required=True)
     count = fields.Int(required=True, validate=lambda n: n > 0)
 
-@api_bp.route('/generate-more-questions', methods=['POST'])
-@token_required
+@api_bp.route('/generate-more-questions', methods=['POST', 'OPTIONS'])
 def generate_more_questions():
-    try:
-        data = QuestionRequestSchema().load(request.json)
-    except ValidationError as e:
-        return jsonify({"success": False, "error": {"code": "VALIDATION_ERROR", "message": str(e.messages)}}), 400
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+        
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
+    data = request.get_json()
+    if not data or 'session_id' not in data:
+        return jsonify({'error': 'Session-ID erforderlich', 'success': False}), 400
     
     session_id = data['session_id']
-    count = max(data['count'], 3)  # Mindestens 3 Fragen generieren
-    logger.info(f"Generating {count} more questions for session_id: {session_id}")
+    count = data.get('count', 3)  # Standardmäßig 3 neue Fragen
     
+    # Extrahiere den Timestamp, falls vorhanden, um Caching zu vermeiden
+    timestamp = data.get('timestamp', '')
+    logger.info(f"Generating questions with timestamp: {timestamp}")
+    
+    # Lade die Sitzungsdaten
     upload = Upload.query.filter_by(session_id=session_id).first()
     if not upload:
-        return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+        return jsonify({'error': 'Sitzung nicht gefunden', 'success': False}), 404
     
-    # Import der Credit-Service-Funktionen
-    from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
-    from flask import g
-    import tiktoken
-    
-    # Helper-Funktion für die Tokenzählung
-    def count_tokens(text, model="gpt-4o"):
-        """Zählt die Anzahl der Tokens in einem Text für ein bestimmtes Modell"""
-        try:
-            encoding = tiktoken.encoding_for_model(model)
-            return len(encoding.encode(text))
-        except:
-            # Fallback: Ungefähre Schätzung (1 Token ≈ 4 Zeichen)
-            return len(text) // 4
-    
-    # Hole alle bestehenden Fragen für diese Upload-ID
-    existing_questions = [
-        {"text": q.text, "options": q.options, "correct": q.correct_answer, "explanation": q.explanation}
-        for q in Question.query.filter_by(upload_id=upload.id).all()
+    # Lade die vorhandenen Fragen
+    existing_questions = Question.query.filter_by(upload_id=upload.id).all()
+    existing_questions_data = [
+        {
+            'text': q.text, 
+            'options': q.options, 
+            'correct': q.correct_answer,
+            'explanation': q.explanation
+        } 
+        for q in existing_questions
     ]
-    logger.info(f"Found {len(existing_questions)} existing questions for session_id: {session_id}")
     
-    # Initialisiere den OpenAI-Client
-    from openai import OpenAI
-    client = OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
-    
-    # Ermittle die Sprache und analysiere den Inhalt
-    language = detect_language(upload.content)
-    main_topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
-    
-    # Fallback, falls kein Hauptthema gefunden wird
-    main_topic_name = "Unknown Topic"
+    # Lade die Analyse
+    main_topic = "Unbekanntes Thema"
     subtopics = []
     
-    if main_topic:
-        main_topic_name = main_topic.name
-        subtopics = [topic.name for topic in Topic.query.filter_by(upload_id=upload.id, is_main_topic=False).all()]
+    # Prüfe auf ein vorhandenes Hauptthema
+    main_topic_obj = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
+    if main_topic_obj:
+        main_topic = main_topic_obj.name
     
+    # Lade Subtopics
+    subtopic_objs = Topic.query.filter_by(upload_id=upload.id, is_main_topic=False, parent_id=None).all()
+    subtopics = [subtopic.name for subtopic in subtopic_objs]
+    
+    # Erstelle eine Analyse-Zusammenfassung
     analysis = {
-        "main_topic": main_topic_name,
-        "subtopics": subtopics
+        'main_topic': main_topic,
+        'subtopics': [{'name': subtopic} for subtopic in subtopics]
     }
-    logger.info(f"Analysis for session_id {session_id}: Main topic={analysis['main_topic']}, Subtopics={analysis['subtopics']}")
-    
-    # Schätze die maximalen Tokenkosten für diesen Aufruf
-    # Dies ist nur eine Schätzung für die Prüfung vor der Generierung
-    # Fragen haben mehr Token als Flashcards wegen Optionen und Erklärungen
-    estimated_input_tokens = 2000 + (count * 200)  # Kontext + Prompt + Eingabe pro Frage
-    estimated_output_tokens = count * 300  # ca. 300 Tokens Ausgabe pro Frage
-    max_estimated_cost = calculate_token_cost(estimated_input_tokens, estimated_output_tokens)
-    
-    # Verdopple die geschätzten Kosten für den Gewinn
-    max_estimated_cost = max_estimated_cost * 2
-    
-    # Überprüfe, ob genügend Credits vorhanden sind
-    if not check_credits_available(max_estimated_cost):
-        # Hole den aktuellen Benutzer und seine Credits
-        user = User.query.get(g.user.id)
-        current_credits = user.credits if user else 0
-        
-        return jsonify({
-            "success": False,
-            "error": {
-                "code": "INSUFFICIENT_CREDITS",
-                "message": f"Nicht genügend Credits. Sie benötigen maximal {max_estimated_cost} Credits für {count} neue Testfragen, haben aber nur {current_credits} Credits.",
-                "credits_required": max_estimated_cost,
-                "credits_available": current_credits
-            }
-        }), 402  # 402 Payment Required
-    
-    # Die Anzahl der zu generierenden Fragen erhöhen, um sicherzustellen, dass nach der Duplikatfilterung 
-    # noch genügend übrig bleiben
-    generation_count = max(count * 2, 10)  # Erhöhte Anzahl zur Generation
     
     try:
-        # Generiere den Prompt für die Fragen
-        prompt_template = f"""
-        Ich benötige {generation_count} ZUSÄTZLICHE, EINZIGARTIGE Testfragen mit Multiple-Choice-Optionen, die sich VÖLLIG von den vorhandenen unterscheiden.
+        # Berechne geschätzte Kosten für diesen Aufruf
+        # Wir schätzen Tokens basierend auf vorhandenen Fragen und dem gewünschten Count
+        estimated_input_tokens = 1000 + len(existing_questions) * 100
+        estimated_output_tokens = count * 200  # Grobe Schätzung
         
-        Hauptthema: {analysis['main_topic']}
-        Unterthemen: {', '.join(analysis['subtopics'])}
+        # Berechne die Kosten
+        estimated_cost = calculate_token_cost(estimated_input_tokens, estimated_output_tokens)
         
-        VORHANDENE TESTFRAGEN (DIESE NICHT DUPLIZIEREN ODER UMFORMULIEREN):
-        """
+        # Prüfe, ob Benutzer genug Credits hat
+        if not check_credits_available(estimated_cost):
+            return jsonify({
+                'error': {
+                    'message': f'Nicht genügend Credits. Benötigt: {estimated_cost} Credits für diese Anfrage.',
+                    'credits_required': estimated_cost,
+                    'credits_available': g.user.credits if hasattr(g, 'user') and g.user else 0
+                },
+                'error_type': 'insufficient_credits',
+                'success': False
+            }), 402
         
-        # Füge die vorhandenen Fragen zum Prompt hinzu
-        for i, q in enumerate(existing_questions[:5]):
-            options_text = str(q.get('options', []))
-            correct_answer = q.get('correct', 0)
-            prompt_template += f"\n{i+1}. Frage: {q.get('text', '')}\nOptionen: {options_text}\nRichtige Antwort: {correct_answer}"
+        # Berechne tatsächlich abzuziehende Credits nach API-Aufruf
+        # Diese werden während der API-Generierung berechnet und abgezogen
         
-        # Füge Format-Anforderungen hinzu
-        prompt_template += """
+        # Initialize OpenAI client
+        openai_api_key = current_app.config.get('OPENAI_API_KEY')
+        client = OpenAI(api_key=openai_api_key)
         
-        FORMATANFORDERUNGEN:
-        - Jede Frage sollte einen klaren Fragetext, 4 Optionen und die richtige Antwort haben
-        - Die richtige Antwort sollte als Index der Option (0-3) angegeben werden
-        - Füge eine kurze Erklärung für die richtige Antwort hinzu
-        
-        GEBEN SIE NUR DIE FRAGEN IN DIESEM JSON-FORMAT ZURÜCK:
-        [
-          {
-            "text": "Ihre Frage hier",
-            "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
-            "correct": 0,
-            "explanation": "Erklärung, warum Option 1 richtig ist"
-          }
-        ]
-        """
-        
-        # Zähle die Tokens für den Prompt
-        input_tokens = count_tokens(prompt_template)
-        
-        # Verwende die Funktion aus utils.py für einzigartige, zusätzliche Fragen
+        # Generiere neue Fragen
         new_questions = generate_additional_questions(
             upload.content,
             client,
-            analysis=analysis,
-            existing_questions=existing_questions,
-            num_to_generate=generation_count,  # Erhöhte Anzahl
-            language=language
+            analysis,
+            existing_questions_data,
+            count,
+            language='de' if detect_language(upload.content) == 'de' else 'en',
+            session_id=session_id,  # Übergebe session_id für Token-Tracking
+            function_name="generate_more_questions"  # Definiere die Funktion für das Tracking
         )
         
-        # Filtere Duplikate basierend auf dem Text
-        filtered_questions = [
-            q for q in new_questions
-            if not any(q['text'].lower() == ex['text'].lower() for ex in existing_questions)
-        ]
-        
-        # Begrenze auf die angeforderte Anzahl
-        limited_questions = filtered_questions[:count]
-        logger.info(f"Generated {len(filtered_questions)} new questions before limiting to {count}")
-        
-        # Berechne die tatsächlichen Tokens für die Antwort
-        response_text = json.dumps(limited_questions)
-        output_tokens = count_tokens(response_text)
-        
-        # Berechne die tatsächlichen Kosten basierend auf den verwendeten Tokens
-        actual_cost = calculate_token_cost(input_tokens, output_tokens)
-        
-        # Verdopple die tatsächlichen Kosten für den Gewinn
-        actual_cost = actual_cost * 2
-        
-        # Ziehe die Credits vom Benutzer ab
-        deduct_credits(g.user.id, actual_cost)
-        logger.info(f"Deducted {actual_cost} credits from user {g.user.id} for generating {count} questions")
-        
-    except Exception as e:
-        logger.error(f"Error calling generate_additional_questions: {str(e)}")
-        # Generiere einfache Fallback-Fragen, wenn die OpenAI-API fehlschlägt
-        filtered_questions = generate_fallback_questions(analysis, generation_count, existing_questions, language)
-        logger.info(f"Generated {len(filtered_questions)} fallback questions")
-    
-    # Überprüfe, ob genug einzigartige Fragen generiert wurden
-    if len(filtered_questions) < 3:
-        # Wenn nicht genug, generiere weitere Fallback-Fragen
-        additional_questions = generate_fallback_questions(
-            analysis, 
-            max(10, 3 - len(filtered_questions)), 
-            existing_questions + filtered_questions,
-            language
-        )
-        filtered_questions.extend(additional_questions)
-        logger.info(f"Added {len(additional_questions)} additional fallback questions")
-    
-    try:
-        # Begrenze die Anzahl der zurückgegebenen Fragen auf die angeforderte Anzahl,
-        # aber mindestens 3
-        final_count = max(count, 3)
-        filtered_questions = filtered_questions[:final_count]
-        
-        # Speichere nur gültige Fragen in der Datenbank
-        for q in filtered_questions:
-            if q.get('text') and q.get('options') and not q['text'].startswith('Could not generate'):
-                question = Question(
-                    upload_id=upload.id,
-                    text=q['text'],
-                    options=q['options'],
-                    correct_answer=q.get('correct', 0),
-                    explanation=q.get('explanation', '')
-                )
-                db.session.add(question)
-                logger.info(f"Saved question: {q['text']}")
-        
-        # Begrenze auf 5 Einträge
-        existing_activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.asc()).all()
-        if len(existing_activities) >= 5:
-            oldest_activity = existing_activities[0]
-            db.session.delete(oldest_activity)
-            logger.info(f"Deleted oldest activity: {oldest_activity.id}")
-        
-        # Logge und speichere Benutzeraktivität
-        activity = UserActivity(
-            user_id=request.user_id,
-            activity_type='test',
-            title=f"Generated {len(filtered_questions)} more questions",
-            main_topic=analysis['main_topic'],
-            subtopics=analysis['subtopics'],
-            session_id=session_id,
-            details={"count": len(filtered_questions), "session_id": session_id}
-        )
-        db.session.add(activity)
-        logger.info(f"Logged user activity for generating {len(filtered_questions)} questions")
+        # Speichere neue Fragen in der Datenbank
+        for question_data in new_questions:
+            question = Question(
+                upload_id=upload.id,
+                text=question_data['text'],
+                options=question_data['options'],
+                correct_answer=question_data['correct'],
+                explanation=question_data.get('explanation', '')
+            )
+            db.session.add(question)
         
         db.session.commit()
-        return jsonify({
-            "success": True,
-            "data": {
-                "questions": filtered_questions
-            },
-            "message": f"Successfully generated {len(filtered_questions)} additional questions"
-        }), 200
-    except Exception as e:
-        logger.error(f"Error saving questions to database for session_id {session_id}: {str(e)}")
-        db.session.rollback()
         
-        # Wenn der Datenbankfehler auftritt, trotzdem versuchen, Fragen zurückzugeben
+        # Aktualisiere die Nutzungszeit für diese Sitzung
+        upload.last_used_at = db.func.current_timestamp()
+        db.session.commit()
+        
+        # Lade die aktualisierten Fragen
+        all_questions = Question.query.filter_by(upload_id=upload.id).all()
+        questions_data = [
+            {
+                'id': q.id, 
+                'text': q.text, 
+                'options': q.options, 
+                'correct': q.correct_answer,
+                'explanation': q.explanation
+            } 
+            for q in all_questions
+        ]
+        
+        # Erstelle eine UserActivity-Eintrag für diese Aktion
+        if hasattr(g, 'user') and g.user:
+            user_activity = UserActivity(
+                user_id=g.user.id,
+                activity_type='question',
+                title=f'Generierte {len(new_questions)} zusätzliche Testfragen',
+                main_topic=main_topic,
+                subtopics=subtopics,
+                session_id=session_id,
+                details={
+                    'count': len(new_questions),
+                    'total_count': len(questions_data)
+                }
+            )
+            db.session.add(user_activity)
+            db.session.commit()
+        
+        # Rückgabe der erfolgreich generierten Fragen
         return jsonify({
-            "success": True,
-            "data": {
-                "questions": filtered_questions
+            'success': True,
+            'message': f'{len(new_questions)} neue Testfragen wurden erfolgreich generiert.',
+            'questions': questions_data,  # Direkt auf der ersten Ebene für ältere Client-Versionen
+            'data': {
+                'questions': questions_data
             },
-            "message": "Questions generated but could not be saved to database"
-        }), 200
+            'credits_available': g.user.credits if hasattr(g, 'user') and g.user else 0
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        print(f"Fehler beim Generieren von Testfragen: {str(e)}")
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
 
 def generate_fallback_questions(analysis, count, existing_questions, language='en'):
     """
@@ -536,9 +471,19 @@ def generate_fallback_questions(analysis, count, existing_questions, language='e
     
     return questions
 
-@api_bp.route('/questions/generate/<session_id>', methods=['POST'])
-@token_required
+@api_bp.route('/questions/generate/<session_id>', methods=['POST', 'OPTIONS'])
 def generate_questions_route(session_id):
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+        
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
     # Parameter aus der Anfrage extrahieren
     count = request.json.get('count', 10)  # Standardmäßig 10 Fragen generieren
     
@@ -561,10 +506,18 @@ def generate_questions_route(session_id):
         
     # Schätze die Kosten basierend auf der Länge des Inhalts
     estimated_prompt_tokens = min(content_length // 3, 100000)  # Ungefähre Schätzung: 1 Token pro 3 Zeichen
-    estimated_output_tokens = 3000  # Geschätzte Ausgabe für Fragen (mehr als Flashcards)
+    
+    # Anpassung der Output-Token-Schätzung basierend auf der Eingabegröße
+    if estimated_prompt_tokens < 100:
+        estimated_output_tokens = 200  # Minimale Ausgabe für winzige Dokumente
+    elif estimated_prompt_tokens < 500:
+        estimated_output_tokens = 500  # Reduzierte Ausgabe für kleine Dokumente
+    else:
+        estimated_output_tokens = 3000  # Geschätzte Ausgabe für Fragen
     
     # Berechne die ungefähren Kosten
-    estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens)
+    content_tokens = count_tokens(upload.content)
+    estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens, document_tokens=content_tokens)
     
     # Prüfe, ob der Benutzer genügend Credits hat
     if not check_credits_available(estimated_cost):

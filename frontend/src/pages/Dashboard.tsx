@@ -11,15 +11,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import UserHistory from '@/components/UserHistory';
 import PaymentHistory from '@/components/PaymentHistory';
 import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from 'react-i18next';
 
 const Dashboard = () => {
   const { user, isLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (!isLoading && !user) {
-      navigate('/signin');
+      navigate('/');
     }
   }, [user, isLoading, navigate]);
 
@@ -35,8 +37,8 @@ const Dashboard = () => {
                 'flashcards';
     
     toast({
-      title: "Analyse wird geladen",
-      description: `Navigiere zu "${mainTopic}"...`,
+      title: t('dashboard.loadingAnalysis'),
+      description: t('dashboard.navigatingTo', { topic: mainTopic }),
     });
     
     // Use navigate with state to pass the session ID
@@ -53,7 +55,7 @@ const Dashboard = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="animate-pulse text-lg">Loading...</div>
+        <div className="animate-pulse text-lg">{t('common.loading')}</div>
       </div>
     );
   }
@@ -79,7 +81,7 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="flex justify-between items-center py-2 border-b">
-                <span className="font-medium">Credits</span>
+                <span className="font-medium">{t('navigation.credits')}</span>
                 <span className="font-bold">{user.credits}</span>
               </div>
               <Button 
@@ -88,7 +90,7 @@ const Dashboard = () => {
                 onClick={() => navigate('/payment')}
               >
                 <CreditCard className="mr-2 h-4 w-4" />
-                Credits kaufen
+                {t('navigation.buyCredits')}
               </Button>
             </CardContent>
           </Card>
@@ -96,8 +98,8 @@ const Dashboard = () => {
           {/* User Activities and History */}
           <Card className="md:col-span-2">
             <CardHeader>
-              <CardTitle>Aktivitäten</CardTitle>
-              <CardDescription>Ihre letzten Aktivitäten auf HackTheStudy</CardDescription>
+              <CardTitle>{t('dashboard.title')}</CardTitle>
+              <CardDescription>{t('dashboard.welcomeBack')}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
@@ -110,7 +112,7 @@ const Dashboard = () => {
                   }}
                 >
                   <Upload className="h-6 w-6 mb-2" />
-                  <span>Prüfung hochladen</span>
+                  <span>{t('uploader.title')}</span>
                 </Button>
                 <Button 
                   variant="outline" 
@@ -121,7 +123,7 @@ const Dashboard = () => {
                   }}
                 >
                   <Lightbulb className="h-6 w-6 mb-2" />
-                  <span>Karteikarten erstellen</span>
+                  <span>{t('flashcards.title')}</span>
                 </Button>
                 <Button 
                   variant="outline" 
@@ -132,7 +134,7 @@ const Dashboard = () => {
                   }}
                 >
                   <BookOpen className="h-6 w-6 mb-2" />
-                  <span>Prüfungssimulator</span>
+                  <span>{t('tests.title')}</span>
                 </Button>
                 <Button 
                   variant="outline" 
@@ -143,13 +145,13 @@ const Dashboard = () => {
                   }}
                 >
                   <Network className="h-6 w-6 mb-2" />
-                  <span>Konzept-Mapper</span>
+                  <span>{t('conceptMap.title')}</span>
                 </Button>
               </div>
               <Tabs defaultValue="activity" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="activity">Aktivitätshistorie</TabsTrigger>
-                  <TabsTrigger value="payments">Zahlungshistorie</TabsTrigger>
+                  <TabsTrigger value="activity">{t('dashboard.history')}</TabsTrigger>
+                  <TabsTrigger value="payments">{t('dashboard.payments')}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="activity">
                   <UserHistory onSessionSelect={handleSessionSelect} />

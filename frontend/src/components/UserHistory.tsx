@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,8 +19,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import React from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { API_URL, axiosInstance } from '../lib/api';
 
 interface SessionActivity {
   id: string;
@@ -52,27 +53,79 @@ interface UserHistoryProps {
 const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
   const [activities, setActivities] = useState<SessionActivity[]>([]);
   const [sessions, setSessions] = useState<SessionData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [mainTopic, setMainTopic] = useState<string>("");
   const [flashcards, setFlashcards] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, refreshUserCredits } = useAuth();
+  const { t, i18n } = useTranslation();
 
-  useEffect(() => {
+  // loadActivities als useCallback definieren, um sicherzustellen, dass es stabil ist
+  const loadActivities = useCallback(async () => {
+    // Prüfen ob ein Benutzer vorhanden ist
     if (!user) {
-      toast({
-        title: "Nicht authentifiziert",
-        description: "Bitte melden Sie sich an, um Ihre Historie zu sehen.",
-        variant: "destructive",
-      });
-      navigate('/login');
+      console.log("Kein Benutzer angemeldet, lade keine History-Daten");
       return;
     }
-    loadActivities();
-  }, [user, navigate]);
+    
+    if (loading) {
+      console.log("Ladevorgang bereits aktiv, überspringe...");
+      return; // Verhindere parallele Aufrufe
+    }
+    
+    console.log("Starte Laden der History-Daten...");
+    setLoading(true);
+    
+    try {
+      const token = localStorage.getItem('exammaster_token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      
+      console.log("Sende API-Anfrage für History-Daten...");
+      const response = await axios.get(`${API_URL}/api/v1/user-history`, { 
+        headers,
+        withCredentials: true 
+      });
+      
+      if (response.data.success && Array.isArray(response.data.activities)) {
+        console.log(`${response.data.activities.length} Aktivitäten geladen.`);
+        setActivities(response.data.activities);
+      } else {
+        console.warn("⚠️ Keine Aktivitäten gefunden.");
+        setActivities([]);
+      }
+    } catch (error) {
+      console.error("❌ Fehler beim Abrufen der Aktivitäten:", error);
+      toast({
+        title: t('common.error'),
+        description: t('dashboard.historySection.loadError', 'Die Aktivitäten konnten nicht geladen werden.'),
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+      console.log("Laden der History-Daten abgeschlossen.");
+    }
+  }, [toast, user, t]); // Entferne loading aus den Abhängigkeiten, damit es nicht bei jeder Änderung ausgelöst wird
+
+  // Initialer Ladevorgang - nur einmal beim Mounten
+  useEffect(() => {
+    if (!isInitialized && user) {
+      console.log("Initialisiere History-Komponente und lade Daten...");
+      setIsInitialized(true);
+      loadActivities();
+    }
+  }, [user, isInitialized, loadActivities]);
+
+  // Cleanup Funktion
+  useEffect(() => {
+    return () => {
+      // Hier können ggf. Timer oder andere Ressourcen bereinigt werden
+      console.log("UserHistory Component unmounted");
+    };
+  }, []);
 
   useEffect(() => {
     if (activities.length > 0) {
@@ -134,38 +187,10 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
     }
   }, [activities]);
 
-  const loadActivities = async () => {
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('exammaster_token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      
-      const response = await axios.get(`${API_URL}/api/v1/user-history`, { 
-        headers,
-        withCredentials: true 
-      });
-      
-      if (response.data.success && Array.isArray(response.data.activities)) {
-        setActivities(response.data.activities);
-      } else {
-        console.warn("⚠️ Keine Aktivitäten gefunden.");
-        setActivities([]);
-      }
-    } catch (error) {
-      console.error("❌ Fehler beim Abrufen der Aktivitäten:", error);
-      toast({
-        title: "Fehler",
-        description: "Die Aktivitäten konnten nicht geladen werden.",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Verwende die i18n Locale für die Datumsformatierung
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return new Intl.DateTimeFormat('de-DE', { 
+    return new Intl.DateTimeFormat(i18n.language === 'de' ? 'de-DE' : 'en-US', { 
       day: '2-digit', 
       month: '2-digit', 
       year: 'numeric',
@@ -195,8 +220,8 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
       
       if (response.data.success) {
         toast({
-          title: "Inhalte generiert",
-          description: `Neue ${contentType} wurden erfolgreich generiert.`,
+          title: t('dashboard.historySection.contentGenerated', 'Inhalte generiert'),
+          description: t(`dashboard.historySection.${contentType}Generated`, `Neue ${contentType} wurden erfolgreich generiert.`),
         });
         
         // Lade die Aktivitäten neu, um die neuen Inhalte anzuzeigen
@@ -205,13 +230,13 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
         // Lade die Session mit den neuen Inhalten
         await handleSessionClick(sessions.find(s => s.id === sessionId)!);
       } else {
-        throw new Error(`Fehler beim Generieren von ${contentType}`);
+        throw new Error(t('dashboard.historySection.generateError', `Fehler beim Generieren von ${contentType}`));
       }
     } catch (error) {
       console.error(`❌ Fehler beim Generieren von ${contentType}:`, error);
       toast({
-        title: "Fehler",
-        description: `Die ${contentType} konnten nicht generiert werden.`,
+        title: t('common.error'),
+        description: t(`dashboard.historySection.${contentType}GenerateError`, `Die ${contentType} konnten nicht generiert werden.`),
         variant: "destructive",
       });
     } finally {
@@ -272,48 +297,78 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
     });
     
     toast({
-      title: "Neue Session",
-      description: "Starte eine neue Session. Bitte lade deine Prüfungen hoch.",
+      title: t('dashboard.historySection.newSession', 'Neue Session'),
+      description: t('dashboard.historySection.uploadPrompt', 'Starte eine neue Session. Bitte lade deine Prüfungen hoch.'),
     });
   };
 
   // Funktion zum Öffnen einer Session
   const handleSessionClick = async (session: SessionData) => {
     setLoadingSession(session.id);
+    console.log(`Versuche, Session zu laden: ${session.id}, Hauptthema: ${session.mainTopic}`);
+    
     try {
+      // Aktualisiere zuerst die Credits, um sicherzustellen, dass wir den aktuellen Stand haben
+      if (user) {
+        try {
+          // Verwende refreshUserCredits aus dem Auth-Kontext
+          await refreshUserCredits();
+          console.log("Credits wurden aktualisiert vor dem Laden der Session");
+        } catch (creditError) {
+          console.error("Fehler beim Aktualisieren der Credits:", creditError);
+          // Wir setzen den Vorgang trotzdem fort
+        }
+      }
+      
       const token = localStorage.getItem('exammaster_token');
-      const headers = token ? { 
+      
+      if (!token) {
+        console.warn("Kein Auth-Token gefunden!");
+        toast({
+          title: "Nicht authentifiziert",
+          description: "Bitte melde dich an, um deine Sessions zu laden.",
+          variant: "destructive",
+        });
+        setLoadingSession(null);
+        return;
+      }
+      
+      const headers = { 
         Authorization: `Bearer ${token}`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-      } : {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
       };
       
-      // Cache-busting Parameter hinzufügen, um sicherzustellen, dass wir frische Daten erhalten
+      // Cache-busting Parameter hinzufügen
       const timestamp = new Date().getTime();
       
-      // Zuerst warten wir einen Moment, um sicherzustellen, dass der Server Zeit hatte,
-      // die Daten vollständig zu verarbeiten (besonders wichtig bei gerade hochgeladenen Dateien)
+      console.log(`Sende Anfrage an: ${API_URL}/api/v1/results/${session.id}?nocache=${timestamp}`);
+      
+      // Kurzes Warten, um sicherzustellen, dass der Server bereit ist
+      console.log("Warte 1 Sekunde...");
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      const response = await axios.get(`${API_URL}/api/v1/results/${session.id}?nocache=${timestamp}`, {
-        headers,
-        withCredentials: true,
-      });
+      console.log("Sende API-Anfrage für Session-Daten...");
+      const response = await axiosInstance.get(`/api/v1/results/${session.id}?nocache=${timestamp}`);
       
-      if (response.data.success) {
+      console.log("API-Antwort erhalten:", response.status);
+      
+      if (response.data && response.data.success) {
         const sessionData = response.data.data;
+        
+        if (!sessionData) {
+          console.error("Session-Daten fehlen in der API-Antwort:", response.data);
+          throw new Error("Session-Daten nicht gefunden");
+        }
+        
         const flashcardCount = sessionData.flashcards?.length || 0;
         const questionCount = sessionData.test_questions?.length || 0;
         
-        console.log(`DEBUG: Loaded session data with ${flashcardCount} flashcards and ${questionCount} questions`);
+        console.log(`Geladene Session-Daten: ${flashcardCount} Flashcards, ${questionCount} Fragen`);
         
-        // Wenn die Sitzung noch verarbeitet wird und keine Karten/Fragen hat, warten wir nochmals
-        if (sessionData.analysis.processing_status === "processing" && 
+        // Verarbeitung
+        if (sessionData.analysis?.processing_status === "processing" && 
             flashcardCount === 0 && questionCount === 0) {
           
           toast({
@@ -321,48 +376,57 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
             description: "Die Daten werden noch verarbeitet. Bitte warten Sie einen Moment.",
           });
           
-          // Warte 5 Sekunden und versuche es erneut
+          console.log("Session wird noch verarbeitet, warte 5 Sekunden für erneuten Versuch...");
           await new Promise(resolve => setTimeout(resolve, 5000));
           
-          // Erneuter Abruf mit neuem Timestamp
           const newTimestamp = new Date().getTime();
-          const retryResponse = await axios.get(`${API_URL}/api/v1/results/${session.id}?nocache=${newTimestamp}`, {
-            headers,
-            withCredentials: true,
-          });
+          console.log(`Wiederhole Anfrage: ${API_URL}/api/v1/results/${session.id}?nocache=${newTimestamp}`);
           
-          if (retryResponse.data.success) {
+          const retryResponse = await axiosInstance.get(`/api/v1/results/${session.id}?nocache=${newTimestamp}`);
+          
+          if (retryResponse.data && retryResponse.data.success) {
             const updatedSessionData = retryResponse.data.data;
             
-            // Navigiere zur Hauptseite und übergebe die Daten
+            if (!updatedSessionData) {
+              console.error("Aktualisierte Session-Daten fehlen in der Antwort:", retryResponse.data);
+              throw new Error("Aktualisierte Session-Daten nicht gefunden");
+            }
+            
+            console.log("Navigation zur Hauptseite mit aktualisierten Daten...");
+            // Save the session ID to localStorage before navigating
+            localStorage.setItem('current_session_id', session.id);
+            
             navigate(`/`, {
               state: {
                 sessionId: session.id,
                 flashcards: updatedSessionData.flashcards || [],
                 questions: updatedSessionData.test_questions || [],
                 analysis: updatedSessionData.analysis,
-                forceReload: true // Erzwinge ein Neuladen auch bei gleicher ID
+                forceReload: true
               },
             });
             
             toast({
               title: "Analyse geladen",
-              description: `Die Analyse "${session.mainTopic}" wurde erfolgreich geladen mit ${updatedSessionData.flashcards.length} Karten und ${updatedSessionData.test_questions.length} Fragen.`,
+              description: `Die Analyse "${session.mainTopic}" wurde erfolgreich geladen mit ${updatedSessionData.flashcards?.length || 0} Karten und ${updatedSessionData.test_questions?.length || 0} Fragen.`,
             });
             
-            // Rest der Funktion überspringen
             return;
           }
         }
         
         // Standard-Ablauf, wenn alles in Ordnung ist
+        console.log("Navigation zur Hauptseite mit Session-Daten...");
+        // Save the session ID to localStorage before navigating
+        localStorage.setItem('current_session_id', session.id);
+        
         navigate(`/`, {
           state: {
             sessionId: session.id,
             flashcards: sessionData.flashcards || [],
             questions: sessionData.test_questions || [],
             analysis: sessionData.analysis,
-            forceReload: true // Erzwinge ein Neuladen auch bei gleicher ID
+            forceReload: true
           },
         });
         
@@ -372,24 +436,122 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
         });
 
         // Aktualisiere den timestamp, um die Session nach vorne zu bewegen
-        if (session.activities.length > 0) {
+        if (session.activities && session.activities.length > 0) {
           const activity = session.activities[0];
-          await axios.put(`${API_URL}/api/v1/user-history/${activity.id}`, {}, { 
-            headers,
-            withCredentials: true 
-          });
-          await loadActivities(); // Lade die Historie neu
+          console.log(`Aktualisiere Timestamp für Aktivität: ${activity.id}`);
+          
+          try {
+            await axios.put(`${API_URL}/api/v1/user-history/${activity.id}`, {}, { 
+              headers,
+              withCredentials: true 
+            });
+            await loadActivities(); // Lade die Historie neu
+          } catch (updateError) {
+            console.error("Fehler beim Aktualisieren des Timestamps:", updateError);
+            // Kein kritischer Fehler, daher keine Toast-Nachricht
+          }
         }
       } else {
-        throw new Error("Keine Daten gefunden");
+        if (response.data) {
+          console.error("API-Antwort enthält Fehler:", response.data);
+          throw new Error(response.data.message || "Keine Daten gefunden");
+        } else {
+          throw new Error("Unerwartete API-Antwort");
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("❌ Fehler beim Laden der Session:", error);
-      toast({
-        title: "Fehler beim Laden",
-        description: "Die Daten für diese Session konnten nicht geladen werden.",
-        variant: "destructive",
-      });
+      let errorMessage = "Die Daten für diese Session konnten nicht geladen werden.";
+      let isCreditsError = false;
+      let creditsRequired = 0;
+      
+      if (error.response) {
+        // Der Request wurde gemacht und der Server antwortete mit einem Statuscode
+        // der außerhalb von 2xx liegt
+        console.error("Status:", error.response.status);
+        console.error("Daten:", error.response.data);
+        console.error("Headers:", error.response.headers);
+        
+        if (error.response.status === 400) {
+          // Überprüfen, ob es sich um einen "nicht genügend Credits"-Fehler handelt
+          const errorData = error.response.data;
+          
+          if (errorData && errorData.error && errorData.error.message && 
+              errorData.error.message.includes("Nicht genügend Credits")) {
+            
+            // Extrahiere die benötigten Credits aus der Fehlermeldung
+            const creditsMatch = errorData.error.message.match(/Benötigt: (\d+) Credits/);
+            creditsRequired = creditsMatch ? parseInt(creditsMatch[1]) : 0;
+            
+            isCreditsError = true;
+            errorMessage = `Nicht genügend Credits für diese Aktion. Es werden ${creditsRequired} Credits benötigt.`;
+            
+            // Prüfe, ob der Benutzer laut Frontend eigentlich genug Credits haben sollte
+            if (user && user.credits >= creditsRequired) {
+              errorMessage = `Synchronisierungsproblem mit Credits erkannt. Laut Frontend: ${user.credits} Credits, Benötigt: ${creditsRequired} Credits.`;
+            }
+          }
+        } else if (error.response.status === 404) {
+          errorMessage = "Diese Session existiert nicht mehr.";
+        } else if (error.response.status === 403) {
+          errorMessage = "Du hast keine Berechtigung, diese Session zu laden.";
+        } else if (error.response.status >= 500) {
+          errorMessage = "Der Server hat einen Fehler beim Laden der Session.";
+        }
+      } else if (error.request) {
+        // Der Request wurde gemacht aber keine Antwort erhalten
+        console.error("Keine Antwort erhalten:", error.request);
+        errorMessage = "Keine Antwort vom Server erhalten. Bitte überprüfe deine Internetverbindung.";
+      } else {
+        // Etwas anderes ist beim Setup des Requests schief gegangen
+        console.error("Fehler:", error.message);
+      }
+      
+      if (isCreditsError) {
+        // Spezielle Behandlung für Credits-Fehler mit mehreren Optionen
+        toast({
+          title: "Credits-Problem erkannt",
+          description: (
+            <div className="flex flex-col space-y-3">
+              <p>{errorMessage}</p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button 
+                  variant="default" 
+                  size="sm"
+                  onClick={() => {
+                    navigate('/payment');
+                  }}
+                >
+                  Credits aufladen
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={async () => {
+                    // Aktualisiere die Credits und versuche es erneut
+                    await refreshUserCredits();
+                    toast({
+                      title: "Credits aktualisiert",
+                      description: "Bitte versuche es erneut, die Credits wurden aktualisiert.",
+                    });
+                  }}
+                >
+                  Credits aktualisieren
+                </Button>
+              </div>
+            </div>
+          ),
+          variant: "destructive",
+          duration: 15000, // Längere Anzeigedauer
+        });
+      } else {
+        // Standard-Fehlerbehandlung für andere Fehler
+        toast({
+          title: "Fehler beim Laden",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      }
     } finally {
       setLoadingSession(null);
     }
@@ -400,14 +562,10 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
     e.stopPropagation();
   };
 
-  useEffect(() => {
-    loadActivities();
-  }, []);
-
   return (
     <div className="py-6">
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-medium">Analysierte Sessions</h3>
+        <h3 className="text-lg font-medium">{t('dashboard.historySection.analyzedSessions', 'Analysierte Sessions')}</h3>
         <Button 
           variant="outline" 
           size="sm" 
@@ -415,7 +573,7 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
           disabled={loading}
         >
           <RefreshCw className="h-4 w-4 mr-1" />
-          Aktualisieren
+          {t('dashboard.historySection.refresh', 'Aktualisieren')}
         </Button>
       </div>
 
@@ -427,7 +585,7 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
         </div>
       ) : sessions.length === 0 ? (
         <div className="text-center py-10 text-muted-foreground">
-          <div>Keine analysierten Sessions gefunden.</div>
+          <div>{t('dashboard.historySection.noSessions', 'Keine analysierten Sessions gefunden.')}</div>
         </div>
       ) : (
         <ScrollArea className="h-[calc(100vh-180px)] pr-4">
@@ -460,13 +618,13 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
                       </div>
                       <div className="flex items-center gap-2 text-muted-foreground">
                         {session.flashcardCount && session.flashcardCount > 0 && (
-                          <div className="flex items-center gap-1" title="Flashcards">
+                          <div className="flex items-center gap-1" title={t('flashcards.title', 'Flashcards')}>
                             <BookOpen className="h-4 w-4" />
                             <span className="text-xs">{session.flashcardCount}</span>
                           </div>
                         )}
                         {session.questionCount && session.questionCount > 0 && (
-                          <div className="flex items-center gap-1" title="Testfragen">
+                          <div className="flex items-center gap-1" title={t('tests.title', 'Testfragen')}>
                             <HelpCircle className="h-4 w-4" />
                             <span className="text-xs">{session.questionCount}</span>
                           </div>
@@ -499,4 +657,5 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
   );
 };
 
-export default UserHistory;
+// Mit React.memo wrappen, um unnötige Rerenders zu vermeiden
+export default React.memo(UserHistory);

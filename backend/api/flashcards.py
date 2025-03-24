@@ -1,23 +1,42 @@
 from flask import request, jsonify, current_app, g
 from . import api_bp
 from .utils import generate_additional_flashcards, detect_language
-from models import db, Upload, Flashcard, UserActivity, Topic
+from core.models import db, Upload, Flashcard, UserActivity, Topic, User
 from marshmallow import Schema, fields, ValidationError
 import logging
 from .auth import token_required
-from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
+from api.token_tracking import check_credits_available, calculate_token_cost, deduct_credits, count_tokens
 import json
 import tiktoken
+import os
 
 logger = logging.getLogger(__name__)
+
+# CORS-Konfiguration für alle Endpoints
+CORS_CONFIG = {
+    "supports_credentials": True,
+    "origins": os.environ.get('CORS_ORIGINS', '*'),
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization"]
+}
 
 class FlashcardRequestSchema(Schema):
     session_id = fields.Str(required=True)
     count = fields.Int(required=True, validate=lambda n: n > 0)
 
-@api_bp.route('/generate-more-flashcards', methods=['POST'])
-@token_required
+@api_bp.route('/generate-more-flashcards', methods=['POST', 'OPTIONS'])
 def generate_more_flashcards():
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+        
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+    
     try:
         data = FlashcardRequestSchema().load(request.json)
     except ValidationError as e:
@@ -31,19 +50,8 @@ def generate_more_flashcards():
     if not upload:
         return jsonify({"success": False, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
     
-    # Import der Credit-Service-Funktionen
-    from api.credit_service import check_credits_available, calculate_token_cost, deduct_credits
+    # Import der Token-Tracking-Funktionen aus dem verbesserten System
     from flask import g
-    
-    # Helper-Funktion für die Tokenzählung
-    def count_tokens(text, model="gpt-4o"):
-        """Zählt die Anzahl der Tokens in einem Text für ein bestimmtes Modell"""
-        try:
-            encoding = tiktoken.encoding_for_model(model)
-            return len(encoding.encode(text))
-        except:
-            # Fallback: Ungefähre Schätzung (1 Token ≈ 4 Zeichen)
-            return len(text) // 4
     
     # Hole alle bestehenden Flashcards für diese Upload-ID
     existing_flashcards = [
@@ -78,10 +86,10 @@ def generate_more_flashcards():
     # Dies ist nur eine Schätzung für die Prüfung vor der Generierung
     estimated_input_tokens = 2000 + (count * 150)  # Kontext + Prompt + Eingabe pro Flashcard
     estimated_output_tokens = count * 200  # ca. 200 Tokens Ausgabe pro Flashcard
-    max_estimated_cost = calculate_token_cost(estimated_input_tokens, estimated_output_tokens)
     
-    # Verdopple die geschätzten Kosten für den Gewinn
-    max_estimated_cost = max_estimated_cost * 2
+    # Die tatsächliche Dokumentgröße berücksichtigen
+    content_tokens = count_tokens(upload.content)
+    max_estimated_cost = calculate_token_cost(estimated_input_tokens, estimated_output_tokens, document_tokens=content_tokens)
     
     # Überprüfe, ob genügend Credits vorhanden sind
     if not check_credits_available(max_estimated_cost):
@@ -143,7 +151,9 @@ def generate_more_flashcards():
             analysis=analysis,
             existing_flashcards=existing_flashcards,
             num_to_generate=generation_count,  # Erhöhte Anzahl
-            language=language
+            language=language,
+            session_id=session_id,  # Übergebe session_id für Token-Tracking
+            function_name="generate_more_flashcards"  # Definiere die Funktion für das Tracking
         )
         
         # Filtere Duplikate basierend auf der Frage
@@ -163,12 +173,29 @@ def generate_more_flashcards():
         # Berechne die tatsächlichen Kosten basierend auf den verwendeten Tokens
         actual_cost = calculate_token_cost(input_tokens, output_tokens)
         
-        # Verdopple die tatsächlichen Kosten für den Gewinn
-        actual_cost = actual_cost * 2
+        # Ziehe die Credits vom Benutzer ab und verwende das verbesserte Tracking-System
+        deduct_result = deduct_credits(
+            user_id=g.user.id, 
+            credits=actual_cost,
+            session_id=session_id,
+            function_name="generate_more_flashcards_api",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model=current_app.config.get('OPENAI_MODEL', 'gpt-4o')
+        )
         
-        # Ziehe die Credits vom Benutzer ab
-        deduct_credits(g.user.id, actual_cost)
-        logger.info(f"Deducted {actual_cost} credits from user {g.user.id} for generating {count} flashcards")
+        if not deduct_result["success"]:
+            return jsonify({
+                "success": False,
+                "error": {
+                    "code": "CREDIT_DEDUCTION_FAILED",
+                    "message": deduct_result.get("error", "Fehler beim Abziehen von Credits"),
+                    "credits_available": deduct_result.get("credits_available", 0),
+                    "credits_required": actual_cost
+                }
+            }), 402
+            
+        logger.info(f"Deducted {actual_cost} credits from user {g.user.id} for generating {count} flashcards. Remaining: {deduct_result.get('credits_remaining', 0)}")
         
     except Exception as e:
         logger.error(f"Error calling generate_additional_flashcards: {str(e)}")
@@ -178,73 +205,47 @@ def generate_more_flashcards():
     
     # Überprüfe, ob genug einzigartige Flashcards generiert wurden
     if len(filtered_flashcards) < 3:
-        # Wenn nicht genug, generiere weitere Fallback-Flashcards
-        additional_flashcards = generate_fallback_flashcards(
-            analysis, 
-            max(10, 3 - len(filtered_flashcards)), 
-            existing_flashcards + filtered_flashcards,
-            language
-        )
-        filtered_flashcards.extend(additional_flashcards)
-        logger.info(f"Added {len(additional_flashcards)} additional fallback flashcards")
+        # Wenn nicht genug einzigartige generiert wurden, ergänze mit Fallback
+        fallback_count = 3 - len(filtered_flashcards)
+        fallback_cards = generate_fallback_flashcards(analysis, fallback_count, existing_flashcards + filtered_flashcards, language)
+        filtered_flashcards.extend(fallback_cards)
+        logger.info(f"Added {len(fallback_cards)} fallback flashcards to reach minimum count")
     
-    try:
-        # Begrenze die Anzahl der zurückgegebenen Flashcards auf die angeforderte Anzahl,
-        # aber mindestens 3
-        final_count = max(count, 3)
-        filtered_flashcards = filtered_flashcards[:final_count]
-        
-        # Speichere nur gültige Flashcards in der Datenbank
-        for f in filtered_flashcards:
-            if f.get('question') and f.get('answer') and not f['question'].startswith('Could not generate'):
-                flashcard = Flashcard(
-                    upload_id=upload.id,
-                    question=f['question'],
-                    answer=f['answer']
-                )
-                db.session.add(flashcard)
-                logger.info(f"Saved flashcard: {f['question']}")
-        
-        # Begrenze auf 5 Einträge
-        existing_activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.asc()).all()
-        if len(existing_activities) >= 5:
-            oldest_activity = existing_activities[0]
-            db.session.delete(oldest_activity)
-            logger.info(f"Deleted oldest activity: {oldest_activity.id}")
-        
-        # Logge und speichere Benutzeraktivität
-        activity = UserActivity(
-            user_id=request.user_id,
-            activity_type='flashcard',
-            title=f"Generated {len(filtered_flashcards)} more flashcards",
-            main_topic=analysis['main_topic'],
-            subtopics=analysis['subtopics'],
-            session_id=session_id,
-            details={"count": len(filtered_flashcards), "session_id": session_id}
+    # Begrenze auf die angeforderte Anzahl
+    final_flashcards = filtered_flashcards[:count]
+    
+    # Speichere die generierten Flashcards in der Datenbank
+    new_db_flashcards = []
+    for card in final_flashcards:
+        flashcard = Flashcard(
+            upload_id=upload.id,
+            question=card['question'],
+            answer=card['answer']
         )
-        db.session.add(activity)
-        logger.info(f"Logged user activity for generating {len(filtered_flashcards)} flashcards")
-        
-        db.session.commit()
-        return jsonify({
-            "success": True,
-            "data": {
-                "flashcards": filtered_flashcards
-            },
-            "message": f"Successfully generated {len(filtered_flashcards)} additional flashcards"
-        }), 200
-    except Exception as e:
-        logger.error(f"Error saving flashcards to database for session_id {session_id}: {str(e)}")
-        db.session.rollback()
-        
-        # Wenn der Datenbankfehler auftritt, trotzdem versuchen, Flashcards zurückzugeben
-        return jsonify({
-            "success": True,
-            "data": {
-                "flashcards": filtered_flashcards
-            },
-            "message": "Flashcards generated but could not be saved to database"
-        }), 200
+        db.session.add(flashcard)
+        new_db_flashcards.append(flashcard)
+    
+    db.session.commit()
+    logger.info(f"Saved {len(new_db_flashcards)} new flashcards to database for session_id: {session_id}")
+    
+    # Aktualisiere den Zeitstempel für "zuletzt verwendet"
+    upload.last_used_at = db.func.current_timestamp()
+    db.session.commit()
+    
+    # Gib die neuen Flashcards und die verbleibenden Credits zurück
+    user = User.query.get(g.user.id)
+    credits_available = user.credits if user else 0
+    
+    # Struktur anpassen für bessere Kompatibilität mit dem Frontend
+    return jsonify({
+        "success": True,
+        "message": f"Generated {len(final_flashcards)} new flashcards",
+        "flashcards": final_flashcards,  # Direktes Hinzufügen auf der ersten Ebene für alte Client-Versionen
+        "data": {
+            "flashcards": final_flashcards
+        },
+        "credits_available": credits_available
+    })
 
 def generate_fallback_flashcards(analysis, count, existing_flashcards, language='en'):
     """
@@ -449,9 +450,19 @@ def generate_fallback_flashcards(analysis, count, existing_flashcards, language=
     
     return flashcards
 
-@api_bp.route('/generate/<session_id>', methods=['POST'])
-@token_required
-def generate_flashcards_route(session_id):
+@api_bp.route('/generate/<session_id>', methods=['POST', 'OPTIONS'])
+def generate_flashcards_for_session(session_id):
+    # OPTIONS-Anfragen sofort beantworten
+    if request.method == 'OPTIONS':
+        response = jsonify({"success": True})
+        return response
+        
+    # Authentifizierung für nicht-OPTIONS Anfragen
+    auth_decorator = token_required(lambda: None)
+    auth_result = auth_decorator()
+    if auth_result is not None:
+        return auth_result
+        
     # Parameter aus der Anfrage extrahieren
     count = request.json.get('count', 10)  # Standardmäßig 10 Flashcards generieren
     
@@ -474,7 +485,14 @@ def generate_flashcards_route(session_id):
         
     # Schätze die Kosten basierend auf der Länge des Inhalts
     estimated_prompt_tokens = min(content_length // 3, 100000)  # Ungefähre Schätzung: 1 Token pro 3 Zeichen
-    estimated_output_tokens = 2000  # Geschätzte Ausgabe für Flashcards
+    
+    # Anpassung der Output-Token-Schätzung basierend auf der Eingabegröße
+    if estimated_prompt_tokens < 100:
+        estimated_output_tokens = 200  # Minimale Ausgabe für winzige Dokumente
+    elif estimated_prompt_tokens < 500:
+        estimated_output_tokens = 500  # Reduzierte Ausgabe für kleine Dokumente
+    else:
+        estimated_output_tokens = 2000  # Geschätzte Ausgabe für Flashcards
     
     # Berechne die ungefähren Kosten
     estimated_cost = calculate_token_cost(estimated_prompt_tokens, estimated_output_tokens)
@@ -537,7 +555,9 @@ def generate_flashcards_route(session_id):
                 analysis=analysis,
                 existing_flashcards=existing_flashcards,
                 num_to_generate=generation_count,  # Erhöhte Anzahl
-                language=language
+                language=language,
+                session_id=session_id,  # Übergebe session_id für Token-Tracking
+                function_name="generate_more_flashcards"  # Definiere die Funktion für das Tracking
             )
             
             # Filtere Duplikate basierend auf der Frage
@@ -603,24 +623,28 @@ def generate_flashcards_route(session_id):
             logger.info(f"Logged user activity for generating {len(filtered_flashcards)} flashcards")
             
             db.session.commit()
+            user = User.query.get(g.user.id)
             return jsonify({
                 "success": True,
                 "data": {
                     "flashcards": filtered_flashcards
                 },
-                "message": f"Successfully generated {len(filtered_flashcards)} additional flashcards"
+                "message": f"Successfully generated {len(filtered_flashcards)} additional flashcards",
+                "credits_available": user.credits if user else 0
             }), 200
         except Exception as e:
             logger.error(f"Error saving flashcards to database for session_id {session_id}: {str(e)}")
             db.session.rollback()
             
             # Wenn der Datenbankfehler auftritt, trotzdem versuchen, Flashcards zurückzugeben
+            user = User.query.get(g.user.id)
             return jsonify({
                 "success": True,
                 "data": {
                     "flashcards": filtered_flashcards
                 },
-                "message": "Flashcards generated but could not be saved to database"
+                "message": "Flashcards generated but could not be saved to database",
+                "credits_available": user.credits if user else 0
             }), 200
     except Exception as e:
         logger.error(f"Error processing flashcards for session_id {session_id}: {str(e)}")
