@@ -796,7 +796,74 @@ def process_upload(self, session_id, files_data, user_id=None):
                         
                         # Wirf die Exception erneut, damit Celery sie als Fehler erkennt
                         raise processing_error
-        
+                
+                except Exception as heartbeat_setup_error:
+                    # Fehlerbehandlung für Probleme mit dem Heartbeat-Setup
+                    logger.error(f"Fehler beim Einrichten des Heartbeat-Mechanismus: {str(heartbeat_setup_error)}")
+                    logger.error(traceback.format_exc())
+                    
+                    # Stelle sicher, dass der Lock freigegeben wird
+                    release_session_lock(session_id)
+                    
+                    # Setze den Status auf Fehler
+                    safe_redis_set(f"processing_status:{session_id}", "error:heartbeat_setup", ex=REDIS_TTL_DEFAULT)
+                    safe_redis_set(f"processing_error:{session_id}", {
+                        "error": "heartbeat_setup_error",
+                        "message": str(heartbeat_setup_error),
+                        "timestamp": datetime.now().isoformat()
+                    }, ex=REDIS_TTL_DEFAULT)
+                    
+                    # Wirf die Exception weiter
+                    raise heartbeat_setup_error
+                
+            except Exception as app_context_error:
+                # Fehlerbehandlung innerhalb des App-Kontexts
+                logger.error(f"Fehler im App-Kontext: {str(app_context_error)}")
+                logger.error(traceback.format_exc())
+                
+                # Bereinige Ressourcen
+                cleanup_processing_for_session(session_id, str(app_context_error))
+                
+                # Erhöhe den Retry-Zähler für diese Task
+                retry_count = self.request.retries
+                max_retries = self.max_retries
+                
+                if retry_count < max_retries:
+                    logger.warning(f"Versuche Retry {retry_count + 1}/{max_retries} für Session {session_id}")
+                    redis_client.set(f"processing_status:{session_id}", f"retrying_{retry_count + 1}", ex=14400)
+                    raise self.retry(exc=app_context_error, countdown=120)  # Retry in 2 Minuten
+                else:
+                    # Maximale Anzahl von Retries erreicht
+                    logger.error(f"Maximale Anzahl von Retries erreicht für Session {session_id}")
+                    redis_client.set(f"processing_status:{session_id}", "failed", ex=14400)
+                    redis_client.set(f"processing_error:{session_id}", json.dumps({
+                        "error": "max_retries_exceeded",
+                        "message": str(app_context_error),
+                        "timestamp": datetime.now().isoformat()
+                    }), ex=14400)
+                    
+                    # Aktualisiere auch die Datenbank
+                    try:
+                        upload = Upload.query.filter_by(session_id=session_id).first()
+                        if upload:
+                            upload.processing_status = "failed"
+                            upload.updated_at = datetime.now()
+                            upload.error_message = f"Max retries exceeded: {str(app_context_error)}"[:500]
+                            db.session.commit()
+                    except Exception as db_error:
+                        logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
+                        try:
+                            db.session.rollback()
+                        except:
+                            pass
+                
+                # Gib ein Fehlerergebnis zurück
+                return {
+                    "status": "error",
+                    "session_id": session_id,
+                    "error": str(app_context_error),
+                    "traceback": traceback.format_exc()
+                }
     except Exception as e:
         # Fehlerbehandlung innerhalb des App-Kontexts
         logger.error(f"Fehler im App-Kontext: {str(e)}")
