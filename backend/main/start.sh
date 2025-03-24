@@ -5,8 +5,8 @@ echo "Starting API container..."
 
 # Entferne stale socket Dateien direkt
 echo "Removing stale socket files..."
-rm -f /var/run/supervisor-api.sock
-rm -f /var/run/supervisord-api.pid
+rm -f /tmp/supervisor-api.sock
+rm -f /tmp/supervisord-api.pid
 rm -f /tmp/supervisor.*
 sleep 1
 

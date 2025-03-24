@@ -191,11 +191,11 @@ services:
         value: "redis://${api.PRIVATE_URL}:6379/0"
       - key: REDIS_HOST
         value: "${api.PRIVATE_URL}"
-      # Debugging-Variablen
-      - key: DEBUG_INFO 
-        value: "Connecting to Redis at ${api.PRIVATE_URL}"
-      - key: USE_API_URL
-        value: "${api.PRIVATE_URL}"
+      # Direkte IP-Fallbacks (falls die DigitalOcean-Variablen nicht ersetzt werden)
+      - key: API_HOST
+        value: "localhost" # oder bekannte DigitalOcean-Container-IP 
+      - key: REDIS_FALLBACK_URLS
+        value: "localhost,10.0.0.3,api,hackthestudy-backend-api"
 
 # Domain-Konfiguration
 domains:

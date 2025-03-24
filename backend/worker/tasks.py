@@ -117,15 +117,62 @@ check_and_set_fd_limits()
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost').strip()
 USE_API_URL = os.getenv('USE_API_URL', '').strip()
+API_HOST = os.getenv('API_HOST', '').strip()
+REDIS_FALLBACK_URLS = os.getenv('REDIS_FALLBACK_URLS', '').strip()
 
-# Verbindungskorrektur: Falls die REDIS_URL localhost ist, aber USE_API_URL gesetzt ist
-if 'localhost' in REDIS_URL and USE_API_URL:
-    logger.warning(f"Lokale Redis-URL erkannt, aber USE_API_URL ist verfügbar: {USE_API_URL}")
-    REDIS_URL = f"redis://{USE_API_URL}:6379/0"
-    REDIS_HOST = USE_API_URL
-    os.environ['REDIS_URL'] = REDIS_URL
-    os.environ['REDIS_HOST'] = REDIS_HOST
-    logger.info(f"Redis-URL korrigiert zu: {REDIS_URL}")
+# Verbindungskorrektur: Überprüfe mehrere mögliche Redis-Hosts
+if 'localhost' in REDIS_URL:
+    logger.warning(f"Lokale Redis-URL erkannt. Versuche alternative Verbindungen zu finden...")
+    
+    # Versuche, alternative Hosts zu verwenden (in Reihenfolge der Priorität)
+    potential_hosts = []
+    
+    # 1. Prüfe USE_API_URL (vom DigitalOcean Variable-Templating)
+    if USE_API_URL:
+        potential_hosts.append(USE_API_URL)
+        logger.info(f"Gefunden USE_API_URL: {USE_API_URL}")
+    
+    # 2. Prüfe API_HOST (direkt konfiguriert)
+    if API_HOST:
+        potential_hosts.append(API_HOST)
+        logger.info(f"Gefunden API_HOST: {API_HOST}")
+    
+    # 3. Prüfe REDIS_FALLBACK_URLS (kommagetrennte Liste von Hosts)
+    if REDIS_FALLBACK_URLS:
+        fallback_urls = [url.strip() for url in REDIS_FALLBACK_URLS.split(',')]
+        potential_hosts.extend(fallback_urls)
+        logger.info(f"Gefunden REDIS_FALLBACK_URLS: {fallback_urls}")
+    
+    # 4. Standard-Fallbacks hinzufügen
+    default_fallbacks = ["api", "hackthestudy-backend-api", "10.0.0.3", "10.0.0.2"]
+    for host in default_fallbacks:
+        if host not in potential_hosts:
+            potential_hosts.append(host)
+    
+    # Versuche, jeden Host zu verbinden
+    import socket
+    for host in potential_hosts:
+        try:
+            logger.info(f"Teste Verbindung zu {host}:6379...")
+            # Schneller Test mit Socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            result = s.connect_ex((host, 6379))
+            s.close()
+            
+            if result == 0:
+                # Verbindung möglich
+                logger.info(f"Erfolgreiche Verbindung zu {host}:6379!")
+                REDIS_URL = f"redis://{host}:6379/0"
+                REDIS_HOST = host
+                os.environ['REDIS_URL'] = REDIS_URL
+                os.environ['REDIS_HOST'] = REDIS_HOST
+                logger.info(f"Redis-URL korrigiert zu: {REDIS_URL}")
+                break
+            else:
+                logger.warning(f"Verbindung zu {host}:6379 nicht möglich (Code: {result})")
+        except Exception as conn_error:
+            logger.warning(f"Fehler beim Verbinden zu {host}: {str(conn_error)}")
 
 logger.info(f"Celery verwendet Redis-URL: {REDIS_URL} (Host: {REDIS_HOST})")
 

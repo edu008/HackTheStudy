@@ -5,8 +5,8 @@ echo "Starting Worker container..."
 
 # Entferne stale socket Dateien direkt
 echo "Removing stale socket files..."
-rm -f /var/run/supervisor-worker.sock
-rm -f /var/run/supervisord-worker.pid
+rm -f /tmp/supervisor-worker.sock
+rm -f /tmp/supervisord-worker.pid
 rm -f /tmp/supervisor.*
 sleep 1
 
@@ -26,6 +26,10 @@ echo "CONTAINER_TYPE: $CONTAINER_TYPE"
 echo "RUN_MODE: $RUN_MODE"
 echo "============================"
 
+# Hardcoded IP-Adresse des API-Services als Fallback
+API_HOST="10.0.0.3" # Diese IP-Adresse sollte dem DigitalOcean API-Container entsprechen
+echo "Hardcoded API-Host: $API_HOST"
+
 # Korrigiere Redis-URL falls nötig
 if [ -z "$REDIS_URL" ] || [ "$REDIS_URL" == "redis://localhost:6379/0" ]; then
     if [ ! -z "$USE_API_URL" ]; then
@@ -33,7 +37,10 @@ if [ -z "$REDIS_URL" ] || [ "$REDIS_URL" == "redis://localhost:6379/0" ]; then
         export REDIS_URL="redis://$USE_API_URL:6379/0"
         echo "Überschreibe Redis-URL mit: $REDIS_URL"
     else
-        echo "WARNUNG: Lokale Redis-URL wird verwendet und USE_API_URL ist nicht gesetzt!"
+        echo "WARNUNG: Lokale Redis-URL wird verwendet. Versuche API_HOST=$API_HOST"
+        export REDIS_HOST="$API_HOST"
+        export REDIS_URL="redis://$API_HOST:6379/0"
+        echo "Überschreibe Redis-URL mit Fallback: $REDIS_URL"
     fi
 fi
 
@@ -44,35 +51,29 @@ if [[ "$REDIS_URL" != *"PRIVATE_URL"* ]] && [[ "$REDIS_URL" != *"redis://"* ]]; 
     echo "Korrigierte Redis URL: $REDIS_URL"
 fi
 
-# Warte bis Redis im API-Container verfügbar ist
-echo "Waiting for Redis to become available at $REDIS_HOST:6379..."
-attempt=0
-max_attempts=30
+# Füge eine Liste von möglichen API-Adressen hinzu, die wir nacheinander versuchen können
+API_ADDRESSES=(
+    "localhost"
+    "$API_HOST" 
+    "api"
+    "hackthestudy-backend-api"
+    "10.0.0.2"
+    "10.0.0.3"
+    "10.0.0.4"
+)
 
-# Erster Timeout: Kürzere Abstände für schnellere Services
-until timeout 2 redis-cli -h $REDIS_HOST -p 6379 ping 2>/dev/null || [ $attempt -eq 5 ]; do
-    attempt=$((attempt+1))
-    echo "Erstes Warten auf Redis (Attempt $attempt/5)..."
-    sleep 2
+# Warte bis Redis im API-Container verfügbar ist - versuche verschiedene Adressen
+for api_addr in "${API_ADDRESSES[@]}"; do
+    echo "Versuche Redis-Verbindung zu $api_addr:6379..."
+    if timeout 2 redis-cli -h "$api_addr" -p 6379 ping &>/dev/null; then
+        echo "Redis-Server gefunden auf $api_addr:6379!"
+        export REDIS_HOST="$api_addr"
+        export REDIS_URL="redis://$api_addr:6379/0"
+        break
+    else
+        echo "Redis nicht verfügbar auf $api_addr:6379"
+    fi
 done
-
-# Wenn der erste Versuch fehlschlägt, warte länger zwischen den Versuchen
-if [ $attempt -eq 5 ]; then
-    echo "Erstes Warten fehlgeschlagen, längere Wartezeit..."
-    attempt=0
-    until timeout 5 redis-cli -h $REDIS_HOST -p 6379 ping 2>/dev/null || [ $attempt -eq $max_attempts ]; do
-        attempt=$((attempt+1))
-        echo "Zweites Warten auf Redis (Attempt $attempt/$max_attempts)..."
-        sleep 5
-    done
-fi
-
-if [ $attempt -eq $max_attempts ]; then
-    echo "WARNUNG: Redis-Server antwortet nicht nach $max_attempts Versuchen."
-    echo "Versuche, dennoch fortzufahren..."
-else
-    echo "Redis-Server ist verfügbar!"
-fi
 
 # Stelle sicher, dass die Supervisor-Konfigurationsdatei existiert
 echo "Checking supervisor configuration file..."
