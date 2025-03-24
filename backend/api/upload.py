@@ -277,7 +277,7 @@ def get_results(session_id):
         
         if processing_status:
             processing_status = processing_status.decode('utf-8')
-            logger.info(f"Special status found for session {session_id}: {processing_status}")
+            logger.info(f"Redis-Status für Session {session_id}: {processing_status}")
             
             if processing_status in ["failed", "error"] or processing_status.startswith("failed:") or processing_status.startswith("error:"):
                 special_status = "error"
@@ -286,17 +286,48 @@ def get_results(session_id):
                 special_status = "initializing"
             elif processing_status == "completed":
                 special_status = "completed"
+                
+                # OPTIMIERUNG: Versuche, die Ergebnisse direkt aus Redis zu holen
+                cached_result = redis_client.get(f"processing_result:{session_id}")
+                if cached_result:
+                    try:
+                        result_data = json.loads(cached_result.decode('utf-8'))
+                        logger.info(f"Ergebnisse aus Redis geladen für Session {session_id}")
+                        
+                        # Formatiere die Antwort
+                        # Hauptthema extrahieren
+                        main_topic_name = "Unknown Topic"
+                        if "main_topic" in result_data:
+                            main_topic_name = result_data["main_topic"]
+                        
+                        return jsonify({
+                            "status": "completed",
+                            "data": result_data,
+                            "source": "redis_cache"
+                        }), 200
+                    except json.JSONDecodeError:
+                        logger.warning(f"Ungültige JSON-Daten in Redis-Ergebnissen für {session_id}")
         
         # Suche nach dem Upload in der Datenbank
         upload = Upload.query.filter_by(session_id=session_id).first()
         if not upload:
+            # Wenn kein Upload existiert, prüfe, ob es einen laufenden Task gibt
+            task_id = redis_client.get(f"task_id:{session_id}")
+            if task_id:
+                # Es gibt einen laufenden Task, also gib "processing" zurück
+                return jsonify({
+                    "status": "processing", 
+                    "message": "Verarbeitung läuft...",
+                    "task_id": task_id.decode('utf-8') if isinstance(task_id, bytes) else task_id
+                }), 200
+            
             return jsonify({"error": "Session nicht gefunden"}), 404
         
         logger.info(f"Upload Status: {upload.processing_status}, special_status: {special_status}")
         
         # Bei Fehler: Überprüfe, ob Fehlerdetails in Redis vorhanden sind
         error_details = None
-        if special_status == "error":
+        if special_status == "error" or upload.processing_status == 'failed':
             error_key = f"error_details:{session_id}"
             error_data = redis_client.get(error_key)
             
@@ -1056,3 +1087,108 @@ def retry_processing(session_id):
             f"Fehler beim Neustart der Verarbeitung: {str(e)}", 
             ERROR_FILE_PROCESSING
         )
+
+@api_bp.route('/debug-status/<session_id>', methods=['GET'])
+def debug_session_status(session_id):
+    """
+    Gibt den aktuellen Status und interne Debug-Informationen für eine Session zurück.
+    Nur für Entwicklungs- und Diagnose-Zwecke.
+    """
+    try:
+        # Sammle alle relevanten Redis-Schlüssel für diese Session
+        redis_keys = []
+        for key_pattern in [
+            f"processing_status:{session_id}",
+            f"processing_start_time:{session_id}",
+            f"processing_details:{session_id}",
+            f"processing_progress:{session_id}",
+            f"error_details:{session_id}",
+            f"openai_error:{session_id}",
+            f"task_id:{session_id}",
+            f"processing_completed:{session_id}",
+            f"processing_completed_at:{session_id}",
+            f"processing_result:{session_id}",
+            f"debug:{session_id}:*"
+        ]:
+            # Bei Schlüsseln mit Wildcard
+            if "*" in key_pattern:
+                matching_keys = redis_client.keys(key_pattern)
+                for key in matching_keys:
+                    redis_keys.append(key.decode('utf-8') if isinstance(key, bytes) else key)
+            # Bei normalen Schlüsseln
+            elif redis_client.exists(key_pattern):
+                redis_keys.append(key_pattern)
+        
+        # Sammle alle Werte aus Redis
+        redis_data = {}
+        for key in redis_keys:
+            value = redis_client.get(key)
+            if value:
+                try:
+                    # Versuche es als JSON zu dekodieren
+                    value = json.loads(value.decode('utf-8'))
+                except:
+                    # Wenn nicht möglich, behandle es als String
+                    value = value.decode('utf-8') if isinstance(value, bytes) else value
+                redis_data[key] = value
+            else:
+                redis_data[key] = None
+        
+        # Hole Datenbank-Informationen
+        db_info = {}
+        upload = Upload.query.filter_by(session_id=session_id).first()
+        if upload:
+            db_info = {
+                "id": upload.id,
+                "user_id": upload.user_id,
+                "session_id": upload.session_id,
+                "processing_status": upload.processing_status,
+                "created_at": upload.created_at.isoformat() if upload.created_at else None,
+                "updated_at": upload.updated_at.isoformat() if upload.updated_at else None,
+                "completed_at": upload.completed_at.isoformat() if upload.completed_at else None,
+                "file_name_1": upload.file_name_1,
+                "file_name_2": upload.file_name_2,
+                "file_name_3": upload.file_name_3,
+                "has_result": upload.result is not None
+            }
+            
+            # Zähle die Einträge in anderen Tabellen
+            db_info["flashcards_count"] = Flashcard.query.filter_by(upload_id=upload.id).count()
+            db_info["questions_count"] = Question.query.filter_by(upload_id=upload.id).count()
+            db_info["topics_count"] = Topic.query.filter_by(upload_id=upload.id).count()
+            db_info["connections_count"] = Connection.query.filter_by(upload_id=upload.id).count()
+        
+        # Status für Celery-Worker
+        worker_status = "unknown"
+        try:
+            from celery.task.control import inspect
+            i = inspect()
+            active = i.active()
+            if active:
+                # Suche nach dem Task für diese Session
+                for worker_name, tasks in active.items():
+                    for task in tasks:
+                        if task['id'] == redis_data.get(f"task_id:{session_id}"):
+                            worker_status = {
+                                "status": "running",
+                                "worker": worker_name,
+                                "task_info": task
+                            }
+                            break
+        except Exception as e:
+            worker_status = {"status": "error", "message": str(e)}
+        
+        # Rückgabe aller gesammelten Informationen
+        return jsonify({
+            "redis_data": redis_data,
+            "db_info": db_info,
+            "worker_status": worker_status,
+            "timestamp": datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Fehler beim Sammeln von Debug-Informationen: {str(e)}",
+            "traceback": traceback.format_exc()
+        }), 500

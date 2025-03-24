@@ -308,6 +308,77 @@ def init_app(run_mode=None):
     from api.payment import payment_bp
     app.register_blueprint(payment_bp, url_prefix='/api/v1/payment')
     
+    # Debug-Endpoint für Worker-Status
+    @app.route('/api/v1/debug/worker', methods=['GET'])
+    def worker_status():
+        """
+        Debug-Endpoint, um den Status der Worker-Prozesse zu überprüfen.
+        """
+        from redis import Redis
+        import json
+        
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        redis_client = Redis.from_url(redis_url)
+        
+        # Versuche, Informationen über laufende Tasks zu sammeln
+        active_tasks = []
+        try:
+            # Prüfe redis keys mit task_id Präfix
+            task_keys = redis_client.keys('task_id:*')
+            for key in task_keys:
+                session_id = key.decode('utf-8').split(':')[1]
+                task_id = redis_client.get(key)
+                if task_id:
+                    task_id = task_id.decode('utf-8') if isinstance(task_id, bytes) else task_id
+                    # Versuche, Task-Status aus Redis zu bekommen
+                    status_key = f"task_status:{task_id}"
+                    status = redis_client.get(status_key)
+                    status = status.decode('utf-8') if status else "unknown"
+                    
+                    # Sammle Informationen
+                    active_tasks.append({
+                        "session_id": session_id,
+                        "task_id": task_id,
+                        "status": status
+                    })
+        except Exception as e:
+            app.logger.error(f"Fehler beim Abrufen der Task-Informationen: {str(e)}")
+            active_tasks.append({"error": str(e)})
+        
+        # Prüfe, ob Celery-Worker vorhanden sind
+        worker_info = {"status": "unknown"}
+        try:
+            # Optional: wenn celery-Inspektion verfügbar ist
+            from celery.task.control import inspect
+            i = inspect()
+            stats = i.stats()
+            if stats:
+                worker_info = {
+                    "status": "active",
+                    "workers": len(stats),
+                    "stats": stats
+                }
+            else:
+                worker_info = {"status": "no workers found"}
+        except Exception as e:
+            app.logger.error(f"Fehler beim Prüfen der Celery-Worker: {str(e)}")
+            worker_info = {"status": "error", "message": str(e)}
+        
+        # Redis-Gesundheitsprüfung
+        redis_status = "unavailable"
+        try:
+            if redis_client.ping():
+                redis_status = "available"
+        except Exception as e:
+            redis_status = f"error: {str(e)}"
+        
+        return jsonify({
+            "redis_status": redis_status,
+            "worker_info": worker_info,
+            "active_tasks": active_tasks,
+            "timestamp": datetime.now().isoformat()
+        }), 200
+    
     # Health-Check-Endpunkt für Digital Ocean
     @app.route('/api/v1/health', methods=['GET'])
     def health_check():
@@ -315,8 +386,22 @@ def init_app(run_mode=None):
         Einfacher Health-Check-Endpunkt für Digital Ocean App Platform.
         """
         app.logger.info("Health-Check-Anfrage erhalten")
+        
+        # Zusätzlich Redis-Verbindung prüfen
+        redis_status = "unavailable"
+        try:
+            from redis import Redis
+            redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+            redis_client = Redis.from_url(redis_url)
+            if redis_client.ping():
+                redis_status = "available"
+        except Exception as e:
+            app.logger.error(f"Redis-Verbindungsfehler: {str(e)}")
+            redis_status = f"error: {str(e)}"
+        
         return jsonify({
             "status": "healthy",
+            "redis": redis_status,
             "timestamp": datetime.now().isoformat()
         }), 200
     

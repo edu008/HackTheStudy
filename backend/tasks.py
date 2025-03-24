@@ -261,17 +261,33 @@ def release_session_lock(session_id):
 @log_function_call
 def process_upload(self, session_id, files_data, user_id=None):
     """
-    Verarbeitet hochgeladene Dateien asynchron mit verbesserter Fehlerbehandlung und Timeout-Management.
+    Verarbeitet hochgeladene Dateien.
+    
+    Args:
+        session_id: ID der Upload-Session
+        files_data: Liste mit Dateinamen und -inhalten als Tupel
+        user_id: ID des Benutzers (optional)
+        
+    Returns:
+        dict: Ergebnis der Verarbeitung
     """
-    logger = logging.getLogger(__name__)
+    # Direkte Konsolenausgabe für einfache Diagnose
+    logger.info(f"🔄 FUNKTION START: process_upload() - Session: {session_id}")
     logger.info(f"===== WORKER TASK STARTED: {session_id} =====")
     logger.info(f"Worker process PID: {os.getpid()}, Task ID: {self.request.id}")
-    logger.info(f"Verarbeite {len(files_data) if files_data else 0} Dateien für Benutzer {user_id or 'anonym'}")
+    if user_id:
+        logger.info(f"Verarbeite {len(files_data) if files_data else 0} Dateien für Benutzer {user_id}")
     print(f"DIRECT STDOUT: Worker processing session {session_id}", flush=True)
     start_time = time.time()
     
     # Speichere Task-ID für Tracking
-    redis_client.set(f"task_id:{session_id}", self.request.id, ex=14400)  # 4 Stunden Gültigkeit
+    safe_redis_set(f"task_id:{session_id}", self.request.id, ex=14400)  # 4 Stunden Gültigkeit
+    
+    # Debugging-Info hinzufügen
+    log_debug_info(session_id, "Worker-Task gestartet", 
+                  task_id=self.request.id, 
+                  pid=os.getpid(),
+                  files_count=len(files_data) if files_data else 0)
     
     # Hole die Flask-App und erstelle einen Anwendungskontext
     flask_app = get_flask_app()
@@ -280,9 +296,9 @@ def process_upload(self, session_id, files_data, user_id=None):
     with flask_app.app_context():
         try:
             # Initialisiere Redis-Status mit detaillierten Informationen
-            redis_client.set(f"processing_status:{session_id}", "initializing", ex=14400)
-            redis_client.set(f"processing_start_time:{session_id}", str(start_time), ex=14400)
-            redis_client.set(f"processing_details:{session_id}", json.dumps({
+            safe_redis_set(f"processing_status:{session_id}", "initializing", ex=14400)
+            safe_redis_set(f"processing_start_time:{session_id}", str(start_time), ex=14400)
+            safe_redis_set(f"processing_details:{session_id}", {
                 "start_time": datetime.now().isoformat(),
                 "files_count": len(files_data) if files_data else 0,
                 "user_id": user_id,
@@ -290,7 +306,7 @@ def process_upload(self, session_id, files_data, user_id=None):
                 "worker_id": self.request.id,
                 "hostname": os.environ.get("HOSTNAME", "unknown"),
                 "task_id": self.request.id
-            }), ex=14400)
+            }, ex=14400)
             
             logger.info(f"Session {session_id} - Initializing with {len(files_data) if files_data else 0} files for user {user_id}")
             
@@ -300,10 +316,16 @@ def process_upload(self, session_id, files_data, user_id=None):
                 if stored_data:
                     files_data = json.loads(stored_data)
                     logger.info(f"Wiederhergestellte Dateidaten aus Redis für Session {session_id}: {len(files_data)} Dateien")
+                    log_debug_info(session_id, f"Dateidaten aus Redis wiederhergestellt", files_count=len(files_data))
                 else:
                     error_msg = f"Keine Dateidaten für Session {session_id} gefunden!"
                     logger.error(error_msg)
                     cleanup_processing_for_session(session_id, "no_files_found")
+                    safe_redis_set(f"error_details:{session_id}", {
+                        "message": error_msg,
+                        "error_type": "no_files_data",
+                        "timestamp": time.time()
+                    }, ex=14400)
                     return {"error": "no_files_found", "message": error_msg}
             
             # Versuche, einen Lock für diese Session zu erhalten
@@ -323,8 +345,9 @@ def process_upload(self, session_id, files_data, user_id=None):
                 upload = Upload.query.filter_by(session_id=session_id).first()
                 if upload:
                     upload.processing_status = "processing"
-                    upload.updated_at = datetime.now()
+                    upload.started_at = datetime.utcnow()
                     logger.info(f"💾 Upload-Eintrag gefunden und aktualisiert: ID={upload.id}")
+                    log_debug_info(session_id, "Datenbankstatus aktualisiert: processing", progress=5, stage="database_update")
                 else:
                     logger.warning(f"⚠️ Kein Upload-Eintrag für Session {session_id} in der Datenbank gefunden")
                 
@@ -705,20 +728,58 @@ def save_processing_results(session_id, result, user_id):
         upload = Upload.query.filter_by(session_id=session_id).first()
         if not upload:
             logger.error(f"Keine Upload-Session gefunden für Session ID: {session_id}")
+            # Aktualisiere auch Redis, um den Fehler zu protokollieren
+            error_msg = "Keine Upload-Session in der Datenbank gefunden"
+            redis_client.set(f"processing_status:{session_id}", f"error:{error_msg}", ex=14400)
+            redis_client.set(f"error_details:{session_id}", json.dumps({
+                "message": error_msg,
+                "error_type": "database_error",
+                "timestamp": time.time()
+            }), ex=14400)
             return False
             
-        # Speichere die Ergebnisse
+        # Debug-Log für Ergebnisse
+        logger.info(f"Speichere Ergebnisse für Session {session_id}.")
+        logger.debug(f"Ergebnistyp: {type(result)}")
+        if isinstance(result, dict):
+            logger.debug(f"Ergebnisschlüssel: {', '.join(result.keys())}")
+        
+        # Speichere die Ergebnisse im Upload-Objekt
         upload.result = result
-        upload.status = 'completed'
+        upload.processing_status = 'completed'
         upload.completed_at = datetime.utcnow()
+        
+        # Aktualisiere auch Redis
+        redis_client.set(f"processing_status:{session_id}", "completed", ex=14400)
+        redis_client.set(f"processing_completed:{session_id}", "true", ex=14400)
+        redis_client.set(f"processing_completed_at:{session_id}", str(time.time()), ex=14400)
+        
+        # Speichere die Ergebnisse auch in Redis (für schnelleren Zugriff)
+        try:
+            result_json = json.dumps(result)
+            redis_client.set(f"processing_result:{session_id}", result_json, ex=14400)
+            logger.info(f"Ergebnisse in Redis gespeichert für Session {session_id} (Länge: {len(result_json)})")
+        except (TypeError, ValueError) as json_err:
+            logger.error(f"Fehler beim Konvertieren der Ergebnisse in JSON: {str(json_err)}")
         
         # Commit der Änderungen
         db.session.commit()
+        logger.info(f"Alle Ergebnisse erfolgreich gespeichert für Session {session_id}")
         
         return True
         
     except Exception as e:
         logger.error(f"Fehler beim Speichern der Ergebnisse: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Aktualisiere auch Redis mit dem Fehler
+        redis_client.set(f"processing_status:{session_id}", f"error:{str(e)}", ex=14400)
+        redis_client.set(f"error_details:{session_id}", json.dumps({
+            "message": f"Fehler beim Speichern der Ergebnisse: {str(e)}",
+            "error_type": "database_error",
+            "timestamp": time.time()
+        }), ex=14400)
+        
         if 'db' in locals():
             db.session.rollback()
         return False
@@ -839,3 +900,43 @@ def process_api_request(self, endpoint, method, payload=None, user_id=None):
             # Maximale Wiederholungsversuche erreicht
             logger.error(f"Maximale Wiederholungsversuche ({max_retries}) für API-Anfrage {method} {endpoint} erreicht. Gebe auf.")
             raise
+
+# Fehlerbehandlung für Redis-Operationen
+def safe_redis_set(key, value, ex=14400):
+    """Sichere Methode zum Setzen von Redis-Werten mit Fehlerbehandlung."""
+    try:
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value)
+        redis_client.set(key, value, ex=ex)
+        return True
+    except Exception as e:
+        logger.error(f"Redis-Fehler beim Setzen von {key}: {str(e)}")
+        return False
+
+# Hilfsfunktion für den Debug-Modus
+def log_debug_info(session_id, message, **extra_data):
+    """Loggt Debug-Informationen sowohl in die Logs als auch nach Redis."""
+    logger.debug(f"[{session_id}] {message}")
+    
+    try:
+        # Speichere Debug-Info in Redis
+        debug_data = {
+            "timestamp": datetime.now().isoformat(),
+            "message": message,
+            **extra_data
+        }
+        debug_key = f"debug:{session_id}:{int(time.time())}"
+        redis_client.set(debug_key, json.dumps(debug_data), ex=3600)  # 1 Stunde Aufbewahrung
+        
+        # Aktualisiere den Fortschritt
+        progress_key = f"processing_progress:{session_id}"
+        progress_data = {
+            "progress": extra_data.get("progress", 0),
+            "stage": extra_data.get("stage", "debug"),
+            "message": message,
+            "timestamp": datetime.now().isoformat()
+        }
+        redis_client.set(progress_key, json.dumps(progress_data), ex=14400)
+    except:
+        # Bei Fehlern in der Debug-Funktion nichts tun
+        pass
