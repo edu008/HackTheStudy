@@ -130,10 +130,9 @@ services:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
-    source_dir: backend
-    dockerfile_path: Dockerfile.api
+    source_dir: backend/docker/api
+    dockerfile_path: Dockerfile
     http_port: 8080
-    build_command: docker build -f $(DOCKERFILE_PATH) -t $(APP_IMAGE) .
     # Ressourcen und Skalierung
     instance_count: 1
     instance_size_slug: basic-s
@@ -174,9 +173,8 @@ services:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
-    source_dir: backend
-    dockerfile_path: Dockerfile.worker
-    build_command: docker build -f $(DOCKERFILE_PATH) -t $(APP_IMAGE) .
+    source_dir: backend/docker/worker
+    dockerfile_path: Dockerfile
     # Ressourcen und Skalierung (weniger Ressourcen für Worker nötig)
     instance_count: 1
     instance_size_slug: basic-xs

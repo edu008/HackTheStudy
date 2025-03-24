@@ -54,17 +54,17 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install gunicorn==21.2.0
 
-# Kopiere die API-Dateien (ohne Worker-spezifische Dateien für sauberere Struktur)
-COPY app.py .
-COPY api/ ./api/
-COPY core/ ./core/
-COPY config/ ./config/
-COPY openaicache/ ./openaicache/
-COPY services/ ./services/
-COPY .env.example ./.env.example
+# Kopiere die notwendigen Dateien aus dem Backend-Verzeichnis
+COPY ../app.py .
+COPY ../api ./api
+COPY ../core ./core
+COPY ../config ./config
+COPY ../openaicache ./openaicache
+COPY ../services ./services
+COPY ../.env.example ./.env.example
 
-# Supervisord-Konfiguration für API-Container
-COPY config/supervisor-api.conf /etc/supervisor/conf.d/supervisord.conf
+# Supervisord-Konfiguration
+COPY ../config/supervisor-api.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
