@@ -38,21 +38,15 @@ RUN mkdir -p /app/config /app/core /app/services /app/api /app/openaicache \
     && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
 
 # Abhängigkeiten kopieren und installieren
-COPY requirements.txt .
+COPY *.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Kopiere Worker-spezifische Dateien
-COPY tasks.py .
-COPY api/ ./api/
-COPY core/ ./core/
-COPY config/ ./config/
-COPY openaicache/ ./openaicache/
-COPY services/ ./services/
-COPY .env.example ./.env.example
+COPY . .
 
-# Supervisord-Konfiguration für Worker-Container
-COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
+# Stelle sicher, dass die richtigen Supervisor-Dateien verwendet werden
+RUN cp config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
