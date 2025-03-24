@@ -1,3 +1,36 @@
+# Am Anfang der Datei - vor allen anderen Importen
+try:
+    # Patch für billiard/multiprocessing, um mit ungültigen Dateideskriptoren umzugehen
+    from billiard.connection import Connection
+    
+    # Original poll-Methode sichern
+    original_poll = Connection._poll
+    
+    # Patched poll-Methode
+    def patched_poll(self, timeout):
+        try:
+            return original_poll(self, timeout)
+        except ValueError as e:
+            # Fehler bei ungültigen Dateideskriptoren behandeln
+            if "invalid file descriptor" in str(e):
+                import logging
+                logging.getLogger('billiard_patch').warning(
+                    f"Caught invalid file descriptor error in _poll, returning empty list. FD: {getattr(self, 'fileno', lambda: 'unknown')()}"
+                )
+                return []
+            raise
+    
+    # Die Methode patchen
+    Connection._poll = patched_poll
+    
+    print("Billiard Connection._poll patched successfully in celery_worker.py")
+except (ImportError, AttributeError) as e:
+    print(f"Could not patch billiard Connection in celery_worker.py: {e}")
+
+# Setze auch Socket-Timeout auf einen höheren Wert
+import socket
+socket.setdefaulttimeout(120)  # 2 Minuten Timeout
+
 """
 Celery-Worker für HackTheStudy
 
@@ -53,6 +86,16 @@ app.conf.update(
     worker_without_gossip=True,
     worker_without_mingle=True,
     worker_enable_remote_control=False,
+    # Zusätzliche Resilience-Optionen
+    broker_connection_timeout=30,
+    broker_connection_retry=True,
+    broker_connection_max_retries=10,
+    result_expires=86400,  # 24 Stunden
+    task_ignore_result=False,
+    task_store_errors_even_if_ignored=True,
+    worker_lost_wait=60.0,  # 1 Minute warten, bevor ein Worker als verloren gilt
+    task_send_sent_event=False,
+    broker_pool_limit=None,  # Keine Begrenzung für Verbindungen
 )
 
 # Importiere Tasks mit korrektem Pfad, da die Datei im Root-Verzeichnis liegt

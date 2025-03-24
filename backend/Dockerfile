@@ -87,7 +87,9 @@ ENV CELERY_WORKERS=1 \
     CELERY_WORKER_WITHOUT_HEARTBEAT=1 \
     CELERY_WORKER_WITHOUT_GOSSIP=1 \
     CELERY_WORKER_WITHOUT_MINGLE=1 \
-    CELERY_WORKER_SEND_TASK_EVENTS=0
+    CELERY_WORKER_SEND_TASK_EVENTS=0 \
+    CELERY_POOL=solo \
+    BILLIARD_DEBUG=1
 
 # Starte den Container mit Hilfe von Supervisor
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -1188,6 +1188,37 @@ def start_worker():
     logger.info("=== WORKER-MODUS AKTIVIERT ===")
     logger.info("Celery Worker wird gestartet...")
     
+    # Patch billiard Connection._poll Methode, um mit ungültigen Dateideskriptoren umzugehen
+    try:
+        from billiard.connection import Connection
+        
+        # Original poll-Methode sichern, wenn nicht bereits gepatcht
+        if not hasattr(Connection, '_original_poll'):
+            Connection._original_poll = Connection._poll
+            
+            # Patched poll-Methode
+            def patched_poll(self, timeout):
+                try:
+                    return Connection._original_poll(self, timeout)
+                except ValueError as e:
+                    # Fehler bei ungültigen Dateideskriptoren behandeln
+                    if "invalid file descriptor" in str(e):
+                        logger.warning(
+                            f"Caught invalid file descriptor error in _poll, returning empty list. FD: {getattr(self, 'fileno', lambda: 'unknown')()}"
+                        )
+                        return []
+                    raise
+            
+            # Die Methode patchen
+            Connection._poll = patched_poll
+            logger.info("Billiard Connection._poll patched in start_worker")
+    except (ImportError, AttributeError) as e:
+        logger.error(f"Could not patch billiard Connection: {e}")
+    
+    # Setze Socket-Timeout für bessere Stabilität
+    import socket
+    socket.setdefaulttimeout(120)  # 2 Minuten Timeout
+    
     # Logge API-Requests je nach Konfiguration
     log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
     if log_api_requests:
@@ -1196,8 +1227,9 @@ def start_worker():
     # Optimierte Worker-Konfiguration
     worker_concurrency = int(os.environ.get('CELERY_WORKERS', '1'))  # Default auf 1 Worker
     max_tasks_per_child = int(os.environ.get('CELERY_MAX_TASKS_PER_CHILD', '1'))  # Default auf 1
+    pool_type = os.environ.get('CELERY_POOL', 'solo')  # Verwende solo Pool als Standard
     
-    logger.info(f"Worker-Konfiguration: concurrency={worker_concurrency}, max_tasks_per_child={max_tasks_per_child}")
+    logger.info(f"Worker-Konfiguration: concurrency={worker_concurrency}, max_tasks_per_child={max_tasks_per_child}, pool={pool_type}")
     
     # Starte den Worker in einem separaten Thread
     import threading
@@ -1216,7 +1248,8 @@ def start_worker():
                 prefetch_multiplier=1,  # Nur einen Task gleichzeitig für bessere Stabilität
                 without_heartbeat=True,  # Deaktiviere Heartbeat für bessere Stabilität
                 without_gossip=True,     # Deaktiviere Gossip für bessere Stabilität
-                without_mingle=True      # Deaktiviere Mingle für bessere Stabilität
+                without_mingle=True,     # Deaktiviere Mingle für bessere Stabilität
+                pool=pool_type           # Verwende solo Pool für maximal stabile Verarbeitung
             )
             worker_instance.start()
         except (AttributeError, TypeError) as e:
@@ -1238,7 +1271,8 @@ def start_worker():
                 'prefetch-multiplier': 1,
                 'without-heartbeat': True,
                 'without-gossip': True,
-                'without-mingle': True
+                'without-mingle': True,
+                'pool': pool_type
             }
             
             # Starte den Worker mit den Optionen

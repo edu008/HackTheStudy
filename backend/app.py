@@ -21,6 +21,39 @@ import traceback
 import json
 from werkzeug.exceptions import HTTPException
 
+# Am Anfang der Datei - vor allen anderen Importen
+try:
+    # Patch für billiard/multiprocessing, um mit ungültigen Dateideskriptoren umzugehen
+    from billiard.connection import Connection
+    
+    # Original poll-Methode sichern
+    original_poll = Connection._poll
+    
+    # Patched poll-Methode
+    def patched_poll(self, timeout):
+        try:
+            return original_poll(self, timeout)
+        except ValueError as e:
+            # Fehler bei ungültigen Dateideskriptoren behandeln
+            if "invalid file descriptor" in str(e):
+                import logging
+                logging.getLogger('billiard_patch').warning(
+                    f"Caught invalid file descriptor error in _poll, returning empty list. FD: {getattr(self, 'fileno', lambda: 'unknown')()}"
+                )
+                return []
+            raise
+    
+    # Die Methode patchen
+    Connection._poll = patched_poll
+    
+    print("Billiard Connection._poll patched successfully for invalid file descriptors")
+except (ImportError, AttributeError) as e:
+    print(f"Could not patch billiard Connection: {e}")
+
+# Setze auch Socket-Timeout auf einen höheren Wert
+import socket
+socket.setdefaulttimeout(120)  # 2 Minuten Timeout
+
 # Set ein Flag für Logging-Initialisierung
 LOGGING_INITIALIZED = False
 

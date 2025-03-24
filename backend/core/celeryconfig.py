@@ -37,4 +37,19 @@ task_send_sent_event = False
 
 # Verbesserte Fehlerbehandlung
 task_default_retry_delay = 300  # 5 Minuten Wartezeit vor Retry
-task_max_retries = 3  # Maximal 3 Versuche für fehlgeschlagene Tasks 
+task_max_retries = 3
+
+# Verbesserte Verbindungshandhabung
+broker_connection_timeout = 30
+broker_connection_retry = True
+broker_connection_max_retries = 10
+broker_pool_limit = None  # Keine Begrenzung für Verbindungen
+
+# Verbesserte Redis-Backend-Konfiguration
+redis_socket_connect_timeout = 30
+redis_socket_timeout = 30
+result_expires = 86400  # 24 Stunden
+
+# Spezielle Einstellungen für FileDescriptor-Probleme
+worker_proc_alive_timeout = 120.0  # Erhöhe Timeout für Worker-Prozesse
+worker_pool_restarts = True  # Erlaube Pool-Neustarts bei Fehlern 
