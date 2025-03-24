@@ -16,6 +16,10 @@ import functools  # Für Decorator-Funktionen
 import threading
 from threading import Timer
 
+# Konstanten für die Anwendung
+REDIS_TTL_DEFAULT = 14400  # 4 Stunden Standard-TTL für Redis-Einträge
+REDIS_TTL_SHORT = 3600    # 1 Stunde für kurzlebige Einträge
+
 # Importiere die benötigten Module
 from core.models import db, Upload, Flashcard, Question, Topic, UserActivity, Connection
 from core.redis_client import redis_client
@@ -279,23 +283,34 @@ def init_celery(flask_app):
 
 # Session-Lock Funktion mit Timeout und verbesserte Fehlerbehandlung
 @log_function_call
-def acquire_session_lock(session_id, timeout=3600):
+def acquire_session_lock(session_id, timeout=REDIS_TTL_DEFAULT):
     """
     Versucht, einen Lock für die angegebene Session zu erhalten.
     Gibt True zurück, wenn ein Lock erhalten wurde, andernfalls False.
+    
+    Args:
+        session_id: Die ID der Session, für die ein Lock erworben werden soll
+        timeout: Timeout in Sekunden, nach dem der Lock automatisch freigegeben wird
+    
+    Returns:
+        bool: True wenn Lock erworben wurde, sonst False
     """
     lock_key = f"session_lock:{session_id}"
     
+    # Erstelle eine eindeutige Lock-ID
+    unique_lock_id = f"{os.getpid()}-{datetime.now().timestamp()}-{os.environ.get('HOSTNAME', 'unknown')}"
+    
     # Versuche, den Lock zu erwerben (NX = nur setzen, wenn der Key nicht existiert)
-    acquired = redis_client.set(lock_key, "1", ex=timeout, nx=True)
+    acquired = redis_client.set(lock_key, unique_lock_id, ex=timeout, nx=True)
     
     if acquired:
-        logger.info(f"Acquired lock for session_id: {session_id}")
+        logger.info(f"Acquired lock for session_id: {session_id} (ID: {unique_lock_id})")
         
         # Speichere zusätzliche Informationen für Debug-Zwecke
         redis_client.set(f"session_lock_info:{session_id}", json.dumps({
             "pid": os.getpid(),
             "worker_id": os.environ.get("HOSTNAME", "unknown"),
+            "lock_id": unique_lock_id,
             "acquired_at": datetime.now().isoformat(),
             "timeout": timeout
         }), ex=timeout)
@@ -310,26 +325,54 @@ def acquire_session_lock(session_id, timeout=3600):
             try:
                 info = json.loads(lock_info)
                 logger.info(f"Lock gehalten von: PID {info.get('pid')}, Worker {info.get('worker_id')}, seit {info.get('acquired_at')}")
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Konnte Lock-Info nicht lesen: {str(e)}")
                 
         return False
 
 # Session-Lock freigeben mit verbesserter Fehlerbehandlung
 @log_function_call
 def release_session_lock(session_id):
-    """Gibt den Lock für die angegebene Session frei."""
+    """
+    Gibt den Lock für die angegebene Session frei.
+    
+    Args:
+        session_id: Die ID der Session, deren Lock freigegeben werden soll
+    """
     lock_key = f"session_lock:{session_id}"
     lock_info_key = f"session_lock_info:{session_id}"
     
+    try:
+        # Prüfe, ob wir den Lock besitzen, bevor wir ihn freigeben
+        lock_info = redis_client.get(lock_info_key)
+        if lock_info:
+            try:
+                info = json.loads(lock_info)
+                current_pid = os.getpid()
+                lock_pid = info.get('pid')
+                
+                if lock_pid and int(lock_pid) != current_pid:
+                    logger.warning(f"Versuch, fremden Lock freizugeben! PID {current_pid} vs Lock-PID {lock_pid}")
+                    # Hier könnte man entscheiden, den fremden Lock nicht freizugeben
+                    # Wir machen es trotzdem, um potenzielle Deadlocks zu vermeiden
+            except Exception as e:
+                logger.warning(f"Konnte Lock-Info nicht lesen: {str(e)}")
+    except Exception as e:
+        logger.error(f"Fehler beim Prüfen des Lock-Besitzers: {str(e)}")
+    
     # Lösche Lock und Informationen
-    redis_client.delete(lock_key)
-    redis_client.delete(lock_info_key)
-    
-    # Setze explizit den Status frei
-    redis_client.set(f"session_lock_status:{session_id}", "released", ex=3600)
-    
-    logger.info(f"Released lock for session_id: {session_id}")
+    try:
+        redis_client.delete(lock_key)
+        redis_client.delete(lock_info_key)
+        
+        # Setze explizit den Status frei
+        redis_client.set(f"session_lock_status:{session_id}", "released", ex=REDIS_TTL_SHORT)
+        
+        logger.info(f"Released lock for session_id: {session_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Fehler beim Freigeben des Locks: {str(e)}")
+        return False
 
 @celery.task(bind=True, max_retries=5, default_retry_delay=120, soft_time_limit=3600, time_limit=4000)
 @log_function_call
@@ -518,20 +561,37 @@ def process_upload(self, session_id, files_data, user_id=None):
                 try:
                     # Verbesserte Heartbeat-Funktion mit Stop-Event
                     def heartbeat():
+                        """Thread-Funktion für Heartbeat"""
+                        heartbeat_counter = 0
                         logger.info(f"Heartbeat-Thread für Session {session_id} gestartet")
+                        
                         while not heartbeat_stop_event.is_set():
                             try:
                                 # Aktualisiere den Zeitstempel
-                                current_time = str(time.time())
-                                redis_client.set(f"processing_heartbeat:{session_id}", current_time, ex=14400)
-                                redis_client.set(f"processing_last_update:{session_id}", current_time, ex=14400)
+                                current_time = time.time()
                                 
-                                # Log alle 5 Minuten einen Heartbeat zur besseren Nachverfolgung
-                                if int(float(current_time)) % 300 < 30:  # Etwa alle 5 Minuten
-                                    logger.info(f"Heartbeat für Session {session_id} aktiv")
+                                # Verwende safe_redis_set für verbesserte Fehlerbehandlung
+                                safe_redis_set(f"processing_heartbeat:{session_id}", str(current_time), ex=REDIS_TTL_DEFAULT)
+                                safe_redis_set(f"processing_last_update:{session_id}", str(current_time), ex=REDIS_TTL_DEFAULT)
+                                
+                                # Inkrementiere Zähler für Log-Zwecke
+                                heartbeat_counter += 1
+                                
+                                # Log alle 10 Heartbeats (ca. 5 Minuten) zur besseren Nachverfolgung
+                                if heartbeat_counter % 10 == 0:
+                                    logger.info(f"Heartbeat #{heartbeat_counter} für Session {session_id} aktiv")
                                     
+                                    # Speichere auch ausführlichere Informationen
+                                    safe_redis_set(f"processing_heartbeat_info:{session_id}", {
+                                        "count": heartbeat_counter,
+                                        "pid": os.getpid(),
+                                        "worker_id": self.request.id,
+                                        "timestamp": datetime.now().isoformat()
+                                    }, ex=REDIS_TTL_DEFAULT)
+                                
                                 # Kürzeres Sleep-Intervall für schnellere Reaktionszeit auf Stop-Event
-                                for _ in range(15):  # 15 x 2 Sekunden = 30 Sekunden
+                                # Aufgeteilt in kleinere Intervalle, um schneller auf Stop-Event zu reagieren
+                                for i in range(15):  # 15 x 2 Sekunden = 30 Sekunden
                                     if heartbeat_stop_event.is_set():
                                         break
                                     time.sleep(2)
@@ -540,12 +600,16 @@ def process_upload(self, session_id, files_data, user_id=None):
                                 # Kurze Pause bei Fehler, dann weiterversuchen
                                 time.sleep(5)
                     
-                        logger.info(f"Heartbeat-Thread für Session {session_id} beendet")
+                        logger.info(f"Heartbeat-Thread für Session {session_id} beendet (nach {heartbeat_counter} Heartbeats)")
                     
                     # Starte den Heartbeat in einem separaten Thread
-                    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+                    heartbeat_thread = threading.Thread(
+                        target=heartbeat, 
+                        daemon=True,
+                        name=f"Heartbeat-{session_id}"
+                    )
                     heartbeat_thread.start()
-                    logger.info("Heartbeat-Thread gestartet")
+                    logger.info(f"Heartbeat-Thread gestartet (Thread-ID: {heartbeat_thread.ident})")
                     
                     # Hauptverarbeitungslogik
                     try:
@@ -676,7 +740,7 @@ def process_upload(self, session_id, files_data, user_id=None):
                                 upload.updated_at = datetime.now()
                                 upload.completion_time = datetime.now()
                                 db.session.commit()
-                                logger.info(f"�� Datenbankstatus erfolgreich aktualisiert für Session {session_id}")
+                                logger.info(f"💾 Datenbankstatus erfolgreich aktualisiert für Session {session_id}")
                             else:
                                 logger.warning(f"⚠️ Kein Upload-Eintrag zum Aktualisieren gefunden für Session {session_id}")
                         except Exception as db_error:
@@ -699,40 +763,39 @@ def process_upload(self, session_id, files_data, user_id=None):
                             "processing_time": processing_time,
                             "files_processed": len(files_data)
                         }
-                    
-                except Exception as processing_error:
-                    # Fehlerbehandlung für die Hauptverarbeitung
-                    error_message = str(processing_error)
-                    logger.error(f"Kritischer Fehler bei der Verarbeitung von Session {session_id}: {error_message}")
-                    logger.error(traceback.format_exc())
-                    
-                    # Speichere den Fehler für das Frontend
-                    redis_client.set(f"processing_error:{session_id}", json.dumps({
-                        "error": "processing_error",
-                        "message": error_message,
-                        "timestamp": datetime.now().isoformat()
-                    }), ex=14400)
-                    
-                    # Aktualisiere den Status auf Fehler
-                    redis_client.set(f"processing_status:{session_id}", "error", ex=14400)
-                    
-                    # Versuche, den Datenbankstatus zu aktualisieren
-                    try:
-                        upload = Upload.query.filter_by(session_id=session_id).first()
-                        if upload:
-                            upload.processing_status = "error"
-                            upload.updated_at = datetime.now()
-                            upload.error_message = error_message[:500]  # Begrenze die Länge
-                            db.session.commit()
-                    except Exception as db_error:
-                        logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
-                        db.session.rollback()
-                    
-                    # Gib den Lock frei
-                    release_session_lock(session_id)
-                    
-                    # Wirf die Exception erneut, damit Celery sie als Fehler erkennt
-                    raise processing_error
+                    except Exception as processing_error:
+                        # Fehlerbehandlung für die Hauptverarbeitung
+                        error_message = str(processing_error)
+                        logger.error(f"Kritischer Fehler bei der Verarbeitung von Session {session_id}: {error_message}")
+                        logger.error(traceback.format_exc())
+                        
+                        # Speichere den Fehler für das Frontend
+                        redis_client.set(f"processing_error:{session_id}", json.dumps({
+                            "error": "processing_error",
+                            "message": error_message,
+                            "timestamp": datetime.now().isoformat()
+                        }), ex=14400)
+                        
+                        # Aktualisiere den Status auf Fehler
+                        redis_client.set(f"processing_status:{session_id}", "error", ex=14400)
+                        
+                        # Versuche, den Datenbankstatus zu aktualisieren
+                        try:
+                            upload = Upload.query.filter_by(session_id=session_id).first()
+                            if upload:
+                                upload.processing_status = "error"
+                                upload.updated_at = datetime.now()
+                                upload.error_message = error_message[:500]  # Begrenze die Länge
+                                db.session.commit()
+                        except Exception as db_error:
+                            logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
+                            db.session.rollback()
+                        
+                        # Gib den Lock frei
+                        release_session_lock(session_id)
+                        
+                        # Wirf die Exception erneut, damit Celery sie als Fehler erkennt
+                        raise processing_error
         
     except Exception as e:
         # Fehlerbehandlung innerhalb des App-Kontexts
@@ -802,6 +865,10 @@ def cleanup_processing_for_session(session_id, error_reason="unknown"):
         session_id: Die ID der Session, die bereinigt werden soll
         error_reason: Der Grund für den Abbruch
     """
+    if not session_id:
+        logger.error("Cleanup aufgerufen ohne Session-ID")
+        return
+        
     try:
         logger.info(f"Bereinige Session {session_id} wegen: {error_reason}")
         
@@ -822,35 +889,89 @@ def cleanup_processing_for_session(session_id, error_reason="unknown"):
                 upload = Upload.query.filter_by(session_id=session_id).first()
                 if upload:
                     upload.processing_status = "failed"
+                    upload.error_message = f"Abgebrochen: {error_reason}"[:500]
+                    upload.updated_at = datetime.utcnow()
                     db.session.commit()
+                    logger.info(f"Datenbankstatus für Session {session_id} auf 'failed' gesetzt")
+                else:
+                    logger.warning(f"Kein Upload-Eintrag für Session {session_id} gefunden")
         except Exception as import_error:
-            logger.error(f"Fehler beim Importieren der Module für die Bereinigung: {str(import_error)}")
+            logger.error(f"Fehler beim Aktualisieren des Datenbankstatus: {str(import_error)}")
+            logger.error(traceback.format_exc())
         
         # 2. Alle Redis-Statusinformationen setzen
         processing_status_key = f"processing_status:{session_id}"
-        redis_client.set(processing_status_key, f"failed:{error_reason}", ex=3600)
+        safe_redis_set(processing_status_key, f"failed:{error_reason}", ex=REDIS_TTL_DEFAULT)
         
-        # 3. Sitzungssperre freigeben, falls sie noch nicht freigegeben wurde
+        # Fehlerdetails speichern
+        safe_redis_set(f"error_details:{session_id}", {
+            "message": str(error_reason),
+            "error_type": "manual_cleanup",
+            "timestamp": time.time(),
+            "cleanup_time": datetime.now().isoformat()
+        }, ex=REDIS_TTL_DEFAULT)
+        
+        # 3. Bereinige alle mit der Session verbundenen Redis-Schlüssel
+        try:
+            # Finde alle Schlüssel mit diesem session_id-Präfix
+            pattern = f"*:{session_id}*"
+            keys = redis_client.keys(pattern)
+            
+            if keys:
+                logger.info(f"Bereinige {len(keys)} Redis-Schlüssel für Session {session_id}")
+                # Setze die Lebensdauer aller Schlüssel auf eine Stunde, damit sie früher ablaufen
+                for key in keys:
+                    if key != processing_status_key and key != f"error_details:{session_id}":
+                        try:
+                            # TTL auf eine Stunde setzen, aber nicht löschen
+                            redis_client.expire(key, REDIS_TTL_SHORT)
+                        except Exception as redis_error:
+                            logger.warning(f"Konnte TTL für Schlüssel {key} nicht setzen: {str(redis_error)}")
+        except Exception as redis_error:
+            logger.error(f"Fehler beim Bereinigen der Redis-Schlüssel: {str(redis_error)}")
+        
+        # 4. Sitzungssperre freigeben, falls sie noch nicht freigegeben wurde
         release_session_lock(session_id)
-        
-        # 4. Optional: Alle laufenden Celery-Tasks für diese Session abbrechen (fortgeschritten)
-        # Dies würde eine Verfolgung der Task-IDs in Redis erfordern
         
         logger.info(f"Bereinigung für Session {session_id} abgeschlossen")
     except Exception as e:
         logger.error(f"Fehler bei der Bereinigung der Session {session_id}: {str(e)}")
+        logger.error(traceback.format_exc())
 
 # Explizite Registrierung der Aufgabe sicherstellen 
 celery.tasks.register(process_upload)
 
 @log_function_call
 def process_extracted_text(session_id, extracted_text, file_name, user_id=None):
-    """Verarbeitet extrahierten Text aus Dateien und generiert Lernmaterialien."""
+    """
+    Verarbeitet extrahierten Text aus Dateien und generiert Lernmaterialien.
+    
+    Args:
+        session_id: Die ID der Upload-Session
+        extracted_text: Der extrahierte Text aus der Datei
+        file_name: Name der Originaldatei
+        user_id: Optional, die ID des Benutzers
+        
+    Returns:
+        dict: Die Ergebnisse der Verarbeitung oder None bei Fehler
+    """
     logger = logging.getLogger(__name__)
+    
+    if not extracted_text:
+        logger.warning(f"[{session_id}] Leerer Text für Datei {file_name}")
+        return None
     
     try:
         logger.info(f"[{session_id}] Beginne Verarbeitung von extrahiertem Text für {file_name}")
         logger.info(f"[{session_id}] Textlänge: {len(extracted_text)} Zeichen")
+        
+        # Setze Fortschrittsstatus
+        safe_redis_set(f"processing_progress:{session_id}", {
+            "progress": 10,
+            "stage": "text_cleaning",
+            "message": "Text wird für die Verarbeitung vorbereitet...",
+            "timestamp": datetime.now().isoformat()
+        })
         
         # Bereinige den Text für die Datenbank
         logger.info(f"[{session_id}] Bereinige Text für die Datenbank")
@@ -865,27 +986,44 @@ def process_extracted_text(session_id, extracted_text, file_name, user_id=None):
         except Exception as client_error:
             logger.error(f"[{session_id}] Fehler beim Erstellen des OpenAI-Clients: {str(client_error)}")
             logger.error(traceback.format_exc())
+            
+            # Fehler in Redis speichern
+            safe_redis_set(f"processing_error:{session_id}", {
+                "error": "openai_client_error",
+                "message": str(client_error),
+                "timestamp": datetime.now().isoformat()
+            })
+            
             raise
         
         # Verarbeite den Text mit unified_content_processing
         logger.info(f"[{session_id}] Starte unified_content_processing")
         try:
             # Speichere Status für den Frontend-Fortschritt
-            redis_client.set(f"processing_progress:{session_id}", json.dumps({
+            safe_redis_set(f"processing_progress:{session_id}", {
                 "progress": 20,
                 "stage": "content_processing",
                 "message": "KI-Verarbeitung des Textes wird gestartet...",
                 "timestamp": datetime.now().isoformat()
-            }), ex=14400)
+            })
             
+            # Führe die Verarbeitung durch
             result = unified_content_processing(
-                text=extracted_text,
+                text=cleaned_text,
                 client=client,
                 file_names=[file_name],
                 user_id=user_id,
                 session_id=session_id
             )
             logger.info(f"[{session_id}] unified_content_processing abgeschlossen")
+            
+            # Aktualisiere Fortschritt
+            safe_redis_set(f"processing_progress:{session_id}", {
+                "progress": 80,
+                "stage": "content_processed",
+                "message": "KI-Verarbeitung abgeschlossen, speichere Ergebnisse...",
+                "timestamp": datetime.now().isoformat()
+            })
             
             if result:
                 # Log Statistiken
@@ -908,14 +1046,14 @@ def process_extracted_text(session_id, extracted_text, file_name, user_id=None):
             logger.error(traceback.format_exc())
             
             # Speichere Fehler für das Frontend
-            redis_client.set(f"processing_error:{session_id}", json.dumps({
+            safe_redis_set(f"processing_error:{session_id}", {
                 "error": "content_processing_error",
                 "message": str(processing_error),
                 "timestamp": datetime.now().isoformat()
-            }), ex=14400)
+            })
             
             # Aktualisiere auch Redis-Status
-            redis_client.set(f"processing_status:{session_id}", f"error:content_processing", ex=14400)
+            safe_redis_set(f"processing_status:{session_id}", f"error:content_processing")
             
             raise
         
@@ -923,23 +1061,13 @@ def process_extracted_text(session_id, extracted_text, file_name, user_id=None):
             error_msg = "Die Inhaltsverarbeitung lieferte ein leeres Ergebnis"
             logger.error(f"[{session_id}] {error_msg}")
             
-            redis_client.set(f"processing_error:{session_id}", json.dumps({
+            safe_redis_set(f"processing_error:{session_id}", {
                 "error": "empty_result",
                 "message": error_msg,
                 "timestamp": datetime.now().isoformat()
-            }), ex=14400)
+            })
             
             raise ValueError(error_msg)
-        
-        # Speichere die Ergebnisse in der Datenbank
-        logger.info(f"[{session_id}] Speichere Ergebnisse in der Datenbank")
-        try:
-            save_processing_results(session_id, result, user_id)
-            logger.info(f"[{session_id}] Ergebnisse erfolgreich gespeichert")
-        except Exception as db_error:
-            logger.error(f"[{session_id}] Fehler beim Speichern der Ergebnisse: {str(db_error)}")
-            logger.error(traceback.format_exc())
-            raise
         
         logger.info(f"[{session_id}] Textverarbeitung erfolgreich abgeschlossen für {file_name}")
         return result
@@ -948,18 +1076,18 @@ def process_extracted_text(session_id, extracted_text, file_name, user_id=None):
         logger.error(f"[{session_id}] Fehler bei der Textverarbeitung: {str(e)}")
         logger.error(traceback.format_exc())
         
-        # Stell sicher, dass Fehler in Redis gespeichert wird
+        # Stelle sicher, dass Fehler in Redis gespeichert wird
         try:
-            redis_client.set(f"processing_error:{session_id}", json.dumps({
+            safe_redis_set(f"processing_error:{session_id}", {
                 "error": "text_processing_error",
                 "message": str(e),
                 "timestamp": datetime.now().isoformat(),
                 "file": file_name
-            }), ex=14400)
-        except:
-            pass
+            })
+        except Exception as redis_error:
+            logger.error(f"[{session_id}] Konnte Fehler nicht in Redis speichern: {str(redis_error)}")
             
-        raise
+        return None
 
 def save_processing_results(session_id, result, user_id):
     """
@@ -1152,41 +1280,178 @@ def process_api_request(self, endpoint, method, payload=None, user_id=None):
             raise
 
 # Fehlerbehandlung für Redis-Operationen
-def safe_redis_set(key, value, ex=14400):
-    """Sichere Methode zum Setzen von Redis-Werten mit Fehlerbehandlung."""
+def safe_redis_set(key, value, ex=REDIS_TTL_DEFAULT):
+    """
+    Sichere Methode zum Setzen von Redis-Werten mit Fehlerbehandlung.
+    
+    Args:
+        key: Der Redis-Schlüssel
+        value: Der zu speichernde Wert (kann ein Objekt sein)
+        ex: Ablaufzeit in Sekunden
+        
+    Returns:
+        bool: True bei Erfolg, False bei Fehler
+    """
+    if not key:
+        logger.error("Leerer Redis-Key übergeben")
+        return False
+        
     try:
-        if isinstance(value, (dict, list)):
-            value = json.dumps(value)
+        # Umwandeln von komplexen Typen in JSON
+        if isinstance(value, (dict, list, tuple)):
+            try:
+                value = json.dumps(value)
+            except (TypeError, ValueError) as json_err:
+                logger.error(f"JSON-Serialisierungsfehler für Key {key}: {str(json_err)}")
+                # Versuche eine einfachere String-Repräsentation
+                value = str(value)
+        
+        # None-Werte als leeren String speichern
+        if value is None:
+            value = ""
+            
+        # Stelle sicher, dass der Wert ein String ist
+        if not isinstance(value, (str, bytes, bytearray, memoryview)):
+            value = str(value)
+            
+        # Setze den Wert mit Timeout
         redis_client.set(key, value, ex=ex)
         return True
     except Exception as e:
         logger.error(f"Redis-Fehler beim Setzen von {key}: {str(e)}")
+        logger.error(traceback.format_exc())
         return False
+
+# Ergänzende Funktion zum sicheren Lesen aus Redis
+def safe_redis_get(key, default=None):
+    """
+    Sichere Methode zum Lesen von Redis-Werten mit Fehlerbehandlung.
+    
+    Args:
+        key: Der Redis-Schlüssel
+        default: Standardwert, falls der Schlüssel nicht existiert
+        
+    Returns:
+        Der Wert aus Redis oder der Standardwert
+    """
+    if not key:
+        return default
+        
+    try:
+        value = redis_client.get(key)
+        if value is None:
+            return default
+            
+        # Versuche JSON zu parsen
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            # Wenn kein JSON, gib den Rohwert zurück
+            return value
+    except Exception as e:
+        logger.error(f"Redis-Fehler beim Lesen von {key}: {str(e)}")
+        return default
 
 # Hilfsfunktion für den Debug-Modus
 def log_debug_info(session_id, message, **extra_data):
-    """Loggt Debug-Informationen sowohl in die Logs als auch nach Redis."""
+    """
+    Loggt Debug-Informationen sowohl in die Logs als auch nach Redis.
+    
+    Args:
+        session_id: Die ID der Session
+        message: Die zu loggende Nachricht
+        **extra_data: Weitere Key-Value-Paare für die Debug-Info
+    """
+    if not session_id:
+        logger.warning("log_debug_info aufgerufen ohne Session-ID")
+        return
+        
+    # Schreibe zuerst ins Log
     logger.debug(f"[{session_id}] {message}")
     
     try:
-        # Speichere Debug-Info in Redis
+        # Prüfe auf bestimmte Parameter und formatiere sie besser
+        progress = extra_data.get("progress", 0)
+        stage = extra_data.get("stage", "debug")
+        
+        # Speichere Debug-Info in Redis mit Zeitstempel
         debug_data = {
             "timestamp": datetime.now().isoformat(),
             "message": message,
             **extra_data
         }
-        debug_key = f"debug:{session_id}:{int(time.time())}"
-        redis_client.set(debug_key, json.dumps(debug_data), ex=3600)  # 1 Stunde Aufbewahrung
+        
+        # Verwende eine eindeutige Timestamp für jeden Debug-Eintrag
+        timestamp = int(time.time() * 1000)  # Millisekunden für höhere Genauigkeit
+        debug_key = f"debug:{session_id}:{timestamp}"
+        
+        # Speichere mit einer kürzeren Aufbewahrungszeit (1 Stunde)
+        safe_redis_set(debug_key, debug_data, ex=REDIS_TTL_SHORT)
+        
+        # Halte eine Liste der letzten Debug-Einträge (max. 100)
+        try:
+            # Füge den neuen Key zur Liste hinzu
+            debug_list_key = f"debug_list:{session_id}"
+            redis_client.lpush(debug_list_key, debug_key)
+            redis_client.ltrim(debug_list_key, 0, 99)  # Behalte nur die letzten 100 Einträge
+            redis_client.expire(debug_list_key, REDIS_TTL_DEFAULT)
+        except Exception as list_error:
+            logger.debug(f"Fehler beim Aktualisieren der Debug-Liste: {str(list_error)}")
         
         # Aktualisiere den Fortschritt
-        progress_key = f"processing_progress:{session_id}"
-        progress_data = {
-            "progress": extra_data.get("progress", 0),
-            "stage": extra_data.get("stage", "debug"),
-            "message": message,
-            "timestamp": datetime.now().isoformat()
-        }
-        redis_client.set(progress_key, json.dumps(progress_data), ex=14400)
-    except:
-        # Bei Fehlern in der Debug-Funktion nichts tun
-        pass
+        if progress > 0 or stage != "debug":
+            progress_key = f"processing_progress:{session_id}"
+            progress_data = {
+                "progress": progress,
+                "stage": stage,
+                "message": message,
+                "timestamp": datetime.now().isoformat()
+            }
+            safe_redis_set(progress_key, progress_data, ex=REDIS_TTL_DEFAULT)
+            
+            # Aktualisiere auch den letzten Aktualisierungszeitstempel
+            safe_redis_set(f"processing_last_update:{session_id}", str(time.time()), ex=REDIS_TTL_DEFAULT)
+    except Exception as e:
+        # Bei Fehlern in der Debug-Funktion nur loggen, aber nicht abbrechen
+        logger.warning(f"Fehler beim Speichern von Debug-Infos: {str(e)}")
+
+# Timeout-Decorator für Funktionen
+def timeout(seconds, error_message="Operation timed out"):
+    """
+    Decorator, der eine Zeitüberschreitung für Funktionen erzwingt.
+    
+    Args:
+        seconds: Timeout in Sekunden
+        error_message: Fehlermeldung bei Timeout
+        
+    Returns:
+        Decorator-Funktion
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = [None]
+            error = [None]
+            finished = [False]
+            
+            def target():
+                try:
+                    result[0] = func(*args, **kwargs)
+                    finished[0] = True
+                except Exception as e:
+                    error[0] = e
+            
+            thread = threading.Thread(target=target)
+            thread.daemon = True  # Thread läuft im Hintergrund
+            thread.start()
+            thread.join(seconds)
+            
+            if finished[0]:
+                if error[0]:
+                    raise error[0]
+                return result[0]
+            else:
+                raise TimeoutError(error_message)
+                
+        return wrapper
+    return decorator
