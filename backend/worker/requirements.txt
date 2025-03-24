@@ -6,6 +6,11 @@ kombu==5.3.5             # Celery-Abhängigkeit
 redis==5.0.1             # Für Redis-Verbindung
 psycopg2-binary==2.9.9   # Für PostgreSQL-Verbindung
 Flask-SQLAlchemy==3.0.5  # Für Datenbankzugriff
+Flask==2.3.3             # Flask-Framework
+Flask-Cors==4.0.0        # CORS-Unterstützung
+Flask-Session==0.5.0     # Sitzungsverwaltung
+Werkzeug==2.3.8          # Flask-Abhängigkeit
+gunicorn==21.0.1         # WSGI-Server
 
 # Dateiformatunterstützung
 PyPDF2==3.0.1            # PDF-Verarbeitung
@@ -24,6 +29,11 @@ backoff==2.2.1           # Retry-Mechanismen
 requests==2.32.3         # HTTP-Anfragen
 supervisor==4.2.5        # Prozessüberwachung
 psutil==5.9.5            # Systemressourcenüberwachung
+Authlib==1.3.1           # OAuth-Unterstützung
+PyJWT==2.8.0             # JWT-Verarbeitung
+marshmallow==3.21.1      # Daten-Serialisierung
+prometheus-flask-exporter==0.23.0  # Monitoring
+gevent==22.10.2          # Async-Support
 
 # Optional - je nach Anforderungen
 colorama==0.4.6          # Farbiges Terminal-Logging

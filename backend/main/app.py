@@ -671,6 +671,10 @@ def setup_gunicorn_logging():
         return True
     return False
 
+# Initialisiere die globale app-Variable für Gunicorn
+app = init_app(run_mode='app')
+print("Globale app-Variable wurde initialisiert")
+
 # Main-Funktion für den direkten Start der Anwendung
 if __name__ == '__main__':
     # Logger initialisieren
