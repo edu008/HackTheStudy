@@ -451,8 +451,17 @@ if __name__ == '__main__':
     # App initialisieren basierend auf dem Modus
     app = init_app(run_mode)
     
+    # Wenn USE_SUPERVISOR gesetzt ist, gibt es nichts zu tun - 
+    # alle Prozesse werden von Supervisor gesteuert
+    if os.environ.get('USE_SUPERVISOR') == 'true':
+        logger.info("Container wird im Supervisor-Modus ausgeführt. Einzelne Prozesse werden von Supervisor verwaltet.")
+        # Hier nichts tun, Supervisor übernimmt die Kontrolle
+        import time
+        while True:
+            time.sleep(3600)  # Hauptprozess am Leben halten, aber nichts tun
+    
     # Wenn es sich um einen Worker- oder Payment-Service handelt, läuft dieser bereits
-    if run_mode in ['worker']:
+    elif run_mode in ['worker']:
         logger.info(f"Worker-Ausführung gestartet im {run_mode.upper()}-Modus.")
         # Blockiere den Hauptthread, damit der Worker weiterlaufen kann
         # Da der Worker bereits in init_app gestartet wurde

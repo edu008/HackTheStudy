@@ -87,7 +87,7 @@ envs:
     value: "5001"
 
 services:
-  # API-Service ohne Worker-Funktion
+  # Kombinierter API-Service und Worker-Service in einem Container
   - name: backend
     type: web
     github:
@@ -112,34 +112,9 @@ services:
         value: "hackthestudy-backend"
       - key: DIGITAL_OCEAN_DEPLOYMENT_ID
         value: "${APP_DEPLOYMENT_ID}"
-      - key: RUN_MODE
-        value: "app"
+      - key: USE_SUPERVISOR
+        value: "true"
       - key: LOG_API_REQUESTS
         value: "false"
       - key: LOG_PREFIX
         value: "[APP]"
-
-  # Separater Worker-Service 
-  - name: worker
-    type: worker
-    github:
-      repo: edu008/HackTheStudy
-      branch: main
-      deploy_on_push: true
-    source_dir: backend
-    dockerfile_path: backend/Dockerfile
-    instance_count: 1
-    instance_size_slug: basic-xs
-    health_check: null
-    run_command: python /app/app.py
-    envs:
-      - key: RUN_MODE
-        value: "worker"
-      - key: LOG_API_REQUESTS
-        value: "true"
-      - key: LOG_PREFIX
-        value: "[WORKER]"
-      - key: DIGITAL_OCEAN_APP_NAME
-        value: "hackthestudy-backend-worker"
-      - key: DIGITAL_OCEAN_DEPLOYMENT_ID
-        value: "${APP_DEPLOYMENT_ID}-worker"
