@@ -42,17 +42,17 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Kopiere die notwendigen Dateien aus dem Backend-Verzeichnis
-COPY ../tasks.py .
-COPY ../api ./api
-COPY ../core ./core
-COPY ../config ./config
-COPY ../openaicache ./openaicache
-COPY ../services ./services
-COPY ../.env.example ./.env.example
+# Kopiere die notwendigen Dateien
+COPY tasks.py .
+COPY api/ ./api/
+COPY core/ ./core/
+COPY config/ ./config/
+COPY openaicache/ ./openaicache/
+COPY services/ ./services/
+COPY .env.example ./.env.example
 
 # Supervisord-Konfiguration
-COPY ../config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
+COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \

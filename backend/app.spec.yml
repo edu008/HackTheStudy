@@ -130,8 +130,8 @@ services:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
-    source_dir: backend/docker/api
-    dockerfile_path: Dockerfile
+    source_dir: backend
+    dockerfile_path: docker/api/Dockerfile
     http_port: 8080
     # Ressourcen und Skalierung
     instance_count: 1
@@ -173,8 +173,8 @@ services:
       repo: edu008/HackTheStudy
       branch: main
       deploy_on_push: true
-    source_dir: backend/docker/worker
-    dockerfile_path: Dockerfile
+    source_dir: backend
+    dockerfile_path: docker/worker/Dockerfile
     # Ressourcen und Skalierung (weniger Ressourcen für Worker nötig)
     instance_count: 1
     instance_size_slug: basic-xs
