@@ -193,14 +193,38 @@ def log_startup_info():
     
     force_flush_handlers()
 
-def create_app():
-    # Debug-Info zur Nachverfolgung von Aufrufen
-    logger.info("create_app() wird aufgerufen - PID: %d", os.getpid())
+# Funktion zum Initialisieren der Anwendung
+def init_app(run_mode=None):
+    # Bestimme Ausführungsmodus (Standard, Worker oder Payment)
+    if run_mode is None:
+        run_mode = os.environ.get('RUN_MODE', 'app')
     
-    # Lade Umgebungsvariablen
-    load_env()
+    # Erzwinge Umgebungsvariable für andere Module
+    os.environ['RUN_MODE'] = run_mode
     
-    # Erstelle die Flask-App
+    # Worker- oder Payment-Service Modi
+    if run_mode in ['worker', 'payment']:
+        # Konfiguriere Logging für den Prozess
+        logger = setup_logging()
+        logger.info(f"Starte im {run_mode.upper()}-Modus...")
+        
+        # Überprüfe, ob API-Anfragen protokolliert werden sollen
+        log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
+        if log_api_requests:
+            logger.info("API-Anfragen-Protokollierung aktiviert")
+        
+        # Worker-Modus: Starte Celery-Worker
+        if run_mode == 'worker':
+            from tasks import start_worker
+            start_worker()
+            return None  # Worker hat keine Flask-App
+        
+        # Payment-Service: Starte speziellen Server
+        if run_mode == 'payment':
+            from services.payment_service import create_payment_app
+            return create_payment_app()
+    
+    # Standard-App-Modus für API und Web-Funktionen
     app = Flask(__name__)
     
     # Konfiguriere Secret Key für Sessions
@@ -280,6 +304,18 @@ def create_app():
     # Registriere Payment Blueprint
     from api.payment import payment_bp
     app.register_blueprint(payment_bp, url_prefix='/api/v1/payment')
+    
+    # Health-Check-Endpunkt für Digital Ocean
+    @app.route('/api/v1/health', methods=['GET'])
+    def health_check():
+        """
+        Einfacher Health-Check-Endpunkt für Digital Ocean App Platform.
+        """
+        app.logger.info("Health-Check-Anfrage erhalten")
+        return jsonify({
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat()
+        }), 200
     
     # Root-Route für API-Status
     @app.route('/', methods=['GET', 'OPTIONS'])
@@ -492,261 +528,3 @@ if __name__ == '__main__':
     else:
         logger.error("Konnte keine App initialisieren. Beende...")
         sys.exit(1)
-
-# Funktion zum Initialisieren der Anwendung
-def init_app(run_mode=None):
-    # Bestimme Ausführungsmodus (Standard, Worker oder Payment)
-    if run_mode is None:
-        run_mode = os.environ.get('RUN_MODE', 'app')
-    
-    # Erzwinge Umgebungsvariable für andere Module
-    os.environ['RUN_MODE'] = run_mode
-    
-    # Worker- oder Payment-Service Modi
-    if run_mode in ['worker', 'payment']:
-        # Konfiguriere Logging für den Prozess
-        logger = setup_logging()
-        logger.info(f"Starte im {run_mode.upper()}-Modus...")
-        
-        # Überprüfe, ob API-Anfragen protokolliert werden sollen
-        log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
-        if log_api_requests:
-            logger.info("API-Anfragen-Protokollierung aktiviert")
-        
-        # Worker-Modus: Starte Celery-Worker
-        if run_mode == 'worker':
-            from tasks import start_worker
-            start_worker()
-            return None  # Worker hat keine Flask-App
-        
-        # Payment-Service: Starte speziellen Server
-        if run_mode == 'payment':
-            from services.payment_service import create_payment_app
-            return create_payment_app()
-    
-    # Standard-App-Modus für API und Web-Funktionen
-    app = Flask(__name__)
-    
-    # Konfiguriere Secret Key für Sessions
-    secret_key = os.environ.get('FLASK_SECRET_KEY')
-    if not secret_key:
-        # Generiere einen zufälligen Schlüssel, wenn keiner gesetzt ist
-        import secrets
-        secret_key = secrets.token_hex(32)
-        logger.warning("Kein FLASK_SECRET_KEY in Umgebungsvariablen gefunden. Verwende einen zufällig generierten Schlüssel (gilt nur für diese Sitzung).")
-    
-    app.secret_key = secret_key
-    logger.info("Secret key für Flask-App und Sessions konfiguriert")
-    
-    # Konfiguriere App-Logger mit einheitlicher Formatierung
-    app.logger.setLevel(logging.INFO)
-    # Entferne alle bestehenden Handler
-    for handler in app.logger.handlers:
-        app.logger.removeHandler(handler)
-    # Verwende die einheitliche Formatierung
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] %(name)s: %(message)s', '%Y-%m-%d %H:%M:%S'))
-    app.logger.addHandler(handler)
-    # Verhindere doppelte Logs
-    app.logger.propagate = False
-    
-    # OAuth Konfiguration - Verbessert mit Fehlerbehandlung
-    try:
-        from api.auth import setup_oauth
-        setup_oauth(app)
-        logger.info("OAuth erfolgreich initialisiert und in Flask-App eingebunden")
-    except Exception as e:
-        logger.error(f"Fehler bei der OAuth-Konfiguration: {str(e)}")
-        logger.error(traceback.format_exc())
-    
-    # Konfiguriere CORS
-    cors_origins = setup_cors_origins()
-    logger.info("Finale CORS-Origins: %s", ", ".join(cors_origins))
-    
-    # Initialisiere CORS mit den erlaubten Origins
-    CORS(app, 
-         resources={r"/*": {
-             "origins": cors_origins,
-             "supports_credentials": True,
-             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-CSRF-Token", "Cache-Control"],
-             "expose_headers": ["Content-Type", "Authorization"],
-             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-             "max_age": 3600,
-             "vary_header": True
-         }},
-         supports_credentials=True,
-         allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-CSRF-Token", "Cache-Control"],
-         expose_headers=["Content-Type", "Authorization"],
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-         max_age=3600)
-    
-    # Konfiguriere ProxyFix für korrekte Client-IPs hinter Proxies
-    app.wsgi_app = ProxyFix(
-        app.wsgi_app,
-        x_for=1,
-        x_proto=1,
-        x_host=1,
-        x_port=1,
-        x_prefix=1
-    )
-    
-    # Konfiguriere die Datenbank
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///app.db')
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    
-    # Initialisiere die Datenbank
-    db.init_app(app)
-    
-    # Registriere Blueprints
-    from api import api_bp
-    app.register_blueprint(api_bp, url_prefix='/api/v1')
-    
-    # Registriere Payment Blueprint
-    from api.payment import payment_bp
-    app.register_blueprint(payment_bp, url_prefix='/api/v1/payment')
-    
-    # Root-Route für API-Status
-    @app.route('/', methods=['GET', 'OPTIONS'])
-    def api_status():
-        """
-        Liefert den API-Status und grundlegende Informationen.
-        """
-        app.logger.info("API-Status-Anfrage erhalten von %s", request.remote_addr)
-        if request.method == 'OPTIONS':
-            response = jsonify({"success": True})
-            return response
-            
-        return jsonify({
-            "status": "online",
-            "version": "1.0.0",
-            "api_base": "/api/v1",
-            "documentation": "https://api.hackthestudy.ch/docs",
-            "timestamp": datetime.now().isoformat()
-        })
-    
-    # Globaler Error Handler für 405 Method Not Allowed
-    @app.errorhandler(405)
-    def method_not_allowed(e):
-        app.logger.warning(f"405 Method Not Allowed: {request.method} {request.path}")
-        return jsonify({
-            "success": False,
-            "error": {
-                "code": "METHOD_NOT_ALLOWED",
-                "message": f"Die Methode {request.method} ist für diesen Endpunkt nicht erlaubt",
-                "allowed_methods": e.valid_methods if hasattr(e, 'valid_methods') else None
-            }
-        }), 405
-    
-    # Globaler Error Handler für 401 Unauthorized
-    @app.errorhandler(401)
-    def unauthorized(e):
-        app.logger.warning(f"401 Unauthorized: {request.path}")
-        return jsonify({
-            "success": False,
-            "error": {
-                "code": "UNAUTHORIZED",
-                "message": "Bitte melden Sie sich an oder überprüfen Sie Ihre Authentifizierung",
-                "details": str(e)
-            }
-        }), 401
-    
-    # Globaler Error Handler für alle anderen Fehler
-    @app.errorhandler(Exception)
-    def handle_exception(e):
-        app.logger.error(f"Unbehandelter Fehler: {str(e)}")
-        app.logger.error(traceback.format_exc())
-        
-        if isinstance(e, HTTPException):
-            response = e.get_response()
-            response.data = json.dumps({
-                "success": False,
-                "error": {
-                    "code": e.name,
-                    "message": e.description,
-                    "status_code": e.code
-                }
-            })
-            response.content_type = "application/json"
-            return response
-            
-        return jsonify({
-            "success": False,
-            "error": {
-                "code": "INTERNAL_SERVER_ERROR",
-                "message": "Ein interner Serverfehler ist aufgetreten",
-                "details": str(e) if app.debug else None
-            }
-        }), 500
-    
-    # Konfiguriere Prometheus Metrics
-    metrics = PrometheusMetrics(app)
-    
-    @app.after_request
-    def process_response(response):
-        # Setze CORS-Header für alle Anfragen
-        origin = request.headers.get('Origin')
-        if origin and origin in cors_origins:
-            response.headers['Access-Control-Allow-Origin'] = origin
-            response.headers['Access-Control-Allow-Credentials'] = 'true'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-Token, Cache-Control'
-            response.headers['Access-Control-Expose-Headers'] = 'Content-Type, Authorization'
-            response.headers['Access-Control-Max-Age'] = '3600'
-            response.headers['Vary'] = 'Origin'
-        
-        # Setze zusätzliche Sicherheitsheader
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        response.headers['X-XSS-Protection'] = '1; mode=block'
-        
-        # Protokollierung der API-Anfragen
-        run_mode = os.environ.get('RUN_MODE', 'app')
-        log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
-        
-        if log_api_requests and not request.path.startswith('/static/'):
-            # Kürze Anfragedaten für Logging
-            req_data = None
-            content_type = request.headers.get('Content-Type', '')
-            
-            if 'application/json' in content_type and request.data:
-                try:
-                    raw_data = request.get_json(silent=True)
-                    if raw_data:
-                        # Sensible Daten filtern
-                        if isinstance(raw_data, dict):
-                            filtered_data = raw_data.copy()
-                            for key in ['password', 'token', 'api_key']:
-                                if key in filtered_data:
-                                    filtered_data[key] = '[REDACTED]'
-                            req_data = filtered_data
-                        else:
-                            req_data = "[JSON DATA, nicht dict]"
-                except:
-                    req_data = "[Ungültiges JSON]"
-            
-            # Logge die API-Anfrage
-            api_request_logger.info(f"API-Anfrage: {request.method} {request.path} - Status: {response.status_code} - Daten: {req_data}")
-        
-        # Response zurückgeben
-        return response
-    
-    @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
-    @app.route('/<path:path>', methods=['OPTIONS'])
-    def handle_options(path):
-        response = jsonify({"success": True})
-        return process_response(response)
-    
-    # Catch-all Route für nicht gefundene Endpunkte
-    @app.route('/<path:path>', methods=['GET'])
-    def catch_all(path):
-        app.logger.info(f"Catch-all Route für unbekannten Pfad: {path}")
-        return jsonify({
-            "success": False,
-            "error": {
-                "code": "NOT_FOUND",
-                "message": f"Der Endpunkt '{path}' wurde nicht gefunden",
-                "path": path
-            }
-        }), 404
-    
-    return app
