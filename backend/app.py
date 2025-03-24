@@ -21,38 +21,107 @@ import traceback
 import json
 from werkzeug.exceptions import HTTPException
 
-# Am Anfang der Datei - vor allen anderen Importen
+# Direkt am Anfang - Umfassendes Monkey-Patching für billiard
 try:
-    # Patch für billiard/multiprocessing, um mit ungültigen Dateideskriptoren umzugehen
+    import billiard
+    import billiard.connection
     from billiard.connection import Connection
     
-    # Original poll-Methode sichern
-    original_poll = Connection._poll
+    # Sichere die Original-Funktionen
+    original_module_poll = billiard.connection._poll
+    if hasattr(Connection, '_poll'):
+        original_class_poll = Connection._poll
     
-    # Patched poll-Methode
-    def patched_poll(self, timeout):
+    # Patch für die billiard.connection._poll Funktion auf Modulebene
+    def patched_module_poll(object_list, timeout):
         try:
-            return original_poll(self, timeout)
+            return original_module_poll(object_list, timeout)
         except ValueError as e:
-            # Fehler bei ungültigen Dateideskriptoren behandeln
             if "invalid file descriptor" in str(e):
                 import logging
                 logging.getLogger('billiard_patch').warning(
-                    f"Caught invalid file descriptor error in _poll, returning empty list. FD: {getattr(self, 'fileno', lambda: 'unknown')()}"
+                    f"Caught invalid file descriptor error in module-level _poll, returning empty list."
                 )
                 return []
             raise
     
-    # Die Methode patchen
-    Connection._poll = patched_poll
+    # Patch für die Connection._poll Methode
+    def patched_class_poll(self, timeout):
+        try:
+            if hasattr(Connection, '_original_poll'):
+                return Connection._original_poll(self, timeout)
+            elif hasattr(self, '_original_poll'):
+                return self._original_poll(timeout)
+            else:
+                try:
+                    result = []
+                    if hasattr(self, 'fileno'):
+                        fd = self.fileno()
+                        if fd < 0:
+                            import logging
+                            logging.getLogger('billiard_patch').warning(
+                                f"Negative file descriptor detected: {fd}, returning empty list."
+                            )
+                            return []
+                    return original_module_poll([self], timeout)
+                except Exception as inner_e:
+                    import logging
+                    logging.getLogger('billiard_patch').warning(
+                        f"Error in fallback poll method: {inner_e}, returning empty list."
+                    )
+                    return []
+        except ValueError as e:
+            if "invalid file descriptor" in str(e):
+                import logging
+                logging.getLogger('billiard_patch').warning(
+                    f"Caught invalid file descriptor error in class-level _poll, returning empty list. FD: {getattr(self, 'fileno', lambda: 'unknown')()}"
+                )
+                return []
+            raise
     
-    print("Billiard Connection._poll patched successfully for invalid file descriptors")
-except (ImportError, AttributeError) as e:
-    print(f"Could not patch billiard Connection: {e}")
+    # Patch auf Modulebene
+    billiard.connection._poll = patched_module_poll
+    
+    # Patch auf Klassenebene
+    if hasattr(Connection, '_poll'):
+        Connection._original_poll = Connection._poll
+        Connection._poll = patched_class_poll
+    
+    # Direkter Monkey-Patch für wait Funktion
+    original_wait = billiard.connection.wait
+    def patched_wait(object_list, timeout=None):
+        try:
+            return original_wait(object_list, timeout)
+        except ValueError as e:
+            if "invalid file descriptor" in str(e):
+                import logging
+                logging.getLogger('billiard_patch').warning(
+                    f"Caught invalid file descriptor error in wait, returning empty list."
+                )
+                return []
+            raise
+    
+    billiard.connection.wait = patched_wait
+    
+    print("Billiard _poll and wait functions patched successfully at module level")
+except Exception as e:
+    print(f"Could not patch billiard module: {e}")
 
 # Setze auch Socket-Timeout auf einen höheren Wert
 import socket
 socket.setdefaulttimeout(120)  # 2 Minuten Timeout
+
+# Gevent patch für multithreading
+try:
+    from gevent import monkey
+    if not monkey.is_module_patched('threading'):
+        monkey.patch_all(thread=True, socket=True)
+        print("Gevent monkey patching applied for thread and socket")
+except ImportError:
+    print("Gevent not available for monkey patching")
+
+# Setze Umgebungsvariable für Celery Pool-Typ
+os.environ['CELERY_POOL'] = 'solo'
 
 # Set ein Flag für Logging-Initialisierung
 LOGGING_INITIALIZED = False

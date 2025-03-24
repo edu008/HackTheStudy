@@ -13,7 +13,8 @@ task_serializer = 'json'
 accept_content = ['json']  # Akzeptiere nur JSON-Tasks
 result_serializer = 'json'
 
-# Worker Konfiguration
+# Pool-Konfiguration - Verwende threads statt Prozesse
+worker_pool = 'threads'  # Vermeidet Probleme mit Multiprocessing & Dateidescriptoren
 worker_prefetch_multiplier = 1  # Präfetch Limit - ein Task pro Worker
 worker_max_tasks_per_child = 1  # Neustart nach jedem Task, um Speicherlecks zu vermeiden
 
@@ -44,6 +45,7 @@ broker_connection_timeout = 30
 broker_connection_retry = True
 broker_connection_max_retries = 10
 broker_pool_limit = None  # Keine Begrenzung für Verbindungen
+broker_heartbeat = 0      # Deaktiviere Broker-Heartbeat
 
 # Verbesserte Redis-Backend-Konfiguration
 redis_socket_connect_timeout = 30
@@ -52,4 +54,11 @@ result_expires = 86400  # 24 Stunden
 
 # Spezielle Einstellungen für FileDescriptor-Probleme
 worker_proc_alive_timeout = 120.0  # Erhöhe Timeout für Worker-Prozesse
-worker_pool_restarts = True  # Erlaube Pool-Neustarts bei Fehlern 
+worker_pool_restarts = True  # Erlaube Pool-Neustarts bei Fehlern
+
+# Ergebnishandhabung verbessern
+result_persistent = False  # Keine dauerhafte Speicherung für Ergebnisse
+task_ignore_result = False  # Ergebnisse nicht ignorieren
+
+# Sichere Serialisierung - verhindert einige Fehlerquellen
+accept_content = ['json']  # Nur JSON für Serialisierung akzeptieren 

@@ -1190,30 +1190,44 @@ def start_worker():
     
     # Patch billiard Connection._poll Methode, um mit ungültigen Dateideskriptoren umzugehen
     try:
+        import billiard
+        import billiard.connection
         from billiard.connection import Connection
         
-        # Original poll-Methode sichern, wenn nicht bereits gepatcht
-        if not hasattr(Connection, '_original_poll'):
-            Connection._original_poll = Connection._poll
-            
-            # Patched poll-Methode
-            def patched_poll(self, timeout):
-                try:
-                    return Connection._original_poll(self, timeout)
-                except ValueError as e:
-                    # Fehler bei ungültigen Dateideskriptoren behandeln
-                    if "invalid file descriptor" in str(e):
-                        logger.warning(
-                            f"Caught invalid file descriptor error in _poll, returning empty list. FD: {getattr(self, 'fileno', lambda: 'unknown')()}"
-                        )
-                        return []
-                    raise
-            
-            # Die Methode patchen
-            Connection._poll = patched_poll
-            logger.info("Billiard Connection._poll patched in start_worker")
-    except (ImportError, AttributeError) as e:
-        logger.error(f"Could not patch billiard Connection: {e}")
+        # Patch für die billiard.connection._poll Funktion auf Modulebene
+        original_module_poll = billiard.connection._poll
+        def patched_module_poll(object_list, timeout):
+            try:
+                return original_module_poll(object_list, timeout)
+            except ValueError as e:
+                if "invalid file descriptor" in str(e):
+                    logger.warning(
+                        f"Caught invalid file descriptor error in module-level _poll, returning empty list."
+                    )
+                    return []
+                raise
+        
+        # Patch auf Modulebene
+        billiard.connection._poll = patched_module_poll
+        
+        # Direkter Monkey-Patch für wait Funktion
+        original_wait = billiard.connection.wait
+        def patched_wait(object_list, timeout=None):
+            try:
+                return original_wait(object_list, timeout)
+            except ValueError as e:
+                if "invalid file descriptor" in str(e):
+                    logger.warning(
+                        f"Caught invalid file descriptor error in wait, returning empty list."
+                    )
+                    return []
+                raise
+        
+        billiard.connection.wait = patched_wait
+        
+        logger.info("Billiard _poll and wait functions patched in start_worker")
+    except Exception as e:
+        logger.error(f"Could not patch billiard module: {e}")
     
     # Setze Socket-Timeout für bessere Stabilität
     import socket
@@ -1227,7 +1241,7 @@ def start_worker():
     # Optimierte Worker-Konfiguration
     worker_concurrency = int(os.environ.get('CELERY_WORKERS', '1'))  # Default auf 1 Worker
     max_tasks_per_child = int(os.environ.get('CELERY_MAX_TASKS_PER_CHILD', '1'))  # Default auf 1
-    pool_type = os.environ.get('CELERY_POOL', 'solo')  # Verwende solo Pool als Standard
+    pool_type = os.environ.get('CELERY_POOL', 'threads')  # Verwende threads Pool als Standard
     
     logger.info(f"Worker-Konfiguration: concurrency={worker_concurrency}, max_tasks_per_child={max_tasks_per_child}, pool={pool_type}")
     
@@ -1236,6 +1250,14 @@ def start_worker():
     
     def worker_thread():
         try:
+            # Setze Process-Limits auf -1, um unbegrenzte File Descriptors zu ermöglichen
+            try:
+                import resource
+                resource.setrlimit(resource.RLIMIT_NOFILE, (65536, 65536))
+                logger.info("Erhöhtes RLIMIT_NOFILE auf 65536 für mehr File Descriptors")
+            except (ImportError, ValueError) as e:
+                logger.warning(f"Konnte RLIMIT_NOFILE nicht setzen: {e}")
+            
             # Neuere Celery-Methode zum Starten eines Workers
             logger.info("Starte Worker mit neuerer Methode...")
             worker_instance = celery.Worker(
@@ -1249,7 +1271,7 @@ def start_worker():
                 without_heartbeat=True,  # Deaktiviere Heartbeat für bessere Stabilität
                 without_gossip=True,     # Deaktiviere Gossip für bessere Stabilität
                 without_mingle=True,     # Deaktiviere Mingle für bessere Stabilität
-                pool=pool_type           # Verwende solo Pool für maximal stabile Verarbeitung
+                pool=pool_type           # Verwende threads Pool für maximale Stabilität
             )
             worker_instance.start()
         except (AttributeError, TypeError) as e:
