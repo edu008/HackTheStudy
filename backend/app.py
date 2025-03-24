@@ -195,6 +195,9 @@ def log_startup_info():
 
 # Funktion zum Initialisieren der Anwendung
 def init_app(run_mode=None):
+    # Globale logger-Variable verwenden
+    global logger
+    
     # Bestimme Ausführungsmodus (Standard, Worker oder Payment)
     if run_mode is None:
         run_mode = os.environ.get('RUN_MODE', 'app')
