@@ -14,6 +14,7 @@ from datetime import datetime
 import base64
 import functools  # Für Decorator-Funktionen
 import threading
+from threading import Timer
 
 # Importiere die benötigten Module
 from core.models import db, Upload, Flashcard, Question, Topic, UserActivity, Connection
@@ -140,42 +141,115 @@ os.environ['OPENAI_LOG'] = 'debug'
 
 # Function to create or get the Flask app
 def get_flask_app():
+    logger.info("get_flask_app() wird aufgerufen...")
+    
+    # Alle versuchten Import-Wege protokollieren
+    attempted_imports = []
+    
     try:
         # Versuche zuerst den direkten Import
+        logger.info("Versuche direkten Import von app")
         import app
-        return app.create_app()
-    except (ImportError, AttributeError):
+        attempted_imports.append("direkter Import: import app")
+        
+        if hasattr(app, 'create_app'):
+            logger.info("app.create_app() gefunden, rufe auf")
+            flask_app = app.create_app()
+            logger.info(f"app.create_app() erfolgreich aufgerufen, App: {flask_app}")
+            return flask_app
+        else:
+            logger.warning("app wurde importiert, aber create_app nicht gefunden")
+            attempted_imports.append("app importiert, aber create_app() fehlt")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"Direkter Import fehlgeschlagen: {str(e)}")
+        attempted_imports.append(f"Fehler bei direktem Import: {str(e)}")
+        
         try:
             # Falls das fehlschlägt, versuche den Import mit absoluten Pfaden
+            logger.info("Versuche Import mit angepasstem sys.path")
             import os
             import sys
+            
             # Füge das übergeordnete Verzeichnis zum Pfad hinzu
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            
+            # Logge die Pfade für besseres Debugging
+            logger.info(f"Aktuelles Verzeichnis: {current_dir}")
+            logger.info(f"Übergeordnetes Verzeichnis: {parent_dir}")
+            
+            sys.path.insert(0, current_dir)
+            sys.path.insert(0, parent_dir)
+            
+            logger.info(f"Python-Pfad erweitert: {sys.path[:5]}")
+            attempted_imports.append(f"sys.path erweitert mit: {current_dir} und {parent_dir}")
+            
+            # Versuche erneut den Import
+            logger.info("Versuche erneuten Import von app nach Pfadanpassung")
             import app
-            return app.create_app()
-        except (ImportError, AttributeError):
+            
+            if hasattr(app, 'create_app'):
+                logger.info("app.create_app() gefunden nach Pfadanpassung")
+                flask_app = app.create_app()
+                logger.info("App erfolgreich erstellt mit app.create_app()")
+                return flask_app
+            else:
+                logger.warning("app wurde importiert nach Pfadanpassung, aber create_app nicht gefunden")
+                attempted_imports.append("app importiert nach Pfadanpassung, aber create_app() fehlt")
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Import mit angepasstem Pfad fehlgeschlagen: {str(e)}")
+            attempted_imports.append(f"Fehler bei Import mit angepasstem Pfad: {str(e)}")
+            
             # Als letzten Ausweg, versuche die App direkt zu importieren
             try:
+                logger.info("Letzte Option: Versuche Flask-App aus current_app zu bekommen")
                 from flask import current_app
                 if current_app:
+                    logger.info("Aktuelle App aus Flask-Kontext geholt")
                     return current_app
                 
                 # Wenn der aktuelle App-Kontext nicht funktioniert, erstelle eine neue App
+                logger.info("Keine aktuelle App im Kontext, erstelle neue Flask-App")
                 from flask import Flask
                 flask_app = Flask(__name__)
+                
+                # Logge die minimale App-Konfiguration
+                logger.info("Erstelle minimale Flask-App-Konfiguration")
+                
                 # Minimale Konfiguration
-                flask_app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+                database_url = os.getenv('DATABASE_URL')
+                logger.info(f"DATABASE_URL vorhanden: {'Ja' if database_url else 'Nein'}")
+                
+                flask_app.config['SQLALCHEMY_DATABASE_URI'] = database_url
                 flask_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+                
                 # Wir müssen auch die Datenbank initialisieren
-                from core.models import db
-                db.init_app(flask_app)
+                logger.info("Initialisiere Datenbank-Verbindung")
+                try:
+                    from core.models import db
+                    db.init_app(flask_app)
+                    logger.info("Datenbank erfolgreich initialisiert")
+                except Exception as db_error:
+                    logger.error(f"Fehler bei DB-Initialisierung: {str(db_error)}")
+                
+                logger.info("Minimale Flask-App erstellt und konfiguriert")
                 return flask_app
             except Exception as e:
                 # Kritischer Fehler - protokolliere Details und verwende eine sehr einfache App als Fallback
-                import logging
-                logging.critical(f"Kritischer Fehler beim Erstellen der Flask-App: {str(e)}")
-                flask_app = Flask(__name__)
-                return flask_app
+                error_msg = f"Kritischer Fehler beim Erstellen der Flask-App: {str(e)}"
+                logger.critical(error_msg)
+                logger.critical(f"Stacktrace: {traceback.format_exc()}")
+                logger.critical(f"Versuchte Import-Wege: {attempted_imports}")
+                
+                # Versuche eine letzte, ganz einfache App zu erstellen
+                try:
+                    from flask import Flask
+                    flask_app = Flask(__name__)
+                    logger.warning("Einfache Fallback-Flask-App ohne Konfiguration erstellt")
+                    return flask_app
+                except Exception as final_error:
+                    logger.critical(f"Konnte nicht einmal eine einfache Flask-App erstellen: {str(final_error)}")
+                    raise Exception(f"Flask konnte nicht importiert werden: {str(final_error)}")
 
 # Configure Celery to use Flask app context
 def init_celery(flask_app):
@@ -343,8 +417,14 @@ def process_upload(self, session_id, files_data, user_id=None):
     # Verwende einen expliziten Anwendungskontext für die gesamte Task
     try:
         logger.info("Betrete Flask App-Kontext")
+        # Log Flask-App-Informationen für Debugging
+        logger.info(f"Flask-App-Typ: {type(flask_app)}")
+        logger.info(f"Flask-App-Name: {flask_app.name if hasattr(flask_app, 'name') else 'Kein Name'}")
+        logger.info(f"Flask-App hat app_context: {hasattr(flask_app, 'app_context')}")
+        logger.info("Versuche, mit flask_app.app_context() zu starten...")
+        
         with flask_app.app_context():
-            logger.info("In Flask App-Kontext")
+            logger.info("Erfolgreich in Flask App-Kontext gelangt")
             try:
                 # Initialisiere Redis-Status mit detaillierten Informationen
                 logger.info("Initialisiere Redis-Status")
@@ -459,7 +539,7 @@ def process_upload(self, session_id, files_data, user_id=None):
                                 logger.error(f"Heartbeat-Fehler für Session {session_id}: {str(hb_error)}")
                                 # Kurze Pause bei Fehler, dann weiterversuchen
                                 time.sleep(5)
-                        
+                    
                         logger.info(f"Heartbeat-Thread für Session {session_id} beendet")
                     
                     # Starte den Heartbeat in einem separaten Thread
@@ -529,7 +609,7 @@ def process_upload(self, session_id, files_data, user_id=None):
                                         logger.error(f"Fehler bei der Base64-Dekodierung: {str(decode_error)}")
                                         logger.error(f"Base64-Typ: {type(file_content_b64)}")
                                         raise
-                                        
+                                    
                                     logger.info(f"📄 Extrahiere Text aus Datei {file_name} ({len(file_bytes)} Bytes)")
                                     try:
                                         # Import vor Verwendung
@@ -596,7 +676,7 @@ def process_upload(self, session_id, files_data, user_id=None):
                                 upload.updated_at = datetime.now()
                                 upload.completion_time = datetime.now()
                                 db.session.commit()
-                                logger.info(f"💾 Datenbankstatus erfolgreich aktualisiert für Session {session_id}")
+                                logger.info(f"�� Datenbankstatus erfolgreich aktualisiert für Session {session_id}")
                             else:
                                 logger.warning(f"⚠️ Kein Upload-Eintrag zum Aktualisieren gefunden für Session {session_id}")
                         except Exception as db_error:
@@ -620,111 +700,98 @@ def process_upload(self, session_id, files_data, user_id=None):
                             "files_processed": len(files_data)
                         }
                     
-                    except Exception as processing_error:
-                        # Fehlerbehandlung für die Hauptverarbeitung
-                        error_message = str(processing_error)
-                        logger.error(f"Kritischer Fehler bei der Verarbeitung von Session {session_id}: {error_message}")
-                        logger.error(traceback.format_exc())
-                        
-                        # Speichere den Fehler für das Frontend
-                        redis_client.set(f"processing_error:{session_id}", json.dumps({
-                            "error": "processing_error",
-                            "message": error_message,
-                            "timestamp": datetime.now().isoformat()
-                        }), ex=14400)
-                        
-                        # Aktualisiere den Status auf Fehler
-                        redis_client.set(f"processing_status:{session_id}", "error", ex=14400)
-                        
-                        # Versuche, den Datenbankstatus zu aktualisieren
-                        try:
-                            upload = Upload.query.filter_by(session_id=session_id).first()
-                            if upload:
-                                upload.processing_status = "error"
-                                upload.updated_at = datetime.now()
-                                upload.error_message = error_message[:500]  # Begrenze die Länge
-                                db.session.commit()
-                        except Exception as db_error:
-                            logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
-                            db.session.rollback()
-                        
-                        # Gib den Lock frei
-                        release_session_lock(session_id)
-                        
-                        # Wirf die Exception erneut, damit Celery sie als Fehler erkennt
-                        raise processing_error
-                
-                finally:
-                    # Bereinige den Heartbeat-Thread, wenn er existiert
-                    if heartbeat_thread and heartbeat_thread.is_alive():
-                        logger.info(f"Beende Heartbeat-Thread für Session {session_id}")
-                        heartbeat_stop_event.set()  # Signal zum Beenden des Threads
-                        # Wir können auf den Thread warten, aber mit Timeout um Blockieren zu vermeiden
-                        heartbeat_thread.join(timeout=5.0)
-                        # Erzwinge das Ablaufen von Heartbeat-Keys
-                        redis_client.delete(f"processing_heartbeat:{session_id}")
-                    logger.info("Heartbeat-Thread beendet oder nicht vorhanden")
-                
-            except Exception as e:
-                # Fehlerbehandlung innerhalb des App-Kontexts
-                logger.error(f"Fehler im App-Kontext: {str(e)}")
-                logger.error(traceback.format_exc())
-                
-                # Bereinige Ressourcen
-                cleanup_processing_for_session(session_id, str(e))
-                
-                # Erhöhe den Retry-Zähler für diese Task
-                retry_count = self.request.retries
-                max_retries = self.max_retries
-                
-                if retry_count < max_retries:
-                    logger.warning(f"Versuche Retry {retry_count + 1}/{max_retries} für Session {session_id}")
-                    redis_client.set(f"processing_status:{session_id}", f"retrying_{retry_count + 1}", ex=14400)
-                    raise self.retry(exc=e, countdown=120)  # Retry in 2 Minuten
-                else:
-                    # Maximale Anzahl von Retries erreicht
-                    logger.error(f"Maximale Anzahl von Retries erreicht für Session {session_id}")
-                    redis_client.set(f"processing_status:{session_id}", "failed", ex=14400)
+                except Exception as processing_error:
+                    # Fehlerbehandlung für die Hauptverarbeitung
+                    error_message = str(processing_error)
+                    logger.error(f"Kritischer Fehler bei der Verarbeitung von Session {session_id}: {error_message}")
+                    logger.error(traceback.format_exc())
+                    
+                    # Speichere den Fehler für das Frontend
                     redis_client.set(f"processing_error:{session_id}", json.dumps({
-                        "error": "max_retries_exceeded",
-                        "message": str(e),
+                        "error": "processing_error",
+                        "message": error_message,
                         "timestamp": datetime.now().isoformat()
                     }), ex=14400)
                     
-                    # Aktualisiere auch die Datenbank
+                    # Aktualisiere den Status auf Fehler
+                    redis_client.set(f"processing_status:{session_id}", "error", ex=14400)
+                    
+                    # Versuche, den Datenbankstatus zu aktualisieren
                     try:
                         upload = Upload.query.filter_by(session_id=session_id).first()
                         if upload:
-                            upload.processing_status = "failed"
+                            upload.processing_status = "error"
                             upload.updated_at = datetime.now()
-                            upload.error_message = f"Max retries exceeded: {str(e)}"[:500]
+                            upload.error_message = error_message[:500]  # Begrenze die Länge
                             db.session.commit()
                     except Exception as db_error:
                         logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
-                        try:
-                            db.session.rollback()
-                        except:
-                            pass
-                
-                # Gib ein Fehlerergebnis zurück
-                return {
-                    "status": "error",
-                    "session_id": session_id,
-                    "error": str(e),
-                    "traceback": traceback.format_exc()
-                }
+                        db.session.rollback()
+                    
+                    # Gib den Lock frei
+                    release_session_lock(session_id)
+                    
+                    # Wirf die Exception erneut, damit Celery sie als Fehler erkennt
+                    raise processing_error
+        
     except Exception as e:
-        # Fehlerbehandlung außerhalb des App-Kontexts
-        logger.error(f"Kritischer Fehler außerhalb des App-Kontexts: {str(e)}")
+        # Fehlerbehandlung innerhalb des App-Kontexts
+        logger.error(f"Fehler im App-Kontext: {str(e)}")
         logger.error(traceback.format_exc())
         
         # Bereinige Ressourcen
-        cleanup_processing_for_session(session_id, f"Kritischer Fehler: {str(e)}")
+        cleanup_processing_for_session(session_id, str(e))
         
+        # Erhöhe den Retry-Zähler für diese Task
+        retry_count = self.request.retries
+        max_retries = self.max_retries
+        
+        if retry_count < max_retries:
+            logger.warning(f"Versuche Retry {retry_count + 1}/{max_retries} für Session {session_id}")
+            redis_client.set(f"processing_status:{session_id}", f"retrying_{retry_count + 1}", ex=14400)
+            raise self.retry(exc=e, countdown=120)  # Retry in 2 Minuten
+        else:
+            # Maximale Anzahl von Retries erreicht
+            logger.error(f"Maximale Anzahl von Retries erreicht für Session {session_id}")
+            redis_client.set(f"processing_status:{session_id}", "failed", ex=14400)
+            redis_client.set(f"processing_error:{session_id}", json.dumps({
+                "error": "max_retries_exceeded",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat()
+            }), ex=14400)
+            
+            # Aktualisiere auch die Datenbank
+            try:
+                upload = Upload.query.filter_by(session_id=session_id).first()
+                if upload:
+                    upload.processing_status = "failed"
+                    upload.updated_at = datetime.now()
+                    upload.error_message = f"Max retries exceeded: {str(e)}"[:500]
+                    db.session.commit()
+            except Exception as db_error:
+                logger.error(f"Fehler beim Aktualisieren des Fehlerstatus: {str(db_error)}")
+                try:
+                    db.session.rollback()
+                except:
+                    pass
+        
+        # Gib ein Fehlerergebnis zurück
         return {
             "status": "error",
-            "error": f"Kritischer Fehler außerhalb des App-Kontexts: {str(e)}"
+            "session_id": session_id,
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }
+    finally:
+        # Bereinige den Heartbeat-Thread, wenn er existiert
+        if heartbeat_thread and heartbeat_thread.is_alive():
+            logger.info(f"Beende Heartbeat-Thread für Session {session_id}")
+            heartbeat_stop_event.set()  # Signal zum Beenden des Threads
+            # Wir können auf den Thread warten, aber mit Timeout um Blockieren zu vermeiden
+            heartbeat_thread.join(timeout=5.0)
+            # Erzwinge das Ablaufen von Heartbeat-Keys
+            redis_client.delete(f"processing_heartbeat:{session_id}")
+        logger.info("Heartbeat-Thread beendet oder nicht vorhanden")
 
 def cleanup_processing_for_session(session_id, error_reason="unknown"):
     """
