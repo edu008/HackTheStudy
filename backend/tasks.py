@@ -15,6 +15,7 @@ import base64
 import functools  # Für Decorator-Funktionen
 import threading
 from threading import Timer
+import signal
 
 # Konstanten für die Anwendung
 REDIS_TTL_DEFAULT = 14400  # 4 Stunden Standard-TTL für Redis-Einträge
@@ -147,113 +148,65 @@ os.environ['OPENAI_LOG'] = 'debug'
 def get_flask_app():
     logger.info("get_flask_app() wird aufgerufen...")
     
-    # Alle versuchten Import-Wege protokollieren
-    attempted_imports = []
-    
+    # Einfache, schnelle App-Erstellung mit Timeout
     try:
-        # Versuche zuerst den direkten Import
-        logger.info("Versuche direkten Import von app")
-        import app
-        attempted_imports.append("direkter Import: import app")
+        # Timeout-Mechanismus mit Thread statt Signal (funktioniert auf allen Plattformen)
+        timeout_occurred = [False]
+        result = [None]
         
-        if hasattr(app, 'create_app'):
-            logger.info("app.create_app() gefunden, rufe auf")
-            flask_app = app.create_app()
-            logger.info(f"app.create_app() erfolgreich aufgerufen, App: {flask_app}")
-            return flask_app
-        else:
-            logger.warning("app wurde importiert, aber create_app nicht gefunden")
-            attempted_imports.append("app importiert, aber create_app() fehlt")
-    except (ImportError, AttributeError) as e:
-        logger.warning(f"Direkter Import fehlgeschlagen: {str(e)}")
-        attempted_imports.append(f"Fehler bei direktem Import: {str(e)}")
+        def timeout_function():
+            timeout_occurred[0] = True
+            logger.warning("Timeout beim Import der Flask-App")
+            
+        # Setze Timeout von 5 Sekunden für den Import
+        timer = threading.Timer(5.0, timeout_function)
+        timer.start()
         
         try:
-            # Falls das fehlschlägt, versuche den Import mit absoluten Pfaden
-            logger.info("Versuche Import mit angepasstem sys.path")
-            import os
-            import sys
-            
-            # Füge das übergeordnete Verzeichnis zum Pfad hinzu
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            parent_dir = os.path.dirname(current_dir)
-            
-            # Logge die Pfade für besseres Debugging
-            logger.info(f"Aktuelles Verzeichnis: {current_dir}")
-            logger.info(f"Übergeordnetes Verzeichnis: {parent_dir}")
-            
-            sys.path.insert(0, current_dir)
-            sys.path.insert(0, parent_dir)
-            
-            logger.info(f"Python-Pfad erweitert: {sys.path[:5]}")
-            attempted_imports.append(f"sys.path erweitert mit: {current_dir} und {parent_dir}")
-            
-            # Versuche erneut den Import
-            logger.info("Versuche erneuten Import von app nach Pfadanpassung")
+            # Direkter Import ohne Komplikationen
             import app
-            
-            if hasattr(app, 'create_app'):
-                logger.info("app.create_app() gefunden nach Pfadanpassung")
+            if hasattr(app, 'create_app') and not timeout_occurred[0]:
                 flask_app = app.create_app()
-                logger.info("App erfolgreich erstellt mit app.create_app()")
+                logger.info(f"app.create_app() erfolgreich aufgerufen")
+                timer.cancel()  # Breche den Timer ab
                 return flask_app
-            else:
-                logger.warning("app wurde importiert nach Pfadanpassung, aber create_app nicht gefunden")
-                attempted_imports.append("app importiert nach Pfadanpassung, aber create_app() fehlt")
         except (ImportError, AttributeError) as e:
-            logger.warning(f"Import mit angepasstem Pfad fehlgeschlagen: {str(e)}")
-            attempted_imports.append(f"Fehler bei Import mit angepasstem Pfad: {str(e)}")
+            logger.warning(f"Direkter Import fehlgeschlagen: {str(e)}")
+        
+        # Wenn der direkte Import fehlschlägt, erstelle eine einfache App
+        if not timeout_occurred[0]:
+            from flask import Flask
+            flask_app = Flask(__name__)
             
-            # Als letzten Ausweg, versuche die App direkt zu importieren
+            # Minimale Konfiguration
+            database_url = os.getenv('DATABASE_URL')
+            flask_app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+            flask_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+            
+            # Initialisiere Datenbank
             try:
-                logger.info("Letzte Option: Versuche Flask-App aus current_app zu bekommen")
-                from flask import current_app
-                if current_app:
-                    logger.info("Aktuelle App aus Flask-Kontext geholt")
-                    return current_app
-                
-                # Wenn der aktuelle App-Kontext nicht funktioniert, erstelle eine neue App
-                logger.info("Keine aktuelle App im Kontext, erstelle neue Flask-App")
-                from flask import Flask
-                flask_app = Flask(__name__)
-                
-                # Logge die minimale App-Konfiguration
-                logger.info("Erstelle minimale Flask-App-Konfiguration")
-                
-                # Minimale Konfiguration
-                database_url = os.getenv('DATABASE_URL')
-                logger.info(f"DATABASE_URL vorhanden: {'Ja' if database_url else 'Nein'}")
-                
-                flask_app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-                flask_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-                
-                # Wir müssen auch die Datenbank initialisieren
-                logger.info("Initialisiere Datenbank-Verbindung")
-                try:
-                    from core.models import db
-                    db.init_app(flask_app)
-                    logger.info("Datenbank erfolgreich initialisiert")
-                except Exception as db_error:
-                    logger.error(f"Fehler bei DB-Initialisierung: {str(db_error)}")
-                
-                logger.info("Minimale Flask-App erstellt und konfiguriert")
-                return flask_app
-            except Exception as e:
-                # Kritischer Fehler - protokolliere Details und verwende eine sehr einfache App als Fallback
-                error_msg = f"Kritischer Fehler beim Erstellen der Flask-App: {str(e)}"
-                logger.critical(error_msg)
-                logger.critical(f"Stacktrace: {traceback.format_exc()}")
-                logger.critical(f"Versuchte Import-Wege: {attempted_imports}")
-                
-                # Versuche eine letzte, ganz einfache App zu erstellen
-                try:
-                    from flask import Flask
-                    flask_app = Flask(__name__)
-                    logger.warning("Einfache Fallback-Flask-App ohne Konfiguration erstellt")
-                    return flask_app
-                except Exception as final_error:
-                    logger.critical(f"Konnte nicht einmal eine einfache Flask-App erstellen: {str(final_error)}")
-                    raise Exception(f"Flask konnte nicht importiert werden: {str(final_error)}")
+                from core.models import db
+                db.init_app(flask_app)
+            except Exception as db_error:
+                logger.error(f"Fehler bei DB-Initialisierung: {str(db_error)}")
+            
+            timer.cancel()  # Breche den Timer ab
+            logger.info("Einfache Flask-App erstellt")
+            return flask_app
+        else:
+            # Bei Timeout erstelle eine sehr einfache App ohne Datenbank
+            from flask import Flask
+            flask_app = Flask(__name__)
+            logger.warning("Sehr einfache Fallback-Flask-App erstellt nach Timeout")
+            return flask_app
+            
+    except Exception as e:
+        # Bei anderen Fehlern erstelle ebenfalls eine sehr einfache App
+        logger.error(f"Fehler beim Erstellen der Flask-App: {str(e)}")
+        from flask import Flask
+        flask_app = Flask(__name__)
+        logger.warning("Sehr einfache Fallback-Flask-App erstellt nach Fehler")
+        return flask_app
 
 # Configure Celery to use Flask app context
 def init_celery(flask_app):
