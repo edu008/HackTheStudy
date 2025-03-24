@@ -144,27 +144,38 @@ def close_unused_fds():
         logger.info("Schließe ungenutzte Datei-Deskriptoren...")
         
         # In Linux können wir über /proc/self/fd iterieren
-        if sys.platform.startswith('linux'):
-            fd_dir = '/proc/self/fd'
-            if os.path.isdir(fd_dir):
-                fd_list = os.listdir(fd_dir)
-                logger.info(f"Anzahl der offenen Datei-Deskriptoren: {len(fd_list)}")
-                
-                skipped_fds = [0, 1, 2]  # stdin, stdout, stderr
-                
-                for fd_str in fd_list:
+        fd_dir = '/proc/self/fd'
+        if os.path.isdir(fd_dir):
+            fd_list = os.listdir(fd_dir)
+            logger.info(f"Anzahl der offenen Datei-Deskriptoren: {len(fd_list)}")
+            
+            skipped_fds = [0, 1, 2]  # stdin, stdout, stderr
+            
+            for fd_str in fd_list:
+                try:
+                    fd = int(fd_str)
+                    if fd in skipped_fds:
+                        continue
+                        
+                    # Versuche, den Datei-Deskriptor zu schließen
                     try:
-                        fd = int(fd_str)
-                        if fd in skipped_fds:
-                            continue
-                            
-                        # Versuche, den Datei-Deskriptor zu schließen
                         os.close(fd)
                         logger.info(f"  Geschlossen: fd {fd}")
-                    except (ValueError, OSError) as e:
-                        logger.debug(f"  Konnte fd {fd_str} nicht schließen: {e}")
+                    except OSError:
+                        # Ignoriere Fehler beim Schließen
+                        pass
+                except (ValueError, OSError) as e:
+                    logger.debug(f"  Konnte fd {fd_str} nicht schließen: {e}")
         else:
-            logger.info("Plattform unterstützt keine direkte FD-Bereinigung")
+            # Alternative Methode für nicht-Linux-Plattformen
+            logger.info("Verwende alternative Methode für Nicht-Linux-Plattformen")
+            # Versuche, einige hohe Datei-Deskriptoren zu schließen
+            for fd in range(3, 1024):  # Starte bei 3 (nach stdin, stdout, stderr)
+                try:
+                    os.close(fd)
+                except OSError:
+                    # Ignoriere Fehler beim Schließen
+                    pass
         
     except Exception as e:
         logger.error(f"Fehler beim Schließen von FDs: {e}")

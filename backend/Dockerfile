@@ -68,23 +68,27 @@ COPY docker_logs/ /app/docker_logs/
 COPY app.py tasks.py /app/
 COPY .env.example /app/
 
+# Datei-Deskriptoren-Limit erhöhen, um Probleme mit 'invalid file descriptor' zu beheben
+RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
+    echo "* hard nofile 65536" >> /etc/security/limits.conf && \
+    echo "root soft nofile 65536" >> /etc/security/limits.conf && \
+    echo "root hard nofile 65536" >> /etc/security/limits.conf
+
+# Cron-Job für regelmäßige Bereinigung einrichten
+RUN mkdir -p /etc/cron.d && \
+    echo "0 */3 * * * root python /app/core/cleanup.py >> /var/log/cron-cleanup.log 2>&1" > /etc/cron.d/cleanup-cron && \
+    chmod 0644 /etc/cron.d/cleanup-cron && \
+    touch /var/log/cron-cleanup.log && \
+    chmod 0666 /var/log/cron-cleanup.log
+
 # Ändere den Besitzer aller Dateien
 RUN chown -R appuser:appuser /app /var/log
-
-# Wechsle zum nicht-root Benutzer für mehr Sicherheit
-USER appuser
 
 # Ports freigeben
 EXPOSE 5000 8080
 
 # Umgebungsvariable für CORS setzen
 ENV CORS_ORIGINS="https://www.hackthestudy.ch,https://hackthestudy.ch,http://localhost:3000"
-
-# Datei-Deskriptoren-Limit erhöhen, um Probleme mit 'invalid file descriptor' zu beheben
-RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
-    echo "* hard nofile 65536" >> /etc/security/limits.conf && \
-    echo "root soft nofile 65536" >> /etc/security/limits.conf && \
-    echo "root hard nofile 65536" >> /etc/security/limits.conf
 
 # Celery Worker Konfiguration für bessere Stabilität
 ENV CELERY_WORKERS=1 \
@@ -97,13 +101,6 @@ ENV CELERY_WORKERS=1 \
     CELERY_WORKER_SEND_TASK_EVENTS=0 \
     CELERY_POOL=solo \
     BILLIARD_DEBUG=1
-
-# Cron-Job für regelmäßige Bereinigung einrichten
-RUN echo "0 */3 * * * python /app/core/cleanup.py >> /var/log/cron-cleanup.log 2>&1" > /etc/cron.d/cleanup-cron \
-    && chmod 0644 /etc/cron.d/cleanup-cron \
-    && crontab /etc/cron.d/cleanup-cron \
-    && touch /var/log/cron-cleanup.log \
-    && chmod 0666 /var/log/cron-cleanup.log
 
 # Starte den Container mit Hilfe von Supervisor
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
