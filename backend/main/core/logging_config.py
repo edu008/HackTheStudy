@@ -110,11 +110,15 @@ def setup_logging():
     
     # API-Request-Logger erstellen
     api_logger = logging.getLogger('api_requests')
-    api_logger.setLevel(log_level if log_api_requests else logging.WARNING)
+    api_logger.setLevel(logging.INFO if log_api_requests else logging.WARNING)
     api_logger.propagate = False
     api_handler = logging.StreamHandler(sys.stdout)
     api_handler.setFormatter(formatter)
     api_logger.addHandler(api_handler)
+    
+    # Explicit Log-Meldung wenn API-Logging aktiviert wurde
+    if log_api_requests:
+        logging.getLogger('HackTheStudy.app').info("API-Anfragen-Logging wurde aktiviert - alle API-Anfragen werden protokolliert")
     
     # Flag setzen
     LOGGING_INITIALIZED = True

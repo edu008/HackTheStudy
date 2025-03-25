@@ -11,7 +11,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
     PIP_NO_CACHE_DIR=1 \
     FLASK_APP=app.py \
-    CONTAINER_TYPE=api
+    CONTAINER_TYPE=api \
+    LOG_API_REQUESTS=true
 
 # Installiere Abhängigkeiten mit geringerem Speicherverbrauch
 RUN apt-get update && apt-get install -y --no-install-recommends \

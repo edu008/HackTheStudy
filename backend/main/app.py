@@ -631,8 +631,28 @@ def init_app(run_mode=None):
                 except:
                     req_data = "[Ungültiges JSON]"
             
-            # Logge die API-Anfrage
-            api_request_logger.info(f"API-Anfrage: {request.method} {request.path} - Status: {response.status_code} - Daten: {req_data}")
+            # Benutzerinformationen aus Session oder Auth holen, wenn vorhanden
+            user_info = "nicht authentifiziert"
+            if hasattr(request, 'user') and request.user:
+                user_info = f"user:{request.user.id}"
+            elif hasattr(request, 'session') and 'user_id' in request.session:
+                user_info = f"user:{request.session['user_id']}"
+                
+            # IP-Adresse mit Proxy-Berücksichtigung
+            client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+            
+            # Zeitstempel für Leistungsmessung
+            timestamp = datetime.now().isoformat()
+            
+            # Erstelle einen eindeutigen Request-Identifier
+            request_id = request.headers.get('X-Request-ID', f"req-{timestamp}")
+            
+            # Logge die API-Anfrage mit erweiterten Informationen
+            api_request_logger.info(
+                f"API: {request.method} {request.path} - Status: {response.status_code} - " 
+                f"IP: {client_ip} - User: {user_info} - ReqID: {request_id} - " 
+                f"Daten: {req_data}"
+            )
         
         # Response zurückgeben
         return response

@@ -90,20 +90,29 @@ def start_worker():
     """Starte den Celery-Worker-Prozess."""
     global worker_process
     
-    # Worker-Kommando
+    # Worker-Kommando mit verbesserten Redis-Verbindungsparametern
     command = [
         "celery", "-A", "tasks", "worker",
         "--loglevel=INFO",
         "--pool=solo",
         "--concurrency=1",
+        "--max-tasks-per-child=10",
+        "--max-memory-per-child=512000",
         "--without-heartbeat",
         "--without-gossip",
-        "--without-mingle"
+        "--without-mingle",
+        "--broker-connection-timeout=30",
+        "--broker-connection-max-retries=10",
+        "--broker-connection-retry"
     ]
     
     # Umgebungsvariablen für den Worker
     env = os.environ.copy()
     env['PYTHONUNBUFFERED'] = '1'
+    env['C_FORCE_ROOT'] = '1'
+    env['CELERY_BROKER_CONNECTION_RETRY'] = 'true'
+    env['CELERY_BROKER_CONNECTION_TIMEOUT'] = '30'
+    env['CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS'] = 'false'
     
     # Starte den Worker-Prozess
     logger.info(f"Starte Worker mit Kommando: {' '.join(command)}")
@@ -138,7 +147,23 @@ def main():
     
     # Setze Socket-Timeout für bessere Stabilität
     import socket
-    socket.setdefaulttimeout(120)  # 2 Minuten Timeout
+    socket.setdefaulttimeout(300)  # 5 Minuten Timeout
+    
+    # Patch für Redis Connection Handling 
+    try:
+        from redis.connection import Connection
+        if hasattr(Connection, 'disconnect'):
+            original_disconnect = Connection.disconnect
+            def patched_disconnect(self):
+                try:
+                    return original_disconnect(self)
+                except Exception as e:
+                    logger.warning(f"Redis disconnect error (ignored): {e}")
+                    pass
+            Connection.disconnect = patched_disconnect
+            logger.info("Redis connection handling patched successfully")
+    except ImportError:
+        logger.warning("Redis module not available for patching")
     
     # Schleife für automatischen Neustart
     while not stop_event.is_set():

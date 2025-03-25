@@ -131,12 +131,15 @@ task_max_retries = 3
 broker_connection_timeout = 30
 broker_connection_retry = True
 broker_connection_max_retries = 10
-broker_pool_limit = None  # Keine Begrenzung für Verbindungen
-broker_heartbeat = 0      # Deaktiviere Broker-Heartbeat
+broker_pool_limit = 10  # Begrenze auf 10 Verbindungen
+broker_heartbeat = 30   # Aktiviere Broker-Heartbeat (30 Sekunden)
+broker_connection_retry_on_startup = True  # Wichtig für automatische Wiederverbindung
 
 # Verbesserte Redis-Backend-Konfiguration
 redis_socket_connect_timeout = 30
 redis_socket_timeout = 30
+redis_retry_on_timeout = True     # Versuche bei Timeout erneut
+redis_health_check_interval = 15  # Prüfe Verbindung alle 15 Sekunden
 result_expires = 86400  # 24 Stunden
 
 # Spezielle Einstellungen für FileDescriptor-Probleme
@@ -148,4 +151,14 @@ result_persistent = False  # Keine dauerhafte Speicherung für Ergebnisse
 task_ignore_result = False  # Ergebnisse nicht ignorieren
 
 # Sichere Serialisierung - verhindert einige Fehlerquellen
-accept_content = ['json']  # Nur JSON für Serialisierung akzeptieren 
+accept_content = ['json']  # Nur JSON für Serialisierung akzeptieren
+
+# Broker-Transportoptionen für bessere Stabilität
+broker_transport_options = {
+    'visibility_timeout': 18000,      # 5 Stunden Sichtbarkeits-Timeout
+    'socket_timeout': 30,            # 30s Socket-Timeout
+    'socket_connect_timeout': 30,    # 30s Verbindungs-Timeout
+    'socket_keepalive': True,        # Keep-Alive aktivieren
+    'retry_on_timeout': True,        # Bei Timeout erneut versuchen
+    'health_check_interval': 15,     # Regelmäßige Verbindungsprüfung
+} 
