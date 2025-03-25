@@ -1,7 +1,26 @@
-# Verwende offizielles Python-Image als Basis
+# Multi-Stage Build für optimierte Container-Größe
+FROM python:3.10-slim AS builder
+
+# Build-Abhängigkeiten
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Arbeitsverzeichnis im Container
+WORKDIR /build
+
+# Abhängigkeiten kopieren und installieren (nur im Builder-Stage)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt && \
+    pip wheel --no-cache-dir --wheel-dir=/wheels requests==2.31.0 psutil==5.9.5
+
+# Finales Image ohne Build-Tools
 FROM python:3.10-slim
 
-# Setze Umgebungsvariablen für Python
+# DigitalOcean-optimierte Umgebungsvariablen
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=UTF-8 \
     LANG=C.UTF-8 \
@@ -11,66 +30,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
     PIP_NO_CACHE_DIR=1 \
     CONTAINER_TYPE=worker \
-    RUN_MODE=worker
-
-# Installiere nur die wirklich benötigten Abhängigkeiten
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    postgresql-client \
-    redis-tools \
-    supervisor \
-    gcc \
-    libc6-dev \
-    netcat-openbsd \
-    net-tools \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Erstelle einen nicht-root Benutzer
-RUN useradd -m -u 1000 appuser
-
-# Arbeitsverzeichnis im Container festlegen
-WORKDIR /app
-
-# Erstelle alle benötigten Verzeichnisse für die Anwendung und Logs
-RUN mkdir -p /app/config /app/core /app/services /app/api /app/openaicache \
-    /var/log/app \
-    && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
-
-# Abhängigkeiten kopieren und installieren
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Kopiere die Quellcodedateien
-COPY tasks.py .
-COPY api/ ./api/
-COPY core/ ./core/
-COPY config/ ./config/
-COPY openaicache/ ./openaicache/
-COPY services/ ./services/
-COPY .env.example ./.env.example
-
-# Supervisord-Konfiguration
-COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
-
-# Datei-Deskriptoren-Limit erhöhen
-RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
-    echo "* hard nofile 65536" >> /etc/security/limits.conf
-
-# Ändere den Besitzer aller Dateien
-RUN chown -R appuser:appuser /app /var/log
-
-# Healthcheck für Worker
-HEALTHCHECK --interval=60s --timeout=30s --start-period=60s --retries=3 \
-    CMD ps aux | grep celery | grep -v grep || exit 1
-
-# Kopiere und aktiviere das Startskript
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-
-# Celery Worker Konfiguration für bessere Stabilität
-ENV CELERY_WORKERS=1 \
+    RUN_MODE=worker \
+    USE_SUPERVISOR=true \
+    DO_APP_PLATFORM=true \
+    USE_COLORED_LOGS=false \
+    DIGITAL_OCEAN_DEPLOYMENT=true \
+    CELERY_WORKERS=1 \
     CELERY_MAX_TASKS_PER_CHILD=10 \
     CELERY_MAX_MEMORY_PER_CHILD=512000 \
     CELERY_DISABLE_RATE_LIMITS=1 \
@@ -89,7 +54,67 @@ ENV CELERY_WORKERS=1 \
     CELERY_BROKER_CONNECTION_TIMEOUT=30 \
     CELERY_BROKER_POOL_LIMIT=1 \
     CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS=false \
-    CELERY_TASK_ACKS_LATE=false
+    CELERY_TASK_ACKS_LATE=false \
+    HEALTH_PORT=8080
 
-# Starte den Container mit dem Startskript
-CMD ["/app/start.sh"] 
+# Installiere nur die für Laufzeit benötigten Abhängigkeiten
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    postgresql-client \
+    redis-tools \
+    supervisor \
+    netcat-openbsd \
+    net-tools \
+    procps \
+    dnsutils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Arbeitsverzeichnis im Container festlegen
+WORKDIR /app
+
+# Erstelle alle benötigten Verzeichnisse
+RUN mkdir -p /app/config /app/core /app/services /app/api /app/openaicache \
+    /var/log/app \
+    && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
+
+# Kopiere die Wheels aus dem Builder-Stage und installiere
+COPY --from=builder /wheels /wheels
+RUN pip install --no-index --find-links=/wheels requests==2.31.0 psutil==5.9.5 \
+    && pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
+    && rm -rf /wheels
+
+# Kopiere die Quellcodedateien
+COPY tasks.py .
+COPY api/ ./api/
+COPY core/ ./core/
+COPY config/ ./config/
+COPY openaicache/ ./openaicache/
+COPY services/ ./services/
+COPY .env.example ./.env.example
+
+# Supervisord-Konfiguration
+COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Stelle sicher, dass keine veralteten Socket-Dateien existieren
+RUN rm -f /var/run/supervisor.sock /tmp/supervisor-*.sock /tmp/supervisord-*.pid
+
+# Datei-Deskriptoren-Limit erhöhen
+RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
+    echo "* hard nofile 65536" >> /etc/security/limits.conf
+
+# Erstelle einen nicht-root Benutzer
+RUN useradd -m -u 1000 appuser
+
+# Ändere den Besitzer aller Dateien
+RUN chown -R appuser:appuser /app /var/log
+
+# Verbesserter Healthcheck für Worker
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/ping || exit 1
+
+# Port für Health-Check
+EXPOSE 8080
+
+# Starte den Container mit Supervisor
+CMD exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf 

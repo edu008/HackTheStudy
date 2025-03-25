@@ -1,7 +1,26 @@
-# Verwende offizielles Python-Image als Basis
+# Multi-Stage Build für optimierte Container-Größe
+FROM python:3.10-slim AS builder
+
+# Build-Abhängigkeiten nur für den Build-Prozess
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Arbeitsverzeichnis im Container
+WORKDIR /build
+
+# Abhängigkeiten kopieren und installieren (nur im Builder-Stage)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt && \
+    pip wheel --no-cache-dir --wheel-dir=/wheels gunicorn==21.2.0 requests==2.31.0
+
+# Finales Image ohne Build-Tools
 FROM python:3.10-slim
 
-# Setze Umgebungsvariablen für Python (kein Puffern, UTF-8-Kodierung)
+# DigitalOcean-optimierte Umgebungsvariablen
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=UTF-8 \
     LANG=C.UTF-8 \
@@ -12,9 +31,14 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     FLASK_APP=app.py \
     CONTAINER_TYPE=api \
-    LOG_API_REQUESTS=true
+    LOG_API_REQUESTS=true \
+    USE_SUPERVISOR=true \
+    DO_APP_PLATFORM=true \
+    USE_COLORED_LOGS=false \
+    GUNICORN_WORKERS=2 \
+    DIGITAL_OCEAN_DEPLOYMENT=true
 
-# Installiere Abhängigkeiten mit geringerem Speicherverbrauch
+# Installiere nur die für Laufzeit benötigten Abhängigkeiten
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     poppler-utils \
@@ -23,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-tools \
     redis-server \
     supervisor \
+    procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,15 +72,15 @@ RUN sed -i 's/bind 127.0.0.1/bind 0.0.0.0/g' /etc/redis/redis.conf \
     && sed -i 's|logfile /var/log/redis/redis-server.log|logfile ""|g' /etc/redis/redis.conf \
     && sed -i 's/databases 16/databases 4/g' /etc/redis/redis.conf \
     && sed -i 's/# maxmemory-policy noeviction/maxmemory-policy allkeys-lru/g' /etc/redis/redis.conf \
-    && sed -i 's/# maxmemory <bytes>/maxmemory 256mb/g' /etc/redis/redis.conf
+    && sed -i 's/# maxmemory <bytes>/maxmemory 128mb/g' /etc/redis/redis.conf
 
-# Abhängigkeiten kopieren und installieren (zuerst nur requirements.txt für besseres Caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install gunicorn==21.2.0
+# Kopiere die Wheels aus dem Builder-Stage und installiere
+COPY --from=builder /wheels /wheels
+RUN pip install --no-index --find-links=/wheels gunicorn requests \
+    && pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
+    && rm -rf /wheels
 
-# Kopiere die lokalen Dateien
+# Kopiere die Anwendungsdateien
 COPY app.py .
 COPY api/ ./api/
 COPY core/ ./core/
@@ -67,11 +92,8 @@ COPY .env.example ./.env.example
 # Supervisord-Konfiguration
 COPY config/supervisor-api.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Stelle zusätzlich sicher, dass die Socket-Datei entfernt wird, falls sie existiert
-RUN rm -f /var/run/supervisor.sock && \
-    # Debugging: Überprüfe, ob die Supervisor-Konfiguration existiert
-    ls -la /etc/supervisor/conf.d/ && \
-    cat /etc/supervisor/conf.d/supervisord.conf
+# Stelle sicher, dass keine veralteten Socket-Dateien existieren
+RUN rm -f /var/run/supervisor.sock /tmp/supervisor-*.sock /tmp/supervisord-*.pid
 
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
@@ -80,16 +102,12 @@ RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
 # Ändere den Besitzer aller Dateien
 RUN chown -R appuser:appuser /app /var/log
 
-# Healthcheck hinzufügen für bessere Stabilität
+# Healthcheck für DigitalOcean App Platform - vereinfacht und zuverlässiger
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v1/health || exit 1
-
-# Kopiere und aktiviere das Startskript
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+    CMD curl -f http://localhost:8080/api/v1/ping || exit 1
 
 # Ports freigeben
 EXPOSE 8080
 
-# Starte den Container mit dem Startskript
-CMD ["/app/start.sh"] 
+# Starte den Container mit dem Supervisor direkt
+CMD exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf 

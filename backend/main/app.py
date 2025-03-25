@@ -7,6 +7,8 @@ import os
 import logging
 import sys
 import socket
+import re
+import time
 
 # Setze die ENVIRONMENT-Variable direkt am Anfang, bevor etwas anderes geladen wird
 os.environ['ENVIRONMENT'] = os.environ.get('ENVIRONMENT', 'production')
@@ -283,7 +285,6 @@ def log_environment_variables():
             value = os.environ.get(var)
             if var in ['DATABASE_URL'] and value:
                 # Maskiere Passwörter in URLs
-                import re
                 value = re.sub(r'(://[^:]+:)([^@]+)(@)', r'\1*****\3', value)
             critical_vars[var] = value
     
@@ -718,87 +719,73 @@ def init_app(run_mode=None):
         health_status = {"status": "healthy", "checks": {}}
         
         try:
-            # Prüfe Datenbankverbindung mit einer einfachen Abfrage
-            log_step("Health-Check", "INFO", "Prüfe Datenbankverbindung...")
-            db.session.execute("SELECT 1")
-            health_status["checks"]["database"] = {"status": "healthy"}
-            log_step("Health-Check", "SUCCESS", "Datenbankverbindung OK")
+            # Systematischer Check aller Komponenten
             
-            # Prüfe Redis-Verbindung, wenn wir im API-Container sind
-            if os.environ.get('CONTAINER_TYPE') == 'api':
-                log_step("Health-Check", "INFO", "Prüfe Redis-Verbindung...")
-                from core.redis_client import redis_client
-                redis_client.ping()
-                health_status["checks"]["redis"] = {"status": "healthy"}
+            # 1. Datenbank prüfen
+            db_status = check_database_health()
+            health_status["checks"]["database"] = db_status
+            if db_status["status"] == "healthy":
+                log_step("Health-Check", "SUCCESS", "Datenbankverbindung OK")
+            else:
+                log_step("Health-Check", "ERROR", f"Datenbankproblem: {db_status.get('message', 'Unbekannter Fehler')}")
+            
+            # 2. Redis prüfen
+            redis_status = test_redis_connection_health()
+            health_status["checks"]["redis"] = redis_status
+            if redis_status["status"] == "healthy":
                 log_step("Health-Check", "SUCCESS", "Redis-Verbindung OK")
+            else:
+                log_step("Health-Check", "ERROR", f"Redis-Problem: {len(redis_status.get('checks', [])) - sum(1 for c in redis_status.get('checks', []) if c.get('status') == 'connected')} fehlgeschlagene Verbindungen")
             
-            # Prüfe Celery-Worker, falls vorhanden
-            try:
-                log_step("Health-Check", "INFO", "Prüfe Celery-Worker...")
-                workers = get_active_workers()
-                health_status["checks"]["celery"] = {
-                    "status": "healthy" if workers else "degraded",
-                    "worker_count": len(workers)
-                }
-                if workers:
-                    log_step("Health-Check", "SUCCESS", f"{len(workers)} aktive Worker gefunden")
-                else:
-                    log_step("Health-Check", "WARNING", "Keine aktiven Worker gefunden")
-            except Exception as worker_error:
-                health_status["checks"]["celery"] = {
-                    "status": "unhealthy", 
-                    "error": str(worker_error)
-                }
-                log_step("Health-Check", "ERROR", f"Celery-Fehler: {str(worker_error)}")
+            # 3. Celery-Worker prüfen
+            celery_status = check_celery_workers()
+            health_status["checks"]["celery"] = celery_status
+            if celery_status["status"] == "healthy":
+                log_step("Health-Check", "SUCCESS", f"{celery_status.get('worker_count', 0)} aktive Worker gefunden")
+            else:
+                log_step("Health-Check", "WARNING", f"Celery-Problem: {celery_status.get('message', 'Keine aktiven Worker')}")
             
-            # Überprüfe Speicher und CPU
-            try:
-                import psutil
-                memory = psutil.virtual_memory()
-                cpu_percent = psutil.cpu_percent(interval=0.5)
-                
-                memory_status = "healthy"
-                if memory.percent > 90:
-                    memory_status = "degraded"
-                if memory.percent > 95:
-                    memory_status = "critical"
-                    
-                cpu_status = "healthy"
-                if cpu_percent > 80:
-                    cpu_status = "degraded"
-                if cpu_percent > 90:
-                    cpu_status = "critical"
-                
-                health_status["checks"]["system"] = {
-                    "memory": {
-                        "status": memory_status,
-                        "used_percent": memory.percent,
-                        "available_mb": memory.available / (1024 * 1024)
-                    },
-                    "cpu": {
-                        "status": cpu_status,
-                        "percent": cpu_percent
-                    }
-                }
-            except Exception as sys_error:
-                health_status["checks"]["system"] = {
-                    "status": "unknown",
-                    "error": str(sys_error)
-                }
+            # 4. Systemressourcen prüfen
+            system_status = check_system_health()
+            health_status["checks"]["system"] = system_status
+            if system_status["status"] == "healthy":
+                log_step("Health-Check", "INFO", f"System gesund: CPU {system_status.get('cpu_percent', 0)}%, RAM {system_status.get('memory_percent', 0)}%")
+            else:
+                log_step("Health-Check", "WARNING", f"Systemressourcen knapp: CPU {system_status.get('cpu_percent', 0)}%, RAM {system_status.get('memory_percent', 0)}%")
             
-            # Gesamtstatus auf Basis aller Einzelprüfungen
-            if any(check.get("status") == "unhealthy" for check in health_status["checks"].values()):
+            # Gesamtstatus basierend auf allen Checks bestimmen
+            component_status = [check["status"] for check in health_status["checks"].values()]
+            
+            if "error" in component_status:
                 health_status["status"] = "unhealthy"
-            elif any(check.get("status") == "critical" for check in health_status["checks"].values()):
+            elif "critical" in component_status:
                 health_status["status"] = "critical"
-            elif any(check.get("status") == "degraded" for check in health_status["checks"].values()):
+            elif "degraded" in component_status:
                 health_status["status"] = "degraded"
             
-            # Hinzufügen von Zeitstempel und Container-Info
+            # Metadaten hinzufügen
             health_status["timestamp"] = datetime.now().isoformat()
             health_status["container_type"] = os.environ.get('CONTAINER_TYPE', 'unknown')
             health_status["version"] = "1.0.0"
             health_status["uptime"] = int(time.time() - START_TIME)
+            
+            # Speichere Status in Redis für historische Überwachung
+            try:
+                from core.redis_client import redis_client
+                # Kompakten Status speichern
+                redis_client.set(
+                    f"health:status:{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                    json.dumps({
+                        "status": health_status["status"],
+                        "timestamp": health_status["timestamp"],
+                        "component_status": {k: v["status"] for k, v in health_status["checks"].items()}
+                    }),
+                    ex=86400  # 24 Stunden aufbewahren
+                )
+                # Aktuellsten Status für schnellen Zugriff speichern
+                redis_client.set("health:latest", json.dumps(health_status), ex=3600)
+            except Exception as redis_error:
+                log_step("Health-Check", "WARNING", f"Konnte Status nicht in Redis speichern: {str(redis_error)}")
             
             log_step("Health-Check", "SUCCESS", f"Health-Check abgeschlossen: {health_status['status']}")
             return jsonify(health_status), 200
@@ -843,6 +830,16 @@ def init_app(run_mode=None):
             
         log_step("Diagnose", "START", "Sammle Systemdiagnose")
         
+        # Umgebungsvariablen erfassen
+        env_vars = {}
+        for key in ['CONTAINER_TYPE', 'RUN_MODE', 'REDIS_URL', 'REDIS_HOST', 'DATABASE_URL']:
+            if key in os.environ:
+                value = os.environ[key]
+                # Maskiere sensible Daten
+                if key in ['DATABASE_URL', 'REDIS_URL'] and ':' in value and '@' in value:
+                    value = re.sub(r'(://[^:]+:)([^@]+)(@)', r'\1*****\3', value)
+                env_vars[key] = value
+        
         # Systeminfos
         system_info = {
             "platform": platform.platform(),
@@ -851,8 +848,44 @@ def init_app(run_mode=None):
             "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
             "run_mode": os.environ.get('RUN_MODE', 'unknown'),
             "process_id": os.getpid(),
-            "uptime": time.time() - psutil.Process(os.getpid()).create_time()
+            "uptime": time.time() - psutil.Process(os.getpid()).create_time(),
+            "environment_variables": env_vars
         }
+        
+        # Direkte Redis-Verbindungsprüfung
+        redis_checks = []
+        redis_hosts = []
+        redis_host = os.environ.get('REDIS_HOST')
+        if redis_host:
+            redis_hosts.append(redis_host)
+        # DO-spezifische Hosts
+        api_host = os.environ.get('api_PRIVATE_URL', '').replace('https://', '').replace('http://', '')
+        if api_host:
+            redis_hosts.append(api_host)
+            
+        # Standard-Hosts
+        for host in ['localhost', '127.0.0.1', 'api', 'redis']:
+            if host not in redis_hosts:
+                redis_hosts.append(host)
+                
+        for host in redis_hosts:
+            try:
+                import redis
+                start_time = time.time()
+                client = redis.Redis(host=host, port=6379, db=0, socket_timeout=2)
+                ping_result = client.ping()
+                end_time = time.time()
+                redis_checks.append({
+                    "host": host,
+                    "status": "connected" if ping_result else "failed",
+                    "response_time_ms": (end_time - start_time) * 1000
+                })
+            except Exception as e:
+                redis_checks.append({
+                    "host": host,
+                    "status": "error",
+                    "error": str(e)
+                })
         
         # CPU und RAM
         try:
@@ -902,15 +935,23 @@ def init_app(run_mode=None):
             redis_test = redis_client.ping()
             redis_info = {
                 "connected": redis_test,
-                "url": REDIS_URL.replace("redis://", "redis://***:***@")
+                "url": REDIS_URL.replace("redis://", "redis://***:***@") if 'REDIS_URL' in globals() else os.environ.get('REDIS_URL', 'unknown'),
+                "direct_checks": redis_checks
             }
         except Exception as e:
-            redis_info = {"error": str(e)}
+            redis_info = {"error": str(e), "direct_checks": redis_checks}
+        
+        # DigitalOcean-spezifische Infos
+        do_info = {}
+        for key, value in os.environ.items():
+            if 'DIGITAL_OCEAN' in key or 'DO_' in key:
+                do_info[key] = value
         
         # Diagnose-Informationen zusammenstellen
         diagnose_info = {
             "timestamp": datetime.now().isoformat(),
             "system": system_info,
+            "digitalocean": do_info,
             "cpu": cpu_info,
             "memory": memory_info,
             "network_connections": connections,
@@ -992,12 +1033,30 @@ def init_app(run_mode=None):
         
         # Verbesserte Diagnose für Worker Timeout
         if "WORKER TIMEOUT" in str(e):
-            log_step("Worker", "ERROR", "Gunicorn Worker Timeout - Überprüfe blockierende Operationen", "error")
-            # Erfasse Systeminformationen zur Diagnose
-            import psutil
-            memory_info = psutil.virtual_memory()
-            log_step("System-Diagnose", "INFO", 
-                     f"RAM: {memory_info.percent}% genutzt, Verfügbar: {memory_info.available/1024/1024:.1f} MB")
+            # Rufe erweiterte Diagnose auf
+            diagnostics = diagnose_worker_timeout()
+            
+            # Status in Redis speichern
+            try:
+                from core.redis_client import redis_client
+                redis_client.set("worker_timeout_diagnose", json.dumps(diagnostics), ex=86400)
+            except Exception as redis_error:
+                log_step("Redis", "ERROR", f"Fehler beim Speichern der Timeout-Diagnose: {str(redis_error)}")
+                
+            # Direkte Systemdiagnose aus den diagnostics-Daten
+            try:
+                process_info = diagnostics.get("process", {})
+                system_info = diagnostics.get("system", {})
+                
+                log_step("Worker", "ERROR", 
+                        f"Worker Timeout - " 
+                        f"CPU: {process_info.get('cpu_percent', '?')}%, "
+                        f"RAM: {process_info.get('memory_percent', '?')}%, "
+                        f"Threads: {process_info.get('threads', '?')}, "
+                        f"Systemlast: {system_info.get('cpu_usage_percent', '?')}%", 
+                        "error")
+            except Exception as log_error:
+                log_step("Worker", "ERROR", f"Diagnose unvollständig: {str(log_error)}", "error")
         
         if isinstance(e, HTTPException):
             response = e.get_response()
@@ -1183,3 +1242,244 @@ if __name__ == '__main__':
     else:
         logger.error("Konnte keine App initialisieren. Beende...")
         sys.exit(1)
+
+def diagnose_worker_timeout(task_id=None):
+    """
+    Erweiterte Diagnose für Worker-Timeouts mit nützlichen Umgebungsinformationen
+    Ersetzt die Shell-Skript-basierte Überwachung
+    """
+    import psutil
+    import os
+    import json
+    from datetime import datetime
+    
+    try:
+        # Aktuelle Systeminformationen sammeln
+        process = psutil.Process(os.getpid())
+        memory_info = psutil.virtual_memory()
+        
+        # Prozessinformationen
+        process_info = {
+            "pid": os.getpid(),
+            "cpu_percent": process.cpu_percent(interval=1.0),
+            "memory_percent": process.memory_percent(),
+            "threads": process.num_threads(),
+            "open_files": len(process.open_files()),
+            "connections": len(process.connections()),
+            "uptime_seconds": time.time() - process.create_time()
+        }
+        
+        # Systeminformationen
+        system_info = {
+            "cpu_usage_percent": psutil.cpu_percent(interval=1.0),
+            "memory_total_mb": memory_info.total / (1024 * 1024),
+            "memory_available_mb": memory_info.available / (1024 * 1024),
+            "memory_percent": memory_info.percent,
+            "hostname": socket.gethostname()
+        }
+        
+        # Netzwerkverbindungen prüfen
+        network_info = []
+        try:
+            for conn in process.connections():
+                if conn.status == 'ESTABLISHED':
+                    network_info.append({
+                        "local_addr": f"{conn.laddr.ip}:{conn.laddr.port}",
+                        "remote_addr": f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "None",
+                        "status": conn.status
+                    })
+        except:
+            pass
+            
+        # Redis-Verbindung explizit testen
+        redis_info = test_redis_connection_health()
+        
+        # Alles zusammenstellen
+        diagnostics = {
+            "timestamp": datetime.now().isoformat(),
+            "event": "worker_timeout",
+            "task_id": task_id,
+            "process": process_info,
+            "system": system_info,
+            "network_connections": network_info[:20],  # Begrenze auf 20 Verbindungen
+            "redis": redis_info,
+            "environment": {
+                "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+                "run_mode": os.environ.get('RUN_MODE', 'unknown')
+            }
+        }
+        
+        # Speichere Diagnose in Redis für weitere Analyse
+        try:
+            from core.redis_client import redis_client
+            redis_client.set(
+                f"diagnostics:worker_timeout:{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                json.dumps(diagnostics),
+                ex=86400  # 24 Stunden
+            )
+            
+            # Füge zur Liste der Timeouts hinzu (für einfacheren Zugriff)
+            redis_client.lpush("diagnostics:worker_timeouts", task_id or "unknown")
+            redis_client.ltrim("diagnostics:worker_timeouts", 0, 99)  # Behalte nur die letzten 100
+        except Exception as e:
+            log_step("Diagnose", "ERROR", f"Konnte Timeout-Diagnose nicht in Redis speichern: {str(e)}")
+        
+        log_step("Worker-Timeout", "ERROR", 
+                f"CPU: {diagnostics['process']['cpu_percent']}%, RAM: {diagnostics['process']['memory_percent']}%, " 
+                f"Netzwerk: {len(network_info)} Verbindungen")
+                
+        return diagnostics
+    except Exception as e:
+        log_step("Diagnose", "ERROR", f"Fehler bei Worker-Timeout-Diagnose: {str(e)}")
+        return {"error": str(e)}
+
+def test_redis_connection_health():
+    """
+    Testet Redis-Verbindungen zu verschiedenen Hosts und gibt detaillierte Diagnoseinformationen zurück.
+    Ersetzt die shell-basierte Prüfung.
+    """
+    import redis
+    
+    redis_hosts = []
+    # Sammle potenzielle Redis-Hosts
+    redis_url = os.environ.get('REDIS_URL', '')
+    if redis_url and '://' in redis_url:
+        # Extrahiere Host aus URL
+        try:
+            host = redis_url.split('://', 1)[1].split(':', 1)[0].split('@')[-1]
+            if host and host not in redis_hosts:
+                redis_hosts.append(host)
+        except:
+            pass
+    
+    # Prüfe expliziten Redis-Host
+    redis_host = os.environ.get('REDIS_HOST', '')
+    if redis_host and redis_host not in redis_hosts:
+        redis_hosts.append(redis_host)
+    
+    # Standard-Hosts hinzufügen
+    standard_hosts = ['localhost', '127.0.0.1', 'api', 'redis']
+    for host in standard_hosts:
+        if host not in redis_hosts:
+            redis_hosts.append(host)
+    
+    # Ergebnisse sammeln
+    results = []
+    success = False
+    
+    for host in redis_hosts:
+        try:
+            start_time = time.time()
+            client = redis.Redis(host=host, port=6379, db=0, socket_timeout=2)
+            ping_result = client.ping()
+            response_time = (time.time() - start_time) * 1000  # ms
+            
+            results.append({
+                "host": host,
+                "status": "connected" if ping_result else "error",
+                "response_time_ms": response_time
+            })
+            
+            if ping_result:
+                success = True
+        except Exception as e:
+            results.append({
+                "host": host,
+                "status": "error",
+                "error": str(e)
+            })
+    
+    return {
+        "status": "healthy" if success else "error",
+        "checks": results
+    }
+
+def check_database_health():
+    """Prüft die Datenbankverbindung für den Health-Check"""
+    try:
+        # Einfache Abfrage ausführen
+        db.session.execute("SELECT 1")
+        db.session.commit()
+        
+        return {
+            "status": "healthy",
+            "message": "Datenbankverbindung erfolgreich"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+def check_celery_workers():
+    """Prüft die Verfügbarkeit von Celery-Workern"""
+    try:
+        workers = get_active_workers()
+        
+        if not workers:
+            return {
+                "status": "degraded",
+                "message": "Keine aktiven Worker gefunden",
+                "worker_count": 0
+            }
+            
+        # Prüfe, ob Tasks bearbeitet werden
+        active_tasks = get_active_tasks()
+        
+        return {
+            "status": "healthy",
+            "worker_count": len(workers),
+            "active_tasks": len(active_tasks),
+            "workers": [w for w in workers]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+def check_system_health():
+    """Prüft Systemressourcen für den Health-Check"""
+    try:
+        import psutil
+        
+        # CPU und RAM prüfen
+        cpu_percent = psutil.cpu_percent(interval=0.5)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Status basierend auf Grenzwerten
+        status = "healthy"
+        
+        # CPU über 80% - degraded, über 90% - critical
+        if cpu_percent > 90:
+            status = "critical"
+        elif cpu_percent > 80:
+            status = "degraded"
+            
+        # RAM über 85% - degraded, über 95% - critical
+        if memory.percent > 95:
+            status = "critical"
+        elif memory.percent > 85:
+            status = "degraded"
+            
+        # Plattenplatz unter 10% - degraded, unter 5% - critical
+        free_disk_percent = 100 - disk.percent
+        if free_disk_percent < 5:
+            status = "critical"
+        elif free_disk_percent < 10:
+            status = "degraded"
+        
+        return {
+            "status": status,
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory.percent,
+            "memory_available_mb": memory.available / (1024 * 1024),
+            "disk_free_percent": free_disk_percent,
+            "disk_free_gb": disk.free / (1024 * 1024 * 1024)
+        }
+    except Exception as e:
+        return {
+            "status": "unknown",
+            "message": str(e)
+        }

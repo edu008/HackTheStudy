@@ -1865,25 +1865,43 @@ def start_health_check_server():
                     self.send_header('Content-type', 'application/json')
                     self.end_headers()
                     
-                    # Überprüfe Redis-Verbindung
-                    redis_ok = False
-                    try:
-                        import redis
-                        r = redis.from_url(REDIS_URL, socket_timeout=2)
-                        r.ping()
-                        redis_ok = True
-                    except:
-                        pass
+                    # Mehrere Systemkomponenten überprüfen
+                    checks = {
+                        "redis": check_redis_connection(),
+                        "system": check_system_resources(),
+                        "api": check_api_connection()
+                    }
+                    
+                    # Bestimme den Gesamtstatus basierend auf den einzelnen Checks
+                    overall_status = "healthy"
+                    for component, status in checks.items():
+                        if status.get("status") == "error":
+                            overall_status = "unhealthy"
+                            break
+                        elif status.get("status") == "degraded" and overall_status != "unhealthy":
+                            overall_status = "degraded"
                     
                     # Gesundheitsstatus
                     health_info = {
-                        "status": "healthy" if redis_ok else "degraded",
-                        "redis_connected": redis_ok,
+                        "status": overall_status,
+                        "checks": checks,
                         "worker_uptime": time.time() - start_time,
-                        "timestamp": time.time()
+                        "worker_info": {
+                            "pid": os.getpid(),
+                            "hostname": socket.gethostname(),
+                            "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+                            "run_mode": os.environ.get('RUN_MODE', 'unknown')
+                        },
+                        "timestamp": datetime.now().isoformat()
                     }
                     
                     self.wfile.write(json.dumps(health_info).encode())
+                elif self.path == '/ping':
+                    # Einfacher Ping-Endpunkt ohne aufwändige Prüfungen
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "ok", "message": "pong"}).encode())
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -1893,20 +1911,128 @@ def start_health_check_server():
                 pass
         
         # Port für Health-Check-Server
+        # Versuche mehrere Ports, falls einer bereits belegt ist
         health_port = int(os.environ.get('HEALTH_PORT', 8080))
-        handler = partial(HealthCheckHandler)
+        available_ports = [health_port, 8081, 8082, 8083, 8084]
         
-        logger.info(f"Starte Health-Check-Server auf Port {health_port}")
-        httpd = socketserver.TCPServer(("", health_port), handler)
+        for port in available_ports:
+            try:
+                logger.info(f"Versuche Health-Check-Server auf Port {port} zu starten...")
+                server = socketserver.TCPServer(("", port), HealthCheckHandler)
+                # Falls wir hier ankommen, ist der Port verfügbar
+                os.environ['HEALTH_PORT'] = str(port)  # Aktualisiere Umgebungsvariable
+                break
+            except OSError:
+                logger.warning(f"Port {port} bereits belegt, versuche alternativen Port...")
+                server = None
+                continue
         
-        # Starte den Server in einem separaten Thread
-        server_thread = threading.Thread(target=httpd.serve_forever)
-        server_thread.daemon = True
-        server_thread.start()
-        logger.info(f"Health-Check-Server läuft auf Port {health_port}")
-        
+        if server:
+            # Starte den Server in einem separaten Thread
+            server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+            server_thread.start()
+            logger.info(f"✅ Health-Check-Server läuft auf Port {port}")
+            return True
+        else:
+            logger.error("❌ Konnte keinen Health-Check-Server starten: Alle Ports belegt")
+            return False
+            
     except Exception as e:
-        logger.warning(f"Konnte Health-Check-Server nicht starten: {str(e)}")
+        logger.warning(f"❌ Konnte Health-Check-Server nicht starten: {str(e)}")
+        return False
+
+def check_redis_connection():
+    """Prüft die Redis-Verbindung für den Health-Check"""
+    try:
+        import redis
+        r = redis.from_url(REDIS_URL, socket_timeout=2)
+        ping_result = r.ping()
+        
+        if ping_result:
+            return {
+                "status": "healthy",
+                "message": "Redis-Verbindung erfolgreich",
+                "host": REDIS_HOST,
+                "response_time_ms": None  # Könnte hier Response-Zeit messen
+            }
+        else:
+            return {
+                "status": "degraded",
+                "message": "Redis-Ping fehlgeschlagen"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Redis-Verbindungsfehler: {str(e)}"
+        }
+
+def check_system_resources():
+    """Prüft Systemressourcen für den Health-Check"""
+    try:
+        import psutil
+        
+        # CPU und RAM prüfen
+        cpu_percent = psutil.cpu_percent(interval=0.5)
+        memory = psutil.virtual_memory()
+        
+        status = "healthy"
+        if cpu_percent > 90 or memory.percent > 90:
+            status = "degraded"
+        
+        return {
+            "status": status,
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory.percent,
+            "memory_available_mb": memory.available / (1024 * 1024),
+            "open_file_descriptors": len(psutil.Process().open_files())
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Fehler bei Systemressourcenprüfung: {str(e)}"
+        }
+
+def check_api_connection():
+    """Prüft die Verbindung zum API-Backend"""
+    try:
+        import requests
+        
+        # API-Host aus Umgebungsvariablen ermitteln
+        api_host = os.environ.get('API_HOST', 'api')
+        port = 8080  # Standard-API-Port
+        
+        # Verschiedene mögliche URLs probieren
+        api_urls = [
+            f"http://{api_host}:{port}/api/v1/ping",
+            f"http://{api_host}:{port}/api/v1/simple-health",
+            f"http://localhost:{port}/api/v1/ping"
+        ]
+        
+        for url in api_urls:
+            try:
+                start_time = time.time()
+                response = requests.get(url, timeout=2)
+                response_time = (time.time() - start_time) * 1000  # ms
+                
+                if response.status_code == 200:
+                    return {
+                        "status": "healthy",
+                        "message": f"API erreichbar unter {url}",
+                        "response_time_ms": response_time,
+                        "response_code": response.status_code
+                    }
+            except:
+                continue
+        
+        return {
+            "status": "degraded",
+            "message": "API nicht erreichbar"
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "message": f"Fehler bei API-Verbindungsprüfung: {str(e)}"
+        }
 
 # Aufzeichnung der Startzeit für Uptime-Berechnung
 start_time = time.time()
@@ -1920,3 +2046,123 @@ try:
     print("Celery configuration loaded from celeryconfig.py")
 except ImportError:
     print("celeryconfig.py not found, using default configuration")
+
+# Verbesserte Redis-Verbindungsinitialisierung
+def initialize_redis_connection():
+    """
+    Dynamische Suche nach einem funktionierenden Redis-Host mit optimierten Verbindungstests
+    Ersetzt die Logik aus start.sh
+    """
+    global REDIS_URL, REDIS_HOST
+    logger.info("🔄 Redis-Verbindungsinitialisierung wird gestartet")
+    
+    # Sammle potenzielle Redis-Hosts
+    potential_hosts = []
+    
+    # Prüfe DigitalOcean-spezifische Umgebungsvariablen
+    api_private_url = os.environ.get('api_PRIVATE_URL', '')
+    if api_private_url:
+        clean_url = api_private_url.replace('https://', '').replace('http://', '')
+        if clean_url:
+            potential_hosts.append(clean_url)
+            logger.info(f"✅ DO-spezifische URL gefunden: {clean_url}")
+    
+    # Prüfe explizit gesetzte Redis-Host-Variable
+    redis_host = os.environ.get('REDIS_HOST', '')
+    if redis_host and redis_host not in potential_hosts:
+        potential_hosts.append(redis_host)
+        logger.info(f"✅ REDIS_HOST gefunden: {redis_host}")
+    
+    # Prüfe REDIS_FALLBACK_URLS Umgebungsvariable
+    fallback_urls = os.environ.get('REDIS_FALLBACK_URLS', '')
+    if fallback_urls:
+        for host in fallback_urls.split(','):
+            host = host.strip()
+            if host and host not in potential_hosts:
+                potential_hosts.append(host)
+        logger.info(f"✅ REDIS_FALLBACK_URLS gefunden: {fallback_urls}")
+    
+    # Standard-Hosts hinzufügen
+    standard_hosts = ['api', 'hackthestudy-backend-api', 'localhost', '127.0.0.1', '10.0.0.3', '10.0.0.2']
+    for host in standard_hosts:
+        if host not in potential_hosts:
+            potential_hosts.append(host)
+    
+    logger.info(f"ℹ️ Prüfe {len(potential_hosts)} potenzielle Redis-Hosts: {', '.join(potential_hosts)}")
+    
+    # Teste jeden Host
+    successful_host = None
+    failed_hosts = []
+    max_failures = 5  # Maximale Anzahl an Fehlern, bevor wir abbrechen
+    failures = 0
+    
+    import socket
+    import redis
+    
+    for host in potential_hosts:
+        if failures >= max_failures:
+            logger.warning(f"⚠️ Zu viele Redis-Verbindungsfehler, überspringe weitere Tests")
+            break
+            
+        try:
+            # Schneller Socket-Test
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            connection_result = s.connect_ex((host, 6379))
+            s.close()
+            
+            if connection_result == 0:
+                # Wenn Socket-Verbindung möglich, versuche Redis-Ping
+                client = redis.Redis(host=host, port=6379, db=0, socket_timeout=2)
+                ping_result = client.ping()
+                
+                if ping_result:
+                    logger.info(f"✅ Erfolgreiche Redis-Verbindung zu {host}:6379")
+                    successful_host = host
+                    # Aktualisiere globale Variablen
+                    REDIS_URL = f"redis://{host}:6379/0"
+                    REDIS_HOST = host
+                    # Aktualisiere Umgebungsvariablen für andere Prozesse
+                    os.environ['REDIS_URL'] = REDIS_URL
+                    os.environ['REDIS_HOST'] = REDIS_HOST
+                    break
+                else:
+                    logger.warning(f"⚠️ Socket-Verbindung zu {host}:6379 möglich, aber Redis-Ping fehlgeschlagen")
+                    failed_hosts.append(host)
+                    failures += 1
+            else:
+                # Für Logging-Zwecke, nicht jede fehlgeschlagene Verbindung einzeln loggen
+                failed_hosts.append(host)
+                failures += 1
+        except Exception as e:
+            failures += 1
+            failed_hosts.append(host)
+    
+    # Ausgabe über fehlgeschlagene Hosts
+    if failed_hosts:
+        logger.warning(f"⚠️ Verbindung zu folgenden Redis-Hosts fehlgeschlagen: {', '.join(failed_hosts)}")
+    
+    # Status ausgeben
+    if successful_host:
+        logger.info(f"✅ Redis-Konfiguration abgeschlossen. Verwende Host: {successful_host}, URL: {REDIS_URL}")
+        return True
+    else:
+        logger.error(f"❌ Keine erfolgreiche Redis-Verbindung hergestellt. Verwende Standard: {REDIS_URL}")
+        return False
+
+# Führe die Redis-Initialisierung direkt aus
+initialize_redis_connection()
+
+# Requests-Modul für API-Checks
+try:
+    import requests
+except ImportError:
+    logger.warning("⚠️ Requests-Modul nicht verfügbar - API-Verbindungsprüfungen werden eingeschränkt funktionieren")
+    logger.warning("⚠️ Bitte füge 'requests' zu requirements.txt hinzu und installiere es")
+    
+    # Dummy-Klasse erstellen, falls requests nicht verfügbar ist
+    class DummyRequests:
+        def get(self, *args, **kwargs):
+            raise ImportError("requests-Modul nicht verfügbar")
+            
+    requests = DummyRequests()
