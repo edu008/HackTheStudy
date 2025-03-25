@@ -489,6 +489,24 @@ def init_app(run_mode=None):
         Health-Check-Endpunkt für Digital Ocean App Platform.
         Prüft, ob die Anwendung läuft und Datenbankverbindung besteht.
         """
+        # Prüfe, ob wir die DB-Prüfung überspringen sollen
+        skipdb = request.args.get('skipdb', 'false').lower() == 'true'
+        
+        # Log für alle API-Anfragen
+        logger.info(f"HEALTH CHECK AUFGERUFEN: IP={request.remote_addr}, skipdb={skipdb}")
+        
+        # Forciere Log-Ausgabe sofort
+        force_flush_handlers()
+        
+        if skipdb:
+            return jsonify({
+                "status": "healthy",
+                "message": "DB-Prüfung übersprungen auf Anfrage",
+                "timestamp": datetime.now().isoformat(),
+                "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+                "version": "1.0.0"
+            }), 200
+        
         try:
             # Prüfe Datenbankverbindung mit einer einfachen Abfrage
             db.session.execute("SELECT 1")
@@ -511,6 +529,23 @@ def init_app(run_mode=None):
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }), 500
+    
+    # Füge einen simplen Ping-Endpunkt hinzu
+    @app.route('/api/v1/ping', methods=['GET'])
+    def ping():
+        """Einfacher Ping-Endpunkt ohne Datenbankprüfung oder andere Abhängigkeiten"""
+        logger.info(f"PING AUFGERUFEN: IP={request.remote_addr}")
+        api_request_logger.info(f"PING API TEST: {request.method} /api/v1/ping - IP: {request.remote_addr}")
+        app.logger.info(f"APP LOGGER TEST - PING von {request.remote_addr}")
+        
+        # Forciere Log-Ausgabe sofort
+        force_flush_handlers()
+        
+        return jsonify({
+            "ping": "pong",
+            "timestamp": datetime.now().isoformat(),
+            "ip": request.remote_addr
+        }), 200
     
     # Root-Route für API-Status
     @app.route('/', methods=['GET', 'OPTIONS'])
@@ -606,11 +641,8 @@ def init_app(run_mode=None):
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['X-XSS-Protection'] = '1; mode=block'
         
-        # Protokollierung der API-Anfragen
-        run_mode = os.environ.get('RUN_MODE', 'app')
-        log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
-        
-        if log_api_requests and not request.path.startswith('/static/'):
+        # Protokollierung der API-Anfragen - IMMER loggen, egal was in der Umgebungsvariable steht
+        if not request.path.startswith('/static/'):
             # Kürze Anfragedaten für Logging
             req_data = None
             content_type = request.headers.get('Content-Type', '')
@@ -641,18 +673,20 @@ def init_app(run_mode=None):
             # IP-Adresse mit Proxy-Berücksichtigung
             client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
             
-            # Zeitstempel für Leistungsmessung
-            timestamp = datetime.now().isoformat()
-            
-            # Erstelle einen eindeutigen Request-Identifier
-            request_id = request.headers.get('X-Request-ID', f"req-{timestamp}")
-            
-            # Logge die API-Anfrage mit erweiterten Informationen
-            api_request_logger.info(
-                f"API: {request.method} {request.path} - Status: {response.status_code} - " 
-                f"IP: {client_ip} - User: {user_info} - ReqID: {request_id} - " 
-                f"Daten: {req_data}"
+            # Log-Nachricht zusammenstellen
+            log_msg = (
+                f"API-REQUEST: {request.method} {request.path} - Status: {response.status_code} - " 
+                f"IP: {client_ip} - User: {user_info}"
             )
+            
+            # Log auf verschiedenen Kanälen ausgeben, um sicherzustellen, dass es sichtbar ist
+            logger.info(log_msg)                    # HackTheStudy.app Logger
+            api_request_logger.info(log_msg)        # API Request Logger
+            app.logger.info(log_msg)                # Flask App Logger
+            print(f"[STDOUT] {log_msg}")            # Direkte STDOUT-Ausgabe
+            
+            # Erzwinge sofortiges Flushen der Logs
+            force_flush_handlers()
         
         # Response zurückgeben
         return response

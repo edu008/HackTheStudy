@@ -110,11 +110,35 @@ def setup_logging():
     
     # API-Request-Logger erstellen
     api_logger = logging.getLogger('api_requests')
-    api_logger.setLevel(logging.INFO if log_api_requests else logging.WARNING)
+    # Setze auf INFO, unabhängig von der Umgebungsvariable
+    api_logger.setLevel(logging.INFO)
     api_logger.propagate = False
-    api_handler = logging.StreamHandler(sys.stdout)
-    api_handler.setFormatter(formatter)
-    api_logger.addHandler(api_handler)
+    
+    # Füge mehrere Handler hinzu, um sicherzustellen, dass Logs überall ankommen
+    api_handlers = []
+    
+    # Standard-Stdout-Handler
+    api_stdout_handler = logging.StreamHandler(sys.stdout)
+    api_stdout_handler.setFormatter(formatter)
+    api_handlers.append(api_stdout_handler)
+    
+    # Versuch, einen Datei-Handler hinzuzufügen, falls wir Schreibrechte haben
+    try:
+        api_file_handler = logging.FileHandler('/tmp/api_requests.log')
+        api_file_handler.setFormatter(formatter)
+        api_handlers.append(api_file_handler)
+    except (IOError, PermissionError):
+        # Kein Fehler werfen, wenn wir keine Schreibrechte haben
+        pass
+    
+    # Alle Handler zum Logger hinzufügen
+    for handler in api_handlers:
+        api_logger.addHandler(handler)
+    
+    # Debug-Info über API-Logging ausgeben
+    logging.getLogger('HackTheStudy.app').info(
+        f"API-REQUEST-LOGGING konfiguriert: Level={api_logger.level}, Handler={len(api_logger.handlers)}"
+    )
     
     # Explicit Log-Meldung wenn API-Logging aktiviert wurde
     if log_api_requests:
