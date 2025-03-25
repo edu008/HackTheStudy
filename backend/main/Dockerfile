@@ -15,7 +15,7 @@ WORKDIR /build
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt && \
-    pip wheel --no-cache-dir --wheel-dir=/wheels gunicorn==21.2.0 requests==2.31.0
+    pip wheel --no-cache-dir --wheel-dir=/wheels gunicorn==21.2.0 requests==2.31.0 psycopg2-binary==2.9.5 gevent==23.9.1
 
 # Finales Image ohne Build-Tools
 FROM python:3.10-slim
@@ -36,11 +36,12 @@ ENV PYTHONUNBUFFERED=1 \
     DO_APP_PLATFORM=true \
     USE_COLORED_LOGS=false \
     GUNICORN_WORKERS=2 \
-    DIGITAL_OCEAN_DEPLOYMENT=true
+    DIGITAL_OCEAN_DEPLOYMENT=true \
+    PORT=8080
 
 # Installiere nur die für Laufzeit benötigten Abhängigkeiten
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    netcat-openbsd \
+    netcat-traditional \
     poppler-utils \
     curl \
     postgresql-client \
@@ -48,6 +49,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-server \
     supervisor \
     procps \
+    ca-certificates \
+    gnupg \
+    lsb-release \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -58,7 +62,8 @@ RUN useradd -m -u 1000 appuser
 WORKDIR /app
 
 # Erstelle alle benötigten Verzeichnisse für die Anwendung und Logs
-RUN mkdir -p /app/config /app/core /app/services /app/api /app/openaicache \
+RUN mkdir -p /app/config /app/core /app/api /app/redis /app/resource_manager \
+    /app/tasks /app/health /app/utils /app/bootstrap \
     /var/run/redis /var/lib/redis /var/log/redis /var/log/app \
     && touch /var/log/supervisord.log /var/log/app-stdout.log /var/log/app-stderr.log \
     && chmod 777 /var/run/redis /var/lib/redis /var/log/redis \
@@ -79,9 +84,12 @@ COPY --from=builder /wheels /wheels
 COPY --from=builder /build/requirements.txt /app/requirements.txt
 
 # Installiere die Abhängigkeiten
-RUN pip install --no-index --find-links=/wheels gunicorn requests \
+RUN pip install --no-index --find-links=/wheels gunicorn requests psycopg2-binary gevent \
     && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
+
+# Erstelle core/__init__.py wenn noch nicht vorhanden
+RUN mkdir -p /app/core && touch /app/core/__init__.py
 
 # Kopiere die Anwendungsdateien - optimiert für bessere Organisation
 COPY app.py .
@@ -89,8 +97,15 @@ COPY health_monitor.py .
 COPY api/ ./api/
 COPY core/ ./core/
 COPY config/ ./config/
-COPY openaicache/ ./openaicache/
-COPY services/ ./services/
+COPY redis/ ./redis/
+COPY resource_manager/ ./resource_manager/
+COPY tasks/ ./tasks/
+COPY utils/ ./utils/
+COPY bootstrap/ ./bootstrap/
+COPY health/ ./health/
+
+# Kopiere die Gunicorn-Konfigurationsdatei
+COPY config/gunicorn.conf.py ./gunicorn.conf.py
 
 # Supervisord-Konfiguration
 COPY config/supervisor-api.conf /etc/supervisor/conf.d/supervisord.conf
@@ -107,7 +122,7 @@ RUN chown -R appuser:appuser /app /var/log
 
 # Healthcheck für DigitalOcean App Platform - vereinfacht und zuverlässiger
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v1/ping || exit 1
+    CMD curl -f http://localhost:8080/api/v1/simple-health || exit 1
 
 # Ports freigeben
 EXPOSE 8080

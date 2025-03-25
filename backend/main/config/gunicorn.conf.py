@@ -1,32 +1,95 @@
+"""
+Gunicorn-Konfiguration für den API-Container
+"""
+
 import os
 import multiprocessing
 
-# Server Socket
-bind = "0.0.0.0:" + os.getenv("PORT", "8080")
-backlog = 2048
+# Umgebungsvariablen lesen oder Standardwerte verwenden
+workers_per_core_str = os.getenv("WORKERS_PER_CORE", "2")
+max_workers_str = os.getenv("MAX_WORKERS", "4")
+use_max_workers = os.getenv("USE_MAX_WORKERS", "false").lower() == "true"
+web_concurrency_str = os.getenv("WEB_CONCURRENCY", None)
+host = os.getenv("HOST", "0.0.0.0")
+port = os.getenv("PORT", "8000")
+bind_env = os.getenv("BIND", None)
+log_level = os.getenv("LOG_LEVEL", "info")
+worker_class = os.getenv("WORKER_CLASS", "gevent")
+timeout = int(os.getenv("TIMEOUT", "120"))
+graceful_timeout = int(os.getenv("GRACEFUL_TIMEOUT", "120"))
+keep_alive = int(os.getenv("KEEP_ALIVE", "5"))
+threads = int(os.getenv("THREADS", "1"))
 
-# Worker Processes
-workers = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1))
-worker_class = "gevent"
-threads = int(os.getenv("GUNICORN_THREADS", "4"))
+# Anzahl der Kerne bestimmen
+cores = multiprocessing.cpu_count()
+
+# Workers pro Kern berechnen
+workers_per_core = float(workers_per_core_str)
+max_workers = int(max_workers_str)
+
+# Wenn WEB_CONCURRENCY gesetzt ist, verwende diesen Wert
+if web_concurrency_str:
+    web_concurrency = int(web_concurrency_str)
+    assert web_concurrency > 0
+else:
+    # Sonst berechne basierend auf Kernen und Settings
+    web_concurrency = int(cores * workers_per_core)
+    if use_max_workers:
+        web_concurrency = min(web_concurrency, max_workers)
+
+# Bind definieren
+if bind_env:
+    bind = bind_env
+else:
+    bind = f"{host}:{port}"
+
+# Gunicorn-Konfiguration
+# https://docs.gunicorn.org/en/stable/settings.html
+workers = web_concurrency
+worker_class = worker_class
+threads = threads
+bind = bind
+keepalive = keep_alive
+timeout = timeout
+graceful_timeout = graceful_timeout
+
+# Logging
+loglevel = log_level
+accesslog = "-"  # stdout
+errorlog = "-"   # stderr
+access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(L)s'
+
+# Worker-Optionen
+worker_tmp_dir = "/dev/shm"
 worker_connections = 1000
-timeout = int(os.getenv("GUNICORN_TIMEOUT", "120"))
-keepalive = 2
+preload_app = True
+reuse_port = True
+
+# Maximale Anzahl gleichzeitiger Requests pro Worker
 max_requests = 1000
-max_requests_jitter = 100
+max_requests_jitter = 50
+
+# Maximale Anzahl offener Keep-Alive-Verbindungen pro Worker
+# Reduziert Druck auf Datenbank-Connections und RAM-Verbrauch
+worker_connections = 200
+
+# Aktiviere Statsd-Metriken, falls konfiguriert
+if os.getenv("ENABLE_METRICS", "").lower() in ("1", "true", "yes"):
+    # Optional: StatD-Metriken aktivieren, wenn STATSD_HOST gesetzt ist
+    statsd_host = os.getenv("STATSD_HOST", None)
+    if statsd_host:
+        statsd_port = int(os.getenv("STATSD_PORT", "8125"))
+        statsd_prefix = os.getenv("STATSD_PREFIX", "hackthestudy.api")
+        
+        # Aktiviere StatD
+        statsd_host = f"{statsd_host}:{statsd_port}"
+        statsd_prefix = statsd_prefix
 
 # Process Naming
 proc_name = "hackthestudy-api"
 default_proc_name = "hackthestudy-api"
 
-# Logging
-errorlog = "-"
-accesslog = "-"
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(L)s'
-loglevel = os.getenv("LOG_LEVEL", "info").lower()
-
 # Server Mechanics
-preload_app = True
 daemon = False
 raw_env = []
 pidfile = None

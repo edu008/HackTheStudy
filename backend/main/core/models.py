@@ -1,323 +1,287 @@
-from flask_sqlalchemy import SQLAlchemy
-import uuid
+"""
+Basis-Datenbankmodelle für den API-Container.
+"""
+
+import os
 from datetime import datetime
-from sqlalchemy import Index, event
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.sql import func
 
-def generate_uuid():
-    """Erzeugt eine UUID für Primärschlüssel."""
-    return str(uuid.uuid4())
-
-# Initialisiere SQLAlchemy
+# SQLAlchemy-Instanz erstellen
 db = SQLAlchemy()
 
 class User(db.Model):
-    """
-    Repräsentiert einen Benutzer im System.
-    Speichert Authentifizierungsinformationen und Benutzerdaten.
-    """
+    """Benutzermodell für die Authentifizierung und Profilinformationen."""
     __tablename__ = 'user'
     
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    id = db.Column(db.String(36), primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
     name = db.Column(db.String(120), nullable=False)
-    avatar = db.Column(db.String(200))
-    oauth_provider = db.Column(db.String(50))
-    oauth_id = db.Column(db.String(100))
-    credits = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    last_login = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    avatar = db.Column(db.String(200), nullable=True)
+    oauth_provider = db.Column(db.String(50), nullable=True)
+    oauth_id = db.Column(db.String(100), nullable=True)
+    credits = db.Column(db.Integer, nullable=True)
     
     # Beziehungen
-    token_usages = db.relationship('TokenUsage', back_populates='user', cascade="all, delete-orphan")
-    uploads = db.relationship('Upload', back_populates='user', cascade="all, delete-orphan")
-    payments = db.relationship('Payment', back_populates='user', cascade="all, delete-orphan")
-    activities = db.relationship('UserActivity', back_populates='user', cascade="all, delete-orphan")
-    oauth_tokens = db.relationship('OAuthToken', back_populates='user', cascade="all, delete-orphan")
-    
-    # Indizes
-    __table_args__ = (
-        Index('idx_user_oauth', oauth_provider, oauth_id),
-    )
-    
-    def __repr__(self):
-        return f"<User {self.id} {self.email}>"
+    uploads = db.relationship('Upload', backref='user', lazy=True)
+    activities = db.relationship('UserActivity', backref='user', lazy=True)
+    payments = db.relationship('Payment', backref='user', lazy=True)
+    oauth_tokens = db.relationship('OAuthToken', backref='user', lazy=True)
+    token_usages = db.relationship('TokenUsage', backref='user', lazy=True)
+
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'email': self.email,
+            'name': self.name,
+            'avatar': self.avatar,
+            'oauth_provider': self.oauth_provider,
+            'oauth_id': self.oauth_id,
+            'credits': self.credits
+        }
 
 class Upload(db.Model):
-    """
-    Speichert hochgeladene Dateien und extrahierte Inhalte.
-    Bildet die Grundlage für die Generierung von Lernmaterialien.
-    """
+    """Modell für hochgeladene Dateien und Dokumente."""
     __tablename__ = 'upload'
     
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    session_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
-    user_id = db.Column(db.String(36), db.ForeignKey('user.id', ondelete='CASCADE'), nullable=True, index=True)
+    id = db.Column(db.String(36), primary_key=True)
+    session_id = db.Column(db.String(36), nullable=False, unique=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=True)
     file_name_1 = db.Column(db.String(200), nullable=True)
     file_name_2 = db.Column(db.String(200), nullable=True)
     file_name_3 = db.Column(db.String(200), nullable=True)
     file_name_4 = db.Column(db.String(200), nullable=True)
     file_name_5 = db.Column(db.String(200), nullable=True)
-    upload_date = db.Column(db.DateTime, default=db.func.current_timestamp())
-    content = db.Column(db.Text)
-    token_count = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
-    updated_at = db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp())
-    last_used_at = db.Column(db.DateTime, default=db.func.current_timestamp(), onupdate=db.func.current_timestamp(), index=True)
-    processing_status = db.Column(db.String(50), default="pending", index=True)  # pending, processing, completed, failed
+    upload_date = db.Column(db.DateTime, nullable=True)
+    content = db.Column(db.Text, nullable=True)
+    token_count = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_used_at = db.Column(db.DateTime, nullable=True)
+    processing_status = db.Column(db.String(50), nullable=True)
     
     # Beziehungen
-    user = db.relationship('User', back_populates='uploads')
-    flashcards = db.relationship('Flashcard', back_populates='upload', cascade="all, delete-orphan")
-    questions = db.relationship('Question', back_populates='upload', cascade="all, delete-orphan")
-    topics = db.relationship('Topic', back_populates='upload', cascade="all, delete-orphan")
-    
-    # Indizes
-    __table_args__ = (
-        Index('idx_upload_user_date', user_id, upload_date.desc()),
-        Index('idx_upload_status_date', processing_status, upload_date.desc()),
-    )
-    
-    def __repr__(self):
-        return f"<Upload {self.id} session={self.session_id} status={self.processing_status}>"
+    topics = db.relationship('Topic', backref='upload', lazy=True)
+    questions = db.relationship('Question', backref='upload', lazy=True)
+    flashcards = db.relationship('Flashcard', backref='upload', lazy=True)
+    connections = db.relationship('Connection', backref='upload', lazy=True, foreign_keys='Connection.upload_id')
 
-class Flashcard(db.Model):
-    """
-    Repräsentiert eine Lernkarte mit Frage und Antwort.
-    """
-    __tablename__ = 'flashcard'
-    
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id', ondelete='CASCADE'), nullable=False, index=True)
-    question = db.Column(db.String(500), nullable=False)
-    answer = db.Column(db.String(500), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Beziehungen
-    upload = db.relationship('Upload', back_populates='flashcards')
-    
-    # Indizes für Volltextsuche 
-    __table_args__ = (
-        Index('idx_flashcard_question', 'question'),
-        Index('idx_flashcard_upload', 'upload_id', 'id'),
-    )
-    
-    def __repr__(self):
-        return f"<Flashcard {self.id} upload={self.upload_id}>"
-
-class Question(db.Model):
-    """
-    Repräsentiert eine Multiple-Choice-Frage mit Optionen und Erklärung.
-    """
-    __tablename__ = 'question'
-    
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id', ondelete='CASCADE'), nullable=False, index=True)
-    text = db.Column(db.String(500), nullable=False)
-    options = db.Column(db.JSON, nullable=False)
-    correct_answer = db.Column(db.Integer, nullable=False)
-    explanation = db.Column(db.String(1000))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Beziehungen
-    upload = db.relationship('Upload', back_populates='questions')
-    
-    # Indizes
-    __table_args__ = (
-        Index('idx_question_upload', 'upload_id', 'id'),
-    )
-    
-    def __repr__(self):
-        return f"<Question {self.id} upload={self.upload_id}>"
-
-class Topic(db.Model):
-    """
-    Repräsentiert ein Thema oder Unterthema im Lernmaterial.
-    Kann hierarchisch strukturiert werden.
-    """
-    __tablename__ = 'topic'
-    
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id', ondelete='CASCADE'), nullable=False, index=True)
-    name = db.Column(db.String(200), nullable=False)
-    is_main_topic = db.Column(db.Boolean, default=False, index=True)
-    parent_id = db.Column(db.String(36), db.ForeignKey('topic.id', ondelete='CASCADE'), nullable=True, index=True)
-    description = db.Column(db.Text, nullable=True)
-    is_key_term = db.Column(db.Boolean, default=False, index=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Beziehungen
-    upload = db.relationship('Upload', back_populates='topics')
-    children = db.relationship('Topic', backref=db.backref('parent', remote_side=[id]), cascade="all, delete-orphan")
-    
-    # Indizes
-    __table_args__ = (
-        Index('idx_topic_upload_main', 'upload_id', 'is_main_topic'),
-        Index('idx_topic_parent', 'parent_id'),
-        Index('idx_topic_name', 'name'),
-    )
-    
-    def __repr__(self):
-        return f"<Topic {self.id} name={self.name} main={self.is_main_topic}>"
-
-class Connection(db.Model):
-    """
-    Repräsentiert eine Verbindung (Beziehung) zwischen zwei Themen.
-    """
-    __tablename__ = 'connection'
-    
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id', ondelete='CASCADE'), nullable=False, index=True)
-    source_id = db.Column(db.String(36), db.ForeignKey('topic.id', ondelete='CASCADE'), nullable=False, index=True)
-    target_id = db.Column(db.String(36), db.ForeignKey('topic.id', ondelete='CASCADE'), nullable=False, index=True)
-    label = db.Column(db.String(500), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Beziehungen
-    source = db.relationship('Topic', foreign_keys=[source_id], backref='outgoing_connections')
-    target = db.relationship('Topic', foreign_keys=[target_id], backref='incoming_connections')
-    
-    # Indizes
-    __table_args__ = (
-        Index('idx_connection_upload', 'upload_id'),
-        Index('idx_connection_source_target', 'source_id', 'target_id'),
-    )
-    
-    def __repr__(self):
-        return f"<Connection {self.id} {self.source_id} -> {self.target_id}>"
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'session_id': self.session_id,
+            'user_id': self.user_id,
+            'file_name_1': self.file_name_1,
+            'file_name_2': self.file_name_2,
+            'file_name_3': self.file_name_3,
+            'file_name_4': self.file_name_4,
+            'file_name_5': self.file_name_5,
+            'upload_date': self.upload_date.isoformat() if self.upload_date else None,
+            'content': self.content,
+            'token_count': self.token_count,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,
+            'processing_status': self.processing_status
+        }
 
 class UserActivity(db.Model):
-    """
-    Protokolliert Benutzeraktivitäten für Analysen und Verlauf.
-    """
+    """Modell für Benutzeraktivitäten."""
     __tablename__ = 'user_activity'
     
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    user_id = db.Column(db.String(36), db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False, index=True)
-    activity_type = db.Column(db.String(50), nullable=False, index=True)
+    id = db.Column(db.String(36), primary_key=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
+    activity_type = db.Column(db.String(50), nullable=False)
     title = db.Column(db.String(200), nullable=False)
-    main_topic = db.Column(db.String(200))
-    subtopics = db.Column(db.JSON)
-    session_id = db.Column(db.String(36), db.ForeignKey('upload.session_id', ondelete='SET NULL'), nullable=True, index=True)
-    details = db.Column(db.JSON)
-    timestamp = db.Column(db.DateTime, default=db.func.current_timestamp(), index=True)
+    main_topic = db.Column(db.String(200), nullable=True)
+    subtopics = db.Column(db.JSON, nullable=True)
+    session_id = db.Column(db.String(36), nullable=True)
+    details = db.Column(db.JSON, nullable=True)
+    timestamp = db.Column(db.DateTime, nullable=True)
+
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'activity_type': self.activity_type,
+            'title': self.title,
+            'main_topic': self.main_topic,
+            'subtopics': self.subtopics,
+            'session_id': self.session_id,
+            'details': self.details,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None
+        }
+
+class Connection(db.Model):
+    """Modell für Verbindungen zwischen Themen/Elementen."""
+    __tablename__ = 'connection'
     
-    # Beziehungen
-    user = db.relationship('User', back_populates='activities')
+    id = db.Column(db.String(36), primary_key=True)
+    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
+    source_id = db.Column(db.String(36), nullable=False)
+    target_id = db.Column(db.String(36), nullable=False)
+    label = db.Column(db.String(500), nullable=False)
+
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'upload_id': self.upload_id,
+            'source_id': self.source_id,
+            'target_id': self.target_id,
+            'label': self.label
+        }
+
+class Flashcard(db.Model):
+    """Modell für Lernkarten."""
+    __tablename__ = 'flashcard'
     
-    # Indizes
-    __table_args__ = (
-        Index('idx_activity_user_time', 'user_id', 'timestamp'),
-        Index('idx_activity_type_time', 'activity_type', 'timestamp'),
-    )
+    id = db.Column(db.String(36), primary_key=True)
+    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
+    question = db.Column(db.Text, nullable=False)
+    answer = db.Column(db.Text, nullable=False)
+
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'upload_id': self.upload_id,
+            'question': self.question,
+            'answer': self.answer
+        }
+
+class OAuthToken(db.Model):
+    """Modell für OAuth Authentifizierungs-Tokens."""
+    __tablename__ = 'o_auth_token'
     
-    def __repr__(self):
-        return f"<UserActivity {self.id} type={self.activity_type} user={self.user_id}>"
+    id = db.Column(db.String(36), primary_key=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
+    provider = db.Column(db.String(50), nullable=False)
+    access_token = db.Column(db.Text, nullable=False)
+    refresh_token = db.Column(db.Text, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'provider': self.provider,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None
+        }
 
 class Payment(db.Model):
-    """
-    Speichert Zahlungsinformationen für Kreditkäufe.
-    """
+    """Modell für Zahlungen und Kreditkäufe."""
     __tablename__ = 'payment'
     
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    user_id = db.Column(db.String(36), db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False, index=True)
+    id = db.Column(db.String(36), primary_key=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
     amount = db.Column(db.Float, nullable=False)
     credits = db.Column(db.Integer, nullable=False)
     payment_method = db.Column(db.String(50), nullable=False)
-    transaction_id = db.Column(db.String(100), nullable=False, unique=True)
-    status = db.Column(db.String(50), nullable=False, index=True)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp(), index=True)
-    
-    # Beziehungen
-    user = db.relationship('User', back_populates='payments')
-    
-    # Indizes
-    __table_args__ = (
-        Index('idx_payment_user_date', 'user_id', 'created_at'),
-        Index('idx_payment_transaction', 'transaction_id'),
-    )
-    
-    def __repr__(self):
-        return f"<Payment {self.id} user={self.user_id} amount={self.amount} status={self.status}>"
+    transaction_id = db.Column(db.String(100), nullable=False)
+    status = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow)
 
-class OAuthToken(db.Model):
-    """
-    Speichert OAuth-Token für externe Dienste.
-    """
-    __tablename__ = 'oauth_token'
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'amount': self.amount,
+            'credits': self.credits,
+            'payment_method': self.payment_method,
+            'transaction_id': self.transaction_id,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+class Question(db.Model):
+    """Modell für Fragen/Quiz zu Uploads."""
+    __tablename__ = 'question'
     
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    user_id = db.Column(db.String(36), db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False, index=True)
-    provider = db.Column(db.String(50), nullable=False)
-    access_token = db.Column(db.Text, nullable=False)
-    refresh_token = db.Column(db.Text)
-    expires_at = db.Column(db.DateTime, nullable=False, index=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Beziehungen
-    user = db.relationship('User', back_populates='oauth_tokens')
-    
-    # Indizes
-    __table_args__ = (
-        Index('idx_oauth_user_provider', 'user_id', 'provider', unique=True),
-    )
-    
-    def __repr__(self):
-        return f"<OAuthToken {self.id} user={self.user_id} provider={self.provider}>"
+    id = db.Column(db.String(36), primary_key=True)
+    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
+    text = db.Column(db.String(500), nullable=False)
+    options = db.Column(db.JSON, nullable=False)
+    correct_answer = db.Column(db.Integer, nullable=False)
+    explanation = db.Column(db.String(1000), nullable=True)
+
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'upload_id': self.upload_id,
+            'text': self.text,
+            'options': self.options,
+            'correct_answer': self.correct_answer,
+            'explanation': self.explanation
+        }
 
 class TokenUsage(db.Model):
-    """
-    Speichert die Nutzung von API-Tokens für verschiedene Funktionen.
-    Trackt detailliert Token-Nutzung, Kosten und Cache-Status.
-    """
+    """Modell für Token-Nutzungsverfolgung."""
     __tablename__ = 'token_usage'
     
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    user_id = db.Column(db.String(36), db.ForeignKey('user.id', ondelete='SET NULL'), nullable=True, index=True)
-    session_id = db.Column(db.String(255), nullable=True, index=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    model = db.Column(db.String(50), nullable=False, index=True)
+    id = db.Column(db.String(36), primary_key=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=True)
+    session_id = db.Column(db.String(255), nullable=True)
+    timestamp = db.Column(db.DateTime, nullable=True)
+    model = db.Column(db.String(50), nullable=False)
     input_tokens = db.Column(db.Integer, nullable=False)
     output_tokens = db.Column(db.Integer, nullable=False)
     cost = db.Column(db.Float, nullable=False)
-    endpoint = db.Column(db.String(100), nullable=True, index=True)
-    function_name = db.Column(db.String(100), nullable=True, index=True)
-    cached = db.Column(db.Boolean, default=False, index=True)
+    endpoint = db.Column(db.String(100), nullable=True)
+    function_name = db.Column(db.String(100), nullable=True)
+    cached = db.Column(db.Boolean, nullable=True)
     request_metadata = db.Column(db.JSON, nullable=True)
+
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'session_id': self.session_id,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'model': self.model,
+            'input_tokens': self.input_tokens,
+            'output_tokens': self.output_tokens,
+            'cost': self.cost,
+            'endpoint': self.endpoint,
+            'function_name': self.function_name,
+            'cached': self.cached,
+            'request_metadata': self.request_metadata
+        }
+
+class Topic(db.Model):
+    """Modell für Themen aus Uploads."""
+    __tablename__ = 'topic'
     
-    # Beziehungen
-    user = db.relationship("User", back_populates="token_usages")
+    id = db.Column(db.String(36), primary_key=True)
+    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+    is_main_topic = db.Column(db.Boolean, nullable=True)
+    parent_id = db.Column(db.String(36), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    is_key_term = db.Column(db.Boolean, nullable=True)
     
-    # Indizes
-    __table_args__ = (
-        Index('idx_token_user_time', 'user_id', 'timestamp'),
-        Index('idx_token_session_time', 'session_id', 'timestamp'),
-        Index('idx_token_model_cached', 'model', 'cached'),
+    # Rekursive Beziehung für Hierarchie
+    subtopics = db.relationship(
+        'Topic', 
+        backref=db.backref('parent', remote_side=[id]),
+        foreign_keys='Topic.parent_id'
     )
-    
-    def __repr__(self):
-        return f"<TokenUsage {self.id} user={self.user_id} tokens={self.input_tokens}+{self.output_tokens} cost={self.cost}>"
 
-# Event-Listener für Datenbereinigung
-@event.listens_for(db.session, 'before_commit')
-def validate_models(session):
-    """Validiert Modelle vor dem Commit."""
-    for obj in session.new:
-        if hasattr(obj, 'validate'):
-            obj.validate()
-
-# Cache-Invalidierung bei Änderungen
-@event.listens_for(db.session, 'after_commit')
-def clear_caches(session):
-    """Leert Caches nach Änderungen."""
-    try:
-        from core.redis_client import redis_client
-        
-        for obj in session.new.union(session.dirty).union(session.deleted):
-            model_name = obj.__class__.__name__.lower()
-            if hasattr(obj, 'id'):
-                cache_key = f"db:{model_name}:{obj.id}"
-                redis_client.delete(cache_key)
-    except Exception as e:
-        # Fehler beim Cache-Löschen sollten den Commit nicht beeinträchtigen
-        print(f"Fehler beim Leeren des Caches: {e}")
+    def to_dict(self):
+        """Konvertiert das Model in ein Dictionary."""
+        return {
+            'id': self.id,
+            'upload_id': self.upload_id,
+            'name': self.name,
+            'is_main_topic': self.is_main_topic,
+            'parent_id': self.parent_id,
+            'description': self.description,
+            'is_key_term': self.is_key_term
+        } 

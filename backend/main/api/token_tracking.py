@@ -3,15 +3,11 @@ Verbessertes Token-Tracking-System für die Monetarisierung
 -----------------------------------------------------------
 Dieses Modul stellt erweiterte Funktionen für das Token-Tracking und die Credit-Berechnung bereit.
 Es verfolgt den Input- und Output-Tokenverbrauch jeder Funktion und speichert sie in der Datenbank.
-
-Seit dem Update: Dieses Modul integriert sich mit dem openaicache/token_tracker.py-System für Redis-basiertes
-Caching und verbessertes Token-Tracking.
 """
 
 from flask import current_app, g, jsonify
 from . import api_bp
 from .auth import token_required
-from openaicache.token_tracker import update_token_usage
 from core.models import db, User, TokenUsage
 import tiktoken
 import logging
@@ -23,23 +19,14 @@ import json
 import threading
 import inspect
 import traceback
+from datetime import datetime
 
 # Lokales Caching von Kosten für höhere Leistung
 _pricing_cache = {}
 
-# Integriere mit dem neuen Caching-System für Kostenberechnung und Token-Tracking
-try:
-    from openaicache import calculate_token_cost as cache_calculate_token_cost
-    from openaicache import track_token_usage as cache_track_token_usage
-    _use_redis_cache = True
-    logging.info("Redis-Cache für Token-Tracking aktiviert")
-except ImportError:
-    _use_redis_cache = False
-    logging.warning("Redis-Cache für Token-Tracking nicht verfügbar")
-
 logger = logging.getLogger(__name__)
 
-# Kosten pro 1000 Tokens (in Credits) - aus credit_service.py übernommen
+# Kosten pro 1000 Tokens (in Credits)
 GPT4_INPUT_COST_PER_1K = 10
 GPT4_OUTPUT_COST_PER_1K = 30
 GPT35_INPUT_COST_PER_1K = 1.5
@@ -84,9 +71,6 @@ def calculate_token_cost(input_tokens, output_tokens, model="gpt-4o", document_t
     Returns:
         int: Kosten in Credits (gerundet auf die nächste ganze Zahl)
     """
-    # WICHTIG: Nicht mehr auf das Cache-System verweisen, um Rekursion zu vermeiden
-    # Verwende direkt die bestehende Logik
-    
     # Für sehr kleine Dokumente (<500 Tokens), unabhängig vom Gesamtprompt
     if input_tokens < 500:
         return 100  # Pauschale Mindestgebühr für kleine Dokumente
@@ -151,61 +135,25 @@ def track_token_usage(user_id, session_id, function_name, input_tokens, output_t
                 response = details['response']
                 logger.info(f"Antwort-Ausschnitt: {response[:500]}...")
         
-        # Wenn Redis-Cache aktiviert ist, nutze das externe Tracking-System
-        if _use_redis_cache:
-            try:
-                # Erstelle ein eindeutiges Token für das Tracking
-                tracking_id = str(uuid.uuid4())
-                details_for_cache = details or {}
-                
-                # Zusätzliche Details für das Caching
-                details_for_cache.update({
-                    "tracking_id": tracking_id,
-                    "timestamp": time.time(),
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "function": function_name
-                })
-                
-                # Übergebe die Tracking-Daten an das Cache-System
-                tracking_result = cache_track_token_usage(
-                    session_id=session_id,
-                    function_name=function_name,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    model=model,
-                    details=details_for_cache
-                )
-                
-                # Protokolliere das Ergebnis des Cachings
-                if isinstance(tracking_result, dict) and tracking_result.get('success'):
-                    logger.info(f"Token-Tracking für {tracking_id} erfolgreich im Redis-Cache gespeichert")
-                else:
-                    logger.warning(f"Token-Tracking für {tracking_id} konnte nicht im Redis-Cache gespeichert werden")
-                
-                return True
-                
-            except Exception as cache_err:
-                logger.error(f"Fehler beim Redis-Cache-Tracking: {str(cache_err)}")
-                # Fallback auf DB-Tracking
-        
         # Speichere die Token-Nutzung in der Datenbank
         try:
-            from core.models import TokenUsage, db
-            
             # Berechne die Kosten in Credits
             cost = calculate_token_cost(input_tokens, output_tokens, model)
             
             # Erstelle einen neuen TokenUsage-Eintrag
             usage = TokenUsage(
+                id=str(uuid.uuid4()),
                 user_id=user_id,
                 session_id=session_id,
-                function_name=function_name,
+                timestamp=datetime.utcnow(),
+                model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                model=model,
-                credits_cost=cost,
-                details=json.dumps(details) if details else None
+                cost=cost,
+                endpoint=function_name,
+                function_name=function_name,
+                cached=False,
+                request_metadata=details
             )
             
             db.session.add(usage)
@@ -252,285 +200,160 @@ def check_credits_available(cost, user_id=None):
     
     return user.credits >= cost
 
-def update_user_credits(user_id, credit_change):
+def update_token_usage(user_id, session_id, input_tokens, output_tokens, model="gpt-4o", endpoint=None, function_name=None, is_cached=False, metadata=None):
     """
-    Aktualisiert die Credits eines Benutzers und gibt den neuen Stand zurück.
+    Aktualisiert die Token-Nutzungsstatistik für einen Benutzer und zieht die entsprechenden Credits ab.
     
     Args:
         user_id (str): Die ID des Benutzers
-        credit_change (int): Die Änderung der Credits (positiv für Hinzufügen, negativ für Abziehen)
-        
-    Returns:
-        int: Der neue Credit-Stand des Benutzers oder None bei Fehler
-    """
-    try:
-        from core.models import User, db
-        
-        user = User.query.get(user_id)
-        if not user:
-            logger.error(f"Benutzer mit ID {user_id} nicht gefunden")
-            return None
-        
-        # Überprüfe, ob der Benutzer genügend Credits hat, wenn credits_change negativ ist
-        if credit_change < 0 and user.credits < abs(credit_change):
-            logger.warning(f"Benutzer {user_id} hat nicht genügend Credits: {user.credits}/{abs(credit_change)}")
-            return user.credits  # Keine Änderung vorgenommen
-        
-        # Credits aktualisieren
-        user.credits += credit_change
-        db.session.commit()
-        
-        logger.info(f"Benutzer {user_id}: {credit_change} Credits geändert, neuer Stand: {user.credits}")
-        
-        return user.credits
-        
-    except Exception as e:
-        logger.error(f"Fehler beim Aktualisieren der Credits: {str(e)}")
-        if 'db' in locals():
-            db.session.rollback()
-        return None
-
-def deduct_credits(user_id, credits, session_id=None, function_name="unspecified", input_tokens=0, output_tokens=0, model="gpt-4o"):
-    """
-    Zieht Credits vom Benutzer ab und führt gleichzeitig Token-Tracking durch.
-    
-    Args:
-        user_id (str): Die ID des Benutzers
-        credits (int): Die abzuziehenden Credits
-        session_id (str, optional): Die ID der Session
-        function_name (str): Der Name der Funktion für das Token-Tracking
+        session_id (str): Die ID der Session
         input_tokens (int): Die Anzahl der Input-Tokens
         output_tokens (int): Die Anzahl der Output-Tokens
-        model (str): Das verwendete OpenAI-Modell
+        model (str, optional): Das verwendete OpenAI-Modell
+        endpoint (str, optional): Der API-Endpunkt, der verwendet wurde
+        function_name (str, optional): Name der aufrufenden Funktion
+        is_cached (bool, optional): Gibt an, ob die Antwort aus dem Cache kam
+        metadata (dict, optional): Zusätzliche Metadaten zur Anfrage
         
     Returns:
-        dict: {"success": bool, "credits_remaining": int, "error": str}
+        dict: Ein Ergebnisobjekt mit dem Status und der Anzahl der abgezogenen Credits
     """
     try:
-        from core.models import User
-        from flask import current_app, g
+        # Kosten berechnen
+        credits_cost = calculate_token_cost(input_tokens, output_tokens, model)
         
-        # Tracking der Token-Nutzung
-        if input_tokens > 0 or output_tokens > 0:
-            tracking_result = track_token_usage(
-                user_id=user_id,
-                session_id=session_id,
-                function_name=function_name,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                model=model
-            )
-            
-            if not tracking_result:
-                logger.warning("Token-Tracking fehlgeschlagen")
+        # Überprüfe, ob der Benutzer genügend Credits hat
+        from core.models import User, db
+        user = User.query.get(user_id)
+        
+        if not user:
+            logger.warning(f"Benutzer {user_id} nicht gefunden für Token-Tracking")
+            return {
+                "success": False,
+                "error": "Benutzer nicht gefunden",
+                "credits_cost": credits_cost
+            }
+        
+        # Wenn es sich um einen Cache-Hit handelt, reduziere die Kosten
+        if is_cached:
+            credits_cost = max(1, int(credits_cost * 0.1))  # 90% Rabatt für Cache-Hits, mindestens 1 Credit
+        
+        # Überprüfe, ob genügend Credits vorhanden sind
+        if user.credits < credits_cost:
+            logger.warning(f"Benutzer {user_id} hat nicht genügend Credits: {user.credits} < {credits_cost}")
+            return {
+                "success": False,
+                "error": "Nicht genügend Credits",
+                "available_credits": user.credits,
+                "required_credits": credits_cost
+            }
+        
+        # Credits abziehen
+        user.credits -= credits_cost
+        
+        # Token-Nutzung in der Datenbank speichern
+        token_usage = TokenUsage(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            session_id=session_id,
+            timestamp=datetime.utcnow(),
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost=credits_cost,
+            endpoint=endpoint or "unknown",
+            function_name=function_name or "unknown",
+            cached=is_cached,
+            request_metadata=metadata
+        )
+        
+        db.session.add(token_usage)
+        db.session.commit()
+        
+        logger.info(f"Credits abgezogen: {credits_cost} von Benutzer {user_id}, neue Bilanz: {user.credits}")
         
         return {
             "success": True,
-            "credits_remaining": update_user_credits(user_id, -credits),
-            "error": None
+            "credits_cost": credits_cost,
+            "remaining_credits": user.credits,
+            "token_usage_id": token_usage.id
         }
+        
     except Exception as e:
-        logger.error(f"Fehler beim Abziehen von Credits: {str(e)}")
+        logger.error(f"Fehler beim Aktualisieren der Token-Nutzung: {str(e)}")
+        traceback.print_exc()
+        
+        # Bei einem Fehler versuchen wir, die Transaktion rückgängig zu machen
+        db.session.rollback()
+        
         return {
             "success": False,
             "error": str(e),
-            "credits_remaining": None
+            "credits_cost": credits_cost if 'credits_cost' in locals() else None
         }
 
-def estimate_token_usage(text_length, model="gpt-4o", is_prompt=True):
+def get_user_credits(user_id):
     """
-    Schätzt die Token-Anzahl basierend auf der Textlänge
+    Gibt die aktuelle Anzahl der Credits eines Benutzers zurück.
     
     Args:
-        text_length (int): Die Länge des Textes in Zeichen
-        model (str): Das verwendete Modell
-        is_prompt (bool): Ob es sich um einen Prompt handelt
+        user_id (str): Die ID des Benutzers
         
     Returns:
-        int: Geschätzte Anzahl an Tokens
+        int: Die Anzahl der Credits oder 0, wenn der Benutzer nicht gefunden wurde
     """
-    # Ein Token entspricht ca. 4 Zeichen in englischem Text
-    # Für Prompts rechnen wir konservativ, um Überschätzungen zu vermeiden
-    chars_per_token = 4 if is_prompt else 3.5
+    from core.models import User
     
-    return int(text_length / chars_per_token)
+    user = User.query.get(user_id)
+    if not user:
+        return 0
+    
+    return user.credits
 
-def get_openai_client(use_cache=False):
+@api_bp.route('/token-usage', methods=['GET'])
+@token_required
+def get_token_usage():
     """
-    Gibt einen OpenAI-Client zurück, der für Token-Tracking konfiguriert ist.
-    
-    Args:
-        use_cache: Boolean, ob der Cache verwendet werden soll
-        
-    Returns:
-        OpenAI: Ein OpenAI-Client mit Token-Tracking-Wrapper
+    API-Endpunkt, um die Token-Nutzung des aktuellen Benutzers abzurufen.
     """
-    from flask import current_app, g
-    import os
-    import logging
-    import time
+    user_id = request.user_id
     
-    logger = logging.getLogger(__name__)
+    # Token-Nutzung aus der Datenbank holen
+    usage_records = TokenUsage.query.filter_by(user_id=user_id).order_by(TokenUsage.timestamp.desc()).limit(50).all()
     
-    # DEBUG: Protokolliere detaillierte Umgebungsinformationen 
-    start_time = time.time()
-    caller_info = "unbekannt"
-    try:
-        # Versuche, den Aufrufer der Funktion zu identifizieren
-        frame = inspect.currentframe().f_back
-        if frame:
-            caller_module = frame.f_globals.get('__name__', 'unbekannt')
-            caller_function = frame.f_code.co_name
-            caller_info = f"{caller_module}.{caller_function}"
-    except:
-        pass
+    # Für jeden Eintrag ein Dictionary erstellen
+    usage_list = []
+    for usage in usage_records:
+        usage_list.append({
+            'id': usage.id,
+            'timestamp': usage.timestamp.isoformat() if usage.timestamp else None,
+            'model': usage.model,
+            'input_tokens': usage.input_tokens,
+            'output_tokens': usage.output_tokens,
+            'cost': usage.cost,
+            'endpoint': usage.endpoint,
+            'function_name': usage.function_name,
+            'cached': usage.cached
+        })
     
-    logger.critical(f"[DEBUG-TOKEN] get_openai_client aufgerufen mit use_cache={use_cache} von {caller_info}")
-    logger.critical(f"[DEBUG-TOKEN] PID: {os.getpid()}, Zeit: {time.strftime('%H:%M:%S')}")
-    logger.critical(f"[DEBUG-TOKEN] Umgebungsvariablen: OPENAI_API_KEY existiert: {'Ja' if 'OPENAI_API_KEY' in os.environ else 'Nein'}")
+    # Gesamtnutzung berechnen
+    total_input_tokens = sum(usage.input_tokens for usage in usage_records)
+    total_output_tokens = sum(usage.output_tokens for usage in usage_records)
+    total_cost = sum(usage.cost for usage in usage_records)
     
-    # Falls möglich, info über App-Kontext
-    try:
-        if current_app:
-            logger.critical(f"[DEBUG-TOKEN] Flask App-Kontext: {current_app._get_current_object()}")
-            logger.critical(f"[DEBUG-TOKEN] App Config: {list(current_app.config.keys())}")
-            if 'OPENAI_API_KEY' in current_app.config:
-                logger.critical(f"[DEBUG-TOKEN] OPENAI_API_KEY in Config: vorhanden")
-            else:
-                logger.critical(f"[DEBUG-TOKEN] OPENAI_API_KEY in Config: FEHLT")
-        else:
-            logger.critical("[DEBUG-TOKEN] Kein Flask App-Kontext vorhanden")
-    except Exception as e:
-        logger.critical(f"[DEBUG-TOKEN] Fehler beim Zugriff auf Flask App-Kontext: {str(e)}")
+    # Benutzer-Credits abrufen
+    user = User.query.get(user_id)
+    current_credits = user.credits if user else 0
     
-    # Hole den API-Schlüssel aus verschiedenen Quellen
-    api_key = None
-    sources = [
-        ('current_app.config', lambda: current_app.config.get('OPENAI_API_KEY')),
-        ('os.environ', lambda: os.environ.get('OPENAI_API_KEY')),
-    ]
-    
-    # Protokolliere Debugging-Informationen zur API-Schlüssel-Suche
-    for source_name, getter in sources:
-        try:
-            key = getter()
-            logger.critical(f"[DEBUG-TOKEN] Versuche API-Schlüssel aus {source_name} zu laden...")
-            if key:
-                api_key = key
-                logger.critical(f"[DEBUG-TOKEN] API-Schlüssel in {source_name} gefunden!")
-                logger.critical(f"[DEBUG-TOKEN] Schlüssel-Länge: {len(api_key)} Zeichen")
-                logger.critical(f"[DEBUG-TOKEN] Erste 3 Zeichen: {api_key[:3]}")
-                break
-            else:
-                logger.critical(f"[DEBUG-TOKEN] Kein API-Schlüssel in {source_name}")
-        except Exception as e:
-            logger.critical(f"[DEBUG-TOKEN] Fehler beim Lesen aus {source_name}: {str(e)}")
-            logger.critical(f"[DEBUG-TOKEN] Stacktrace: {traceback.format_exc()}")
-    
-    if not api_key:
-        logger.critical("[DEBUG-TOKEN] FATALER FEHLER: Kein API-Schlüssel gefunden!")
-        logger.critical("[DEBUG-TOKEN] Alle Quellen durchsucht, kein Schlüssel vorhanden. Dies wird zu einem Fehler führen.")
-        raise ValueError("OpenAI API-Schlüssel fehlt. Bitte konfigurieren Sie den Schlüssel in der Umgebungsvariable OPENAI_API_KEY oder der App-Konfiguration.")
-    
-    # Protokolliere Schlüsselvorhandensein (nicht den gesamten Schlüssel!)
-    logger.critical(f"[DEBUG-TOKEN] API-Schlüssel Vorhandensein: {'Ja, gefunden' if api_key else 'FEHLT'}")
-    if api_key:
-        logger.critical(f"[DEBUG-TOKEN] API-Schlüssel-Typ: {type(api_key)}")
-        logger.critical(f"[DEBUG-TOKEN] API-Schlüssel-Länge: {len(api_key)} Zeichen")
-        logger.critical(f"[DEBUG-TOKEN] API-Schlüssel Anfangsbuchstaben: {api_key[:3]}...")
-        logger.critical(f"[DEBUG-TOKEN] API-Schlüssel Endbuchstaben: ...{api_key[-3:]}")
-    
-    # Erstelle den OpenAI-Client
-    try:
-        logger.critical("[DEBUG-TOKEN] Importiere OpenAI und Cache-Module...")
-        from openai import OpenAI
-        logger.critical("[DEBUG-TOKEN] OpenAI Modul erfolgreich importiert")
-        
-        try:
-            from openaicache.openai_wrapper import CachedOpenAI
-            logger.critical("[DEBUG-TOKEN] CachedOpenAI Modul erfolgreich importiert")
-            cache_available = True
-        except ImportError as e:
-            logger.critical(f"[DEBUG-TOKEN] Fehler beim Import von CachedOpenAI: {str(e)}")
-            cache_available = False
-        
-        # Wenn Cache nicht verfügbar ist, deaktiviere ihn
-        if not cache_available:
-            use_cache = False
-            logger.critical("[DEBUG-TOKEN] Cache deaktiviert, da Module nicht verfügbar sind")
-        
-        # Prüfe, ob der Cache aktiviert werden soll
-        if use_cache and cache_available:
-            # Erstelle einen OpenAI-Client mit Cache
-            logger.critical("[DEBUG-TOKEN] Erstelle CachedOpenAI-Client...")
-            try:
-                # Erstelle zuerst einen regulären Client zum Testen
-                logger.critical("[DEBUG-TOKEN] Erstelle Test-Client für Verfügbarkeitsprüfung...")
-                test_client = OpenAI(api_key=api_key)
-                logger.critical(f"[DEBUG-TOKEN] Test-Client erstellt: {type(test_client)}")
-                
-                # Prüfe, ob der Test-Client funktioniert
-                logger.critical("[DEBUG-TOKEN] Prüfe, ob der Test-Client funktioniert...")
-                if hasattr(test_client, 'api_key'):
-                    logger.critical("[DEBUG-TOKEN] Test-Client hat API-Schlüssel-Attribut")
-                else:
-                    logger.critical("[DEBUG-TOKEN] ACHTUNG: Test-Client hat KEIN API-Schlüssel-Attribut")
-                
-                # Wenn der Test-Client funktioniert, erstelle den Cache-Client
-                logger.critical("[DEBUG-TOKEN] Erstelle Base-Client für CachedOpenAI...")
-                base_client = OpenAI(api_key=api_key)
-                logger.critical("[DEBUG-TOKEN] Erstelle CachedOpenAI mit Base-Client...")
-                
-                user_id_for_cache = getattr(g, 'user_id', 'Anonymous')
-                logger.critical(f"[DEBUG-TOKEN] User-ID für Cache: {user_id_for_cache}")
-                
-                client = CachedOpenAI(base_client=base_client, user_id=user_id_for_cache)
-                logger.critical(f"[DEBUG-TOKEN] CachedOpenAI-Client erstellt: {type(client)}")
-                
-                if hasattr(client, 'base_client') and hasattr(client.base_client, 'api_key'):
-                    logger.critical(f"[DEBUG-TOKEN] API-Schlüssel im Client: vorhanden")
-                else:
-                    logger.critical(f"[DEBUG-TOKEN] ACHTUNG: API-Schlüssel im Client: FEHLT")
-                
-                end_time = time.time()
-                logger.critical(f"[DEBUG-TOKEN] Client-Erstellung abgeschlossen in {end_time - start_time:.2f} Sekunden")
-                
-                return client
-            except Exception as e:
-                logger.critical(f"[DEBUG-TOKEN] Fehler beim Erstellen des CachedOpenAI-Clients: {str(e)}")
-                logger.critical(f"[DEBUG-TOKEN] Stacktrace: {traceback.format_exc()}")
-                logger.critical("[DEBUG-TOKEN] Fallback auf regulären OpenAI-Client...")
-        
-        # Erstelle einen regulären OpenAI-Client, wenn Cache nicht aktiviert oder fehlgeschlagen ist
-        try:
-            # Erstelle einen direkten OpenAI-Client
-            logger.critical("[DEBUG-TOKEN] Erstelle regulären OpenAI-Client...")
-            client = OpenAI(api_key=api_key)
-            logger.critical(f"[DEBUG-TOKEN] Regulärer OpenAI-Client erstellt: {type(client)}")
-            
-            if hasattr(client, 'api_key'):
-                logger.critical(f"[DEBUG-TOKEN] API-Schlüssel im Client: vorhanden")
-            else:
-                logger.critical(f"[DEBUG-TOKEN] ACHTUNG: API-Schlüssel im Client: FEHLT")
-                
-            # Log client details
-            logger.critical(f"[DEBUG-TOKEN] Client Attribute: {dir(client)}")
-            if hasattr(client, 'base_url'):
-                logger.critical(f"[DEBUG-TOKEN] Client Base URL: {client.base_url}")
-            
-            end_time = time.time()
-            logger.critical(f"[DEBUG-TOKEN] Client-Erstellung abgeschlossen in {end_time - start_time:.2f} Sekunden")
-            
-            return client
-        except Exception as e:
-            logger.critical(f"[DEBUG-TOKEN] Kritischer Fehler beim Erstellen des OpenAI-Clients: {str(e)}")
-            logger.critical(f"[DEBUG-TOKEN] Stacktrace: {traceback.format_exc()}")
-            raise
-    except ImportError as e:
-        logger.critical(f"[DEBUG-TOKEN] Import-Fehler: {str(e)}")
-        logger.critical(f"[DEBUG-TOKEN] Stacktrace: {traceback.format_exc()}")
-        raise ValueError(f"Erforderliche Bibliotheken fehlen: {str(e)}")
-    except Exception as e:
-        logger.critical(f"[DEBUG-TOKEN] Unerwarteter Fehler: {str(e)}")
-        logger.critical(f"[DEBUG-TOKEN] Stacktrace: {traceback.format_exc()}")
-        raise 
+    return jsonify({
+        'success': True,
+        'data': {
+            'usage_records': usage_list,
+            'summary': {
+                'total_input_tokens': total_input_tokens,
+                'total_output_tokens': total_output_tokens,
+                'total_cost': total_cost,
+                'current_credits': current_credits
+            }
+        }
+    }) 

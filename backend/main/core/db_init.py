@@ -1,91 +1,89 @@
 """
-Datenbank-Initialisierungsskript für HackTheStudy
-
-Dieses Skript führt die notwendigen Datenbankmigrationen aus und richtet 
-die Datenbankstruktur ein, wenn die Anwendung zum ersten Mal gestartet wird.
+Modul zur Initialisierung und Verwaltung der Datenbankverbindung.
 """
 
 import os
-import sys
-import time
 import logging
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from flask import Flask, current_app
+from sqlalchemy.exc import SQLAlchemyError
 
-# Logging einrichten
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('db_init')
+from .models import db, User, Upload, UserActivity
 
-def wait_for_db(db_url, max_retries=30, retry_interval=2):
-    """Wartet auf die Verfügbarkeit der Datenbank."""
-    retries = 0
-    
-    # Entferne Schemainformationen und Query-Parameter
-    engine = create_engine(db_url)
-    
-    while retries < max_retries:
-        try:
-            connection = engine.connect()
-            connection.close()
-            logger.info("Datenbankverbindung erfolgreich hergestellt")
-            return True
-        except OperationalError as e:
-            retries += 1
-            logger.warning(f"Warte auf Datenbank, Versuch {retries}/{max_retries}... ({e})")
-            time.sleep(retry_interval)
-    
-    logger.error(f"Konnte keine Verbindung zur Datenbank herstellen nach {max_retries} Versuchen")
-    return False
+# Logger konfigurieren
+logger = logging.getLogger(__name__)
 
-def create_schema_if_not_exists(db_url):
-    """Erstellt das Schema, falls es nicht existiert."""
+def init_db():
+    """
+    Initialisiert die Datenbank und erstellt alle Tabellen, falls sie noch nicht existieren.
+    """
     try:
-        engine = create_engine(db_url)
+        # Erstelle alle definierten Tabellen
+        db.create_all()
+        logger.info("Datenbanktabellen erfolgreich erstellt/überprüft")
         
-        # Überprüfe, ob die Tabellen bereits existieren
-        inspector = inspect(engine)
-        existing_tables = inspector.get_table_names()
+        # Optional: Initialdaten einfügen, falls nötig
+        _insert_initial_data()
         
-        if existing_tables:
-            logger.info(f"Datenbank-Schema existiert bereits mit {len(existing_tables)} Tabellen")
-            return True
-        
-        # Hier könnten wir explizite Migrationsbefehle ausführen
-        # Für jetzt importieren wir einfach die models, die SQLAlchemy-Modelle definieren
-        logger.info("Initialisiere Datenbankschema...")
-        
-        # Wir importieren hier, da wir die korrekte Umgebung benötigen
-        sys.path.insert(0, '/app')
-        from core.models import Base
-        
-        # Schema erstellen
-        Base.metadata.create_all(engine)
-        logger.info("Datenbankschema erfolgreich erstellt")
         return True
+    except SQLAlchemyError as e:
+        logger.error(f"Fehler bei der Datenbankinitialisierung: {str(e)}")
+        return False
+
+def _insert_initial_data():
+    """
+    Fügt initiale Daten in die Datenbank ein (z.B. Admin-Benutzer).
+    Diese Funktion sollte nur einmal und nur in bestimmten Umgebungen ausgeführt werden.
+    """
+    try:
+        # Überprüfe, ob wir in einer Entwicklungsumgebung sind
+        if os.environ.get('ENVIRONMENT') == 'development':
+            # Nur ausführen, wenn keine Benutzer vorhanden sind
+            if User.query.count() == 0:
+                logger.info("Keine Benutzer in der Datenbank gefunden, erstelle Test-Admin-Benutzer")
+                
+                # Erstelle einen Admin-Benutzer für Testzwecke
+                admin_user = User(
+                    id="00000000-0000-0000-0000-000000000000",
+                    email="admin@example.com",
+                    name="Admin User",
+                    settings={"role": "admin", "is_test_account": True}
+                )
+                
+                db.session.add(admin_user)
+                db.session.commit()
+                
+                logger.info("Test-Admin-Benutzer erfolgreich erstellt")
+    except SQLAlchemyError as e:
+        logger.error(f"Fehler beim Einfügen von Initialdaten: {str(e)}")
+        # Wir wollen den Startvorgang nicht abbrechen, daher kein Raise
+        db.session.rollback()
+
+def get_connection_info():
+    """
+    Gibt Informationen über die aktuelle Datenbankverbindung zurück.
+    Nützlich für Diagnostik und Monitoring.
+    """
+    try:
+        engine = db.engine
         
+        # Basisdaten über die Verbindung sammeln
+        connection_info = {
+            "dialect": engine.dialect.name,
+            "driver": engine.dialect.driver,
+            "pool_size": engine.pool.size(),
+            "pool_timeout": engine.pool.timeout(),
+            "database": current_app.config.get('SQLALCHEMY_DATABASE_URI', '').split('/')[-1].split('?')[0]
+        }
+        
+        # Statistiken über Tabellen abrufen
+        stats = {}
+        stats['users'] = User.query.count()
+        stats['uploads'] = Upload.query.count()
+        stats['activities'] = UserActivity.query.count()
+        
+        connection_info['table_stats'] = stats
+        
+        return connection_info
     except Exception as e:
-        logger.error(f"Fehler beim Erstellen des Datenbankschemas: {e}")
-        return False
-
-def main():
-    """Hauptfunktion zur Initialisierung der Datenbank."""
-    db_url = os.environ.get('DATABASE_URL')
-    
-    if not db_url:
-        logger.error("DATABASE_URL ist nicht gesetzt")
-        return False
-    
-    # Warte auf Datenbankverfügbarkeit
-    if not wait_for_db(db_url):
-        return False
-    
-    # Schema erstellen, falls es nicht existiert
-    if not create_schema_if_not_exists(db_url):
-        return False
-    
-    logger.info("Datenbankinitialisierung erfolgreich abgeschlossen")
-    return True
-
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1) 
+        logger.error(f"Fehler beim Abrufen der Verbindungsinformationen: {str(e)}")
+        return {"error": str(e)} 

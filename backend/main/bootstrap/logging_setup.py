@@ -1,20 +1,25 @@
-import os
-import logging
-import sys
+"""
+Logging-Konfiguration für die Anwendung.
+"""
 
-# Set ein Flag für Logging-Initialisierung
+import os
+import sys
+import logging
+from typing import Optional
+
+# Flag für Logging-Initialisierung
 LOGGING_INITIALIZED = False
 
-# Verbessere die setup_logging-Funktion, um Doppel-Logs zu vermeiden
-def setup_logging():
+def setup_logging() -> logging.Logger:
     """
     Konfiguriert das Logging-System für die Anwendung.
-    Verhindert Doppel-Logs und stellt sicher, dass alle Logger einheitlich konfiguriert sind.
     
     Returns:
-        logging.Logger: Der konfigurierte Logger für die Anwendung
+        Logger-Instanz
     """
     global LOGGING_INITIALIZED
+    
+    # Vermeidet mehrfache Initialisierung
     if LOGGING_INITIALIZED:
         return logging.getLogger('HackTheStudy.app')
     
@@ -108,43 +113,36 @@ def setup_logging():
     
     # API-Request-Logger erstellen
     api_logger = logging.getLogger('api_requests')
-    # Setze auf INFO, unabhängig von der Umgebungsvariable
-    api_logger.setLevel(logging.INFO)
+    api_logger.setLevel(log_level if log_api_requests else logging.WARNING)
     api_logger.propagate = False
-    
-    # Füge mehrere Handler hinzu, um sicherzustellen, dass Logs überall ankommen
-    api_handlers = []
-    
-    # Standard-Stdout-Handler
-    api_stdout_handler = logging.StreamHandler(sys.stdout)
-    api_stdout_handler.setFormatter(formatter)
-    api_handlers.append(api_stdout_handler)
-    
-    # Versuch, einen Datei-Handler hinzuzufügen, falls wir Schreibrechte haben
-    try:
-        api_file_handler = logging.FileHandler('/tmp/api_requests.log')
-        api_file_handler.setFormatter(formatter)
-        api_handlers.append(api_file_handler)
-    except (IOError, PermissionError):
-        # Kein Fehler werfen, wenn wir keine Schreibrechte haben
-        pass
-    
-    # Alle Handler zum Logger hinzufügen
-    for handler in api_handlers:
-        api_logger.addHandler(handler)
-    
-    # Debug-Info über API-Logging ausgeben
-    logging.getLogger('HackTheStudy.app').info(
-        f"API-REQUEST-LOGGING konfiguriert: Level={api_logger.level}, Handler={len(api_logger.handlers)}"
-    )
-    
-    # Explicit Log-Meldung wenn API-Logging aktiviert wurde
-    if log_api_requests:
-        logging.getLogger('HackTheStudy.app').info("API-Anfragen-Logging wurde aktiviert - alle API-Anfragen werden protokolliert")
+    api_handler = logging.StreamHandler(sys.stdout)
+    api_handler.setFormatter(formatter)
+    api_logger.addHandler(api_handler)
     
     # Flag setzen
     LOGGING_INITIALIZED = True
+    
+    logger.info("Logging-System erfolgreich initialisiert")
     return logger
 
-# Logger für API-Anfragen
-api_request_logger = logging.getLogger('api_requests') 
+def force_flush_handlers():
+    """
+    Erzwingt das Leeren aller Log-Handler-Puffer.
+    Nützlich vor einem geordneten Shutdown.
+    """
+    for name, logger in logging.root.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger):
+            for handler in logger.handlers:
+                if hasattr(handler, 'flush'):
+                    try:
+                        handler.flush()
+                    except:
+                        pass
+    
+    # Auch die Handler des Root-Loggers leeren
+    for handler in logging.root.handlers:
+        if hasattr(handler, 'flush'):
+            try:
+                handler.flush()
+            except:
+                pass 
