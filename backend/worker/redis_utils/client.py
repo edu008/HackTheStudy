@@ -19,7 +19,7 @@ def initialize_redis_connection():
     logger.info("🔄 Redis-Verbindungsinitialisierung wird gestartet")
     
     # Redis-Host aus Umgebungsvariablen holen, mit Fallback
-    redis_host = REDIS_HOST or "hackthestudy-backend-main.hackthestudy-backend.svc.cluster.local"
+    redis_host = REDIS_HOST or "localhost"
     redis_port = 6379
     redis_db = 0
     
@@ -56,7 +56,7 @@ def initialize_redis_connection():
         logger.info(f"⚙️ Versuche Fallback zur Standard-URL: {REDIS_URL}")
         import redis as redis_external
         # Direkter Import der Redis-Klasse aus dem externen redis Paket
-        fallback_host = redis_host
+        fallback_host = "localhost"
         redis_client = redis_external.StrictRedis(host=fallback_host, port=redis_port, db=redis_db, socket_timeout=5)
         redis_client.ping()  # Test
         logger.info(f"✅ Fallback-Verbindung zu {fallback_host} erfolgreich")

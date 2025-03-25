@@ -53,10 +53,13 @@ def get_flask_app():
             flask_app.config['SQLALCHEMY_DATABASE_URI'] = database_url
             flask_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
             
-            # Initialisiere Datenbank
+            # Initialisiere Datenbank - hier auf Fehler vorbereitet sein
             try:
-                from core.models import db
-                db.init_app(flask_app)
+                # Entferne den Import von core.models, da wir keine vollständige DB-Integration benötigen
+                # Das Worker-Modul verwendet eine vereinfachte DB-Integration ohne vollständige Modelle
+                # from core.models import db
+                # db.init_app(flask_app)
+                pass
             except Exception as db_error:
                 logger.error(f"Fehler bei DB-Initialisierung: {str(db_error)}")
             

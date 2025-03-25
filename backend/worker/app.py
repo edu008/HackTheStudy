@@ -4,6 +4,19 @@ Haupteinstiegspunkt des Worker-Microservices
 """
 import os
 import sys
+
+# Gevent-Monkey-Patching MUSS vor allen anderen Imports geschehen!
+try:
+    from gevent import monkey
+    # Vollständiges Patching durchführen
+    monkey.patch_all(thread=True, socket=True, dns=True, time=True, select=True, 
+                    ssl=True, os=True, subprocess=True, sys=False, aggressive=True, 
+                    Event=False, builtins=False, signal=True)
+    # Erfolg wird später geloggt, nachdem Logging initialisiert wurde
+except ImportError:
+    # Ignoriere den Fehler hier - er wird später in der Konsole geloggt
+    pass
+
 import logging
 import time
 
@@ -14,6 +27,19 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger("worker")
+
+# Logge den Status des Monkey-Patching
+try:
+    if monkey and hasattr(monkey, 'is_module_patched'):
+        patched_modules = []
+        for module in ['socket', 'ssl', 'os', 'time', 'select', 'thread']:
+            if monkey.is_module_patched(module):
+                patched_modules.append(module)
+        logger.info(f"Gevent-Monkey-Patching erfolgreich angewendet für: {', '.join(patched_modules)}")
+    else:
+        logger.warning("Gevent-Monkey-Patching wurde nicht durchgeführt!")
+except Exception as e:
+    logger.warning(f"Konnte Gevent-Monkey-Patching-Status nicht überprüfen: {e}")
 
 # Stelle sicher, dass der Python-Pfad korrekt gesetzt ist
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

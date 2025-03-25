@@ -30,9 +30,11 @@ def apply_patches():
         logger.debug("Patches wurden bereits angewendet, überspringe...")
         return
     
-    # Liste der auszuführenden Patches
+    # Führe Gevent-Patching als erstes aus, bevor andere Module importiert werden
+    patch_gevent()
+    
+    # Liste der weiteren auszuführenden Patches
     patches = [
-        patch_gevent,
         patch_ssl,
         patch_requests_timeout,
         patch_socket_timeout
@@ -52,21 +54,28 @@ def apply_patches():
 def patch_gevent():
     """
     Patcht Gevent für bessere Async-I/O-Performance.
+    
+    Dieses Patching muss VOR allem anderen stattfinden, um SSL-RecursionError
+    und andere Probleme zu vermeiden.
     """
-    # Prüfe, ob wir Gevent patchen sollen
-    if os.environ.get('USE_GEVENT', 'false').lower() in ('true', '1', 'yes'):
+    # Standardmäßig aktiv, außer explizit deaktiviert
+    if os.environ.get('USE_GEVENT', 'true').lower() not in ('false', '0', 'no'):
         try:
+            # Import gevent.monkey vor allem anderen
             from gevent import monkey
-            # Patch nur bestimmte Module für bessere Kompatibilität
-            monkey.patch_socket()
-            monkey.patch_ssl()
-            monkey.patch_time()
-            monkey.patch_select()
-            logger.info("Gevent-Patch erfolgreich angewendet")
+            
+            # Vollständiges Patching aller Module durchführen
+            monkey.patch_all(thread=True, socket=True, dns=True, time=True, select=True, 
+                           ssl=True, os=True, subprocess=True, sys=False, aggressive=True, 
+                           Event=False, builtins=False, signal=True)
+            
+            logger.info("Gevent-Monkey-Patching vollständig angewendet")
         except ImportError:
             logger.warning("Gevent nicht verfügbar, Patch übersprungen")
+        except Exception as e:
+            logger.error(f"Fehler beim Gevent-Monkey-Patching: {str(e)}")
     else:
-        logger.debug("Gevent-Patch deaktiviert durch Umgebungsvariable")
+        logger.warning("Gevent-Patch deaktiviert durch Umgebungsvariable (nicht empfohlen)")
 
 def patch_ssl():
     """
