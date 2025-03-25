@@ -333,6 +333,9 @@ def init_app(run_mode=None):
     # Standard-App-Modus für API und Web-Funktionen
     app = Flask(__name__)
     
+    # Protokolliere wichtige Startinformationen
+    log_startup_info()
+    
     # Konfiguriere Secret Key für Sessions
     secret_key = os.environ.get('FLASK_SECRET_KEY')
     if not secret_key:
@@ -566,6 +569,24 @@ def init_app(run_mode=None):
             "timestamp": datetime.now().isoformat()
         })
     
+    # Füge einen sehr einfachen Health-Check hinzu, der immer erfolgreich ist
+    @app.route('/api/v1/simple-health', methods=['GET'])
+    def simple_health_check():
+        """
+        Ein extrem einfacher Health-Check-Endpunkt für DigitalOcean App Platform,
+        der keine Abhängigkeiten wie Datenbank oder Redis prüft.
+        """
+        logger.info(f"EINFACHER HEALTH CHECK AUFGERUFEN: IP={request.remote_addr}")
+        force_flush_handlers()
+        
+        return jsonify({
+            "status": "healthy",
+            "message": "Einfacher Health Check - keine DB-Prüfung",
+            "timestamp": datetime.now().isoformat(),
+            "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+            "version": "1.0.0"
+        }), 200
+    
     # Globaler Error Handler für 405 Method Not Allowed
     @app.errorhandler(405)
     def method_not_allowed(e):
@@ -675,7 +696,7 @@ def init_app(run_mode=None):
             
             # Log-Nachricht zusammenstellen
             log_msg = (
-                f"API-REQUEST: {request.method} {request.path} - Status: {response.status_code} - " 
+                f"!!! API-REQUEST EMPFANGEN !!! {request.method} {request.path} - Status: {response.status_code} - " 
                 f"IP: {client_ip} - User: {user_info}"
             )
             
@@ -684,6 +705,7 @@ def init_app(run_mode=None):
             api_request_logger.info(log_msg)        # API Request Logger
             app.logger.info(log_msg)                # Flask App Logger
             print(f"[STDOUT] {log_msg}")            # Direkte STDOUT-Ausgabe
+            sys.stdout.flush()                      # Explizites Flushen von stdout
             
             # Erzwinge sofortiges Flushen der Logs
             force_flush_handlers()
