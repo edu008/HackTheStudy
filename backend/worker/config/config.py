@@ -40,4 +40,19 @@ RUN_MODE = os.getenv('RUN_MODE', 'production')
 
 # OpenAI-Konfiguration
 OPENAI_LOG = os.environ.get('OPENAI_LOG', 'debug')
-os.environ['OPENAI_LOG'] = OPENAI_LOG 
+os.environ['OPENAI_LOG'] = OPENAI_LOG
+
+# Wenn wir in einer DigitalOcean-Umgebung sind, logge wichtige Umgebungsvariablen
+if DO_APP_PLATFORM or DIGITAL_OCEAN_DEPLOYMENT:
+    import sys
+    logger = logging.getLogger("worker")
+    logger.info("=== DigitalOcean App Platform erkannt ===")
+    logger.info(f"REDIS_HOST: {REDIS_HOST}")
+    logger.info(f"API_HOST: {API_HOST}")
+    logger.info(f"REDIS_FALLBACK_URLS: {REDIS_FALLBACK_URLS}")
+    
+    # Wenn API_HOST nicht gesetzt ist, versuche ${api.PRIVATE_URL} zu lesen
+    # (wird von DigitalOcean ersetzt)
+    if not API_HOST or API_HOST.startswith("${api."):
+        logger.warning("API_HOST nicht oder als Template gesetzt, verwende Fallback-Strategie")
+        # Versuche, die API-Adresse anders zu ermitteln 

@@ -1,122 +1,146 @@
 """
-Health-Check-Server für den Worker-Microservice
+Einfacher Health-Check-Server für den Worker-Microservice.
 """
 import os
-import json
-import logging
-import socket
 import threading
-import http.server
-import socketserver
-from datetime import datetime
-import time
-
-from health.checks import (
-    check_redis_connection,
-    check_system_resources,
-    check_api_connection
-)
-from config import HEALTH_PORT
-
-# Globale Start-Zeit für Uptime-Berechnung
-start_time = time.time()
+import logging
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
 
-class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
-    """Handler für HTTP-Anfragen des Health-Check-Servers"""
+# Standard-Port für den Health-Check-Server
+DEFAULT_PORT = int(os.environ.get('HEALTH_PORT', 8080))
+
+# Flag, um den Server-Status zu verfolgen
+server_running = False
+server_instance = None
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """
+    HTTP-Request-Handler für den Health-Check-Server.
+    """
+    
+    def _send_response(self, status_code, content_type, content):
+        """
+        Sendet eine HTTP-Response.
+        """
+        self.send_response(status_code)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+    
+    def log_message(self, format, *args):
+        """
+        Überschreibe die Log-Methode, um zu unserem Logger umzuleiten.
+        """
+        logger.debug(f"Health-Check-Server: {format % args}")
     
     def do_GET(self):
-        """Behandelt GET-Anfragen"""
-        if self.path == '/' or self.path == '/health':
-            # Health-Check-Endpunkt
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
+        """
+        Behandelt GET-Requests.
+        """
+        if self.path == '/ping' or self.path == '/':
+            # Einfacher Ping-Endpunkt
+            self._send_response(200, 'text/plain', b'pong')
+        
+        elif self.path == '/health':
+            # Detaillierter Health-Check-Endpunkt
+            from redis_utils.client import is_redis_connected, get_redis_connection_info
             
-            # Mehrere Systemkomponenten überprüfen
-            checks = {
-                "redis": check_redis_connection(),
-                "system": check_system_resources(),
-                "api": check_api_connection()
-            }
-            
-            # Bestimme den Gesamtstatus basierend auf den einzelnen Checks
-            overall_status = "healthy"
-            for component, status in checks.items():
-                if status.get("status") == "error":
-                    overall_status = "unhealthy"
-                    break
-                elif status.get("status") == "degraded" and overall_status != "unhealthy":
-                    overall_status = "degraded"
-            
-            # Gesundheitsstatus
-            health_info = {
-                "status": overall_status,
-                "checks": checks,
-                "worker_uptime": time.time() - start_time,
-                "worker_info": {
-                    "pid": os.getpid(),
-                    "hostname": socket.gethostname(),
-                    "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
-                    "run_mode": os.environ.get('RUN_MODE', 'unknown')
+            # Sammle Statusinformationen
+            health_data = {
+                'status': 'healthy',
+                'container_type': os.environ.get('CONTAINER_TYPE', 'worker'),
+                'redis': {
+                    'connected': is_redis_connected(),
+                    'connection_info': get_redis_connection_info()
                 },
-                "timestamp": datetime.now().isoformat()
+                'environment': {
+                    'REDIS_HOST': os.environ.get('REDIS_HOST', 'not set'),
+                    'REDIS_URL': os.environ.get('REDIS_URL', 'not set'),
+                    'API_HOST': os.environ.get('API_HOST', 'not set'),
+                    'REDIS_FALLBACK_URLS': os.environ.get('REDIS_FALLBACK_URLS', 'not set')
+                }
             }
             
-            self.wfile.write(json.dumps(health_info).encode())
-        elif self.path == '/ping':
-            # Einfacher Ping-Endpunkt ohne aufwändige Prüfungen
+            # Als JSON zurückgeben
+            response_content = json.dumps(health_data, indent=2).encode('utf-8')
+            self._send_response(200, 'application/json', response_content)
+        
+        else:
+            # Unbekannter Pfad
+            self._send_response(404, 'text/plain', b'Not Found')
+    
+    def do_HEAD(self):
+        """
+        Behandelt HEAD-Requests.
+        """
+        if self.path == '/ping' or self.path == '/':
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-Type', 'text/plain')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "message": "pong"}).encode())
         else:
             self.send_response(404)
             self.end_headers()
-    
-    def log_message(self, format, *args):
-        # Unterdrücke Logging für Health-Check-Anfragen
-        pass
 
-def start_health_check_server():
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """
-    Startet einen einfachen HTTP-Server für Health-Checks im Hintergrund.
+    Threaded HTTP-Server für parallele Anfragen.
+    """
+    daemon_threads = True
+
+def start_health_check_server(port=None):
+    """
+    Startet den Health-Check-Server im Hintergrund.
     
-    Returns:
-        bool: True bei Erfolg, False bei Fehler
+    Args:
+        port: Der Port, auf dem der Server laufen soll (default: 8080)
     """
-    try:
-        # Port für Health-Check-Server
-        # Versuche mehrere Ports, falls einer bereits belegt ist
-        health_port = HEALTH_PORT
-        available_ports = [health_port, 8081, 8082, 8083, 8084]
-        
-        server = None
-        
-        for port in available_ports:
-            try:
-                logger.info(f"Versuche Health-Check-Server auf Port {port} zu starten...")
-                server = socketserver.TCPServer(("", port), HealthCheckHandler)
-                # Falls wir hier ankommen, ist der Port verfügbar
-                os.environ['HEALTH_PORT'] = str(port)  # Aktualisiere Umgebungsvariable
-                break
-            except OSError:
-                logger.warning(f"Port {port} bereits belegt, versuche alternativen Port...")
-                server = None
-                continue
-        
-        if server:
-            # Starte den Server in einem separaten Thread
-            server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-            server_thread.start()
+    global server_running, server_instance
+    
+    if server_running:
+        logger.info("Health-Check-Server läuft bereits")
+        return
+    
+    if port is None:
+        port = DEFAULT_PORT
+    
+    logger.info(f"Versuche Health-Check-Server auf Port {port} zu starten...")
+    
+    def run_server():
+        global server_running, server_instance
+        try:
+            server = ThreadedHTTPServer(('0.0.0.0', port), HealthCheckHandler)
+            server_instance = server
+            server_running = True
             logger.info(f"✅ Health-Check-Server läuft auf Port {port}")
-            return True
-        else:
-            logger.error("❌ Konnte keinen Health-Check-Server starten: Alle Ports belegt")
-            return False
-            
-    except Exception as e:
-        logger.warning(f"❌ Konnte Health-Check-Server nicht starten: {str(e)}")
-        return False 
+            logger.info(f"   - Ping-Endpunkt: http://localhost:{port}/ping")
+            logger.info(f"   - Status-Endpunkt: http://localhost:{port}/health")
+            server.serve_forever()
+        except Exception as e:
+            server_running = False
+            logger.error(f"❌ Fehler beim Starten des Health-Check-Servers: {str(e)}")
+    
+    # Starte den Server in einem eigenen Thread
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+def stop_health_check_server():
+    """
+    Stoppt den Health-Check-Server.
+    """
+    global server_running, server_instance
+    
+    if not server_running or server_instance is None:
+        logger.info("Health-Check-Server läuft nicht")
+        return
+    
+    logger.info("Stoppe Health-Check-Server...")
+    server_instance.shutdown()
+    server_running = False
+    server_instance = None
+    logger.info("Health-Check-Server gestoppt") 

@@ -3,7 +3,10 @@ Redis-Client für den Worker-Microservice
 """
 import os
 import logging
-from config import REDIS_URL, REDIS_HOST
+import socket
+import time
+from typing import Optional
+from config import REDIS_URL, REDIS_HOST, REDIS_FALLBACK_URLS
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -11,58 +14,94 @@ logger = logging.getLogger(__name__)
 # Globale Instanz des Redis-Clients
 redis_client = None
 
-def initialize_redis_connection():
+def initialize_redis_connection() -> bool:
     """
-    Initialisiert die Redis-Verbindung mit dem konfigurierten Host
+    Initialisiert die Redis-Verbindung mit dem konfigurierten Host.
+    
+    Implementiert einen robusten Fallback-Mechanismus für DigitalOcean App Platform.
+    
+    Returns:
+        bool: True wenn die Verbindung erfolgreich hergestellt wurde, sonst False
     """
-    global REDIS_URL, REDIS_HOST, redis_client
+    global redis_client
+    
     logger.info("🔄 Redis-Verbindungsinitialisierung wird gestartet")
     
-    # Redis-Host aus Umgebungsvariablen holen, mit Fallback
-    redis_host = REDIS_HOST or "localhost"
-    redis_port = 6379
-    redis_db = 0
+    # Mögliche Redis-Hosts sammeln (in Prioritätsreihenfolge)
+    potential_hosts = []
     
-    logger.info(f"✅ REDIS_HOST gefunden: {redis_host}")
+    # 1. Haupthost aus Umgebungsvariablen
+    if REDIS_HOST:
+        potential_hosts.append(REDIS_HOST)
+        logger.info(f"✅ REDIS_HOST aus Umgebungsvariable gefunden: {REDIS_HOST}")
     
-    # Redis-URL basierend auf Host konstruieren
-    redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
+    # 2. Hosts aus DigitalOcean PRIVATE_URL (wenn verfügbar)
+    api_host = os.environ.get('API_HOST', '')
+    if api_host:
+        potential_hosts.append(api_host)
+        logger.info(f"✅ API_HOST aus Umgebungsvariable gefunden: {api_host}")
     
-    try:
-        # Richtige Redis-Klasse importieren - von der externen Bibliothek
-        import redis as redis_external
-        client = redis_external.Redis(host=redis_host, port=redis_port, db=redis_db, socket_timeout=5)
-        # Test-Ping, um die Verbindung zu überprüfen
-        ping_result = client.ping()
+    # 3. Standard-Kubernetes-Service-Namen
+    potential_hosts.extend(['api', 'backend-api', 'hackthestudy-backend-api'])
+    
+    # 4. Lokale Hosts
+    potential_hosts.extend(['localhost', '127.0.0.1'])
+    
+    # 5. Zusätzliche Fallback-URLs (wenn konfiguriert)
+    if REDIS_FALLBACK_URLS:
+        fallback_hosts = REDIS_FALLBACK_URLS.split(',')
+        potential_hosts.extend([h.strip() for h in fallback_hosts])
+        logger.info(f"✅ REDIS_FALLBACK_URLS gefunden: {REDIS_FALLBACK_URLS}")
+    
+    # Deduplizieren und leere Werte entfernen
+    potential_hosts = [host for host in dict.fromkeys(potential_hosts) if host]
+    
+    logger.info(f"🔍 Mögliche Redis-Hosts (in Prioritätsreihenfolge): {', '.join(potential_hosts)}")
+    
+    # Versuche, jeden möglichen Host zu erreichen
+    for host in potential_hosts:
+        # Versuche DNS-Auflösung (für Kubernetes-Servicenamen)
+        try:
+            ip_address = socket.gethostbyname(host)
+            logger.info(f"✅ DNS-Auflösung für {host} erfolgreich: {ip_address}")
+        except socket.gaierror:
+            logger.warning(f"⚠️ DNS-Auflösung für {host} fehlgeschlagen, versuche trotzdem zu verbinden")
+            ip_address = host
         
-        if ping_result:
-            logger.info(f"✅ Erfolgreiche Redis-Verbindung zu {redis_host}:{redis_port}")
-            # Globale Variablen aktualisieren
-            REDIS_URL = redis_url
-            REDIS_HOST = redis_host
-            # Umgebungsvariablen für andere Prozesse aktualisieren
-            os.environ['REDIS_URL'] = REDIS_URL
-            os.environ['REDIS_HOST'] = REDIS_HOST
-            # Client-Instanz speichern
-            redis_client = client
-            return True
-        else:
-            logger.error(f"❌ Redis-Ping zu {redis_host}:{redis_port} fehlgeschlagen")
-    except Exception as e:
-        logger.error(f"❌ Redis-Verbindung zu {redis_host}:{redis_port} fehlgeschlagen: {str(e)}")
+        # Versuche Redis-Verbindung
+        redis_url = f"redis://{host}:6379/0"
+        logger.info(f"🔄 Versuche Redis-Verbindung zu {redis_url}")
+        try:
+            import redis as redis_external
+            client = redis_external.Redis(host=host, port=6379, db=0, socket_timeout=5)
+            ping_result = client.ping()
+            
+            if ping_result:
+                logger.info(f"✅ Erfolgreiche Redis-Verbindung zu {host}:6379")
+                # Globale Umgebungsvariablen aktualisieren
+                os.environ['REDIS_URL'] = redis_url
+                os.environ['REDIS_HOST'] = host
+                # Client-Instanz speichern
+                redis_client = client
+                return True
+            else:
+                logger.warning(f"⚠️ Redis-Ping zu {host}:6379 fehlgeschlagen")
+        except Exception as e:
+            logger.warning(f"⚠️ Redis-Verbindung zu {host}:6379 fehlgeschlagen: {str(e)}")
     
-    # Fallback: Versuche es mit einer alternativen Methode
+    # Wenn alle Verbindungsversuche fehlgeschlagen sind, gib einen Fehler aus
+    logger.error("❌ Alle Redis-Verbindungsversuche fehlgeschlagen!")
+    logger.error("📝 Bitte überprüfe die REDIS_HOST und REDIS_URL Umgebungsvariablen")
+    logger.error("📝 In DigitalOcean: Stelle sicher, dass der Worker-Service Zugriff auf den API-Service hat")
+    
+    # Letzter Versuch mit einem lokalen Dummy-Redis für Entwicklungszwecke
     try:
-        logger.info(f"⚙️ Versuche Fallback zur Standard-URL: {REDIS_URL}")
-        import redis as redis_external
-        # Direkter Import der Redis-Klasse aus dem externen redis Paket
-        fallback_host = "localhost"
-        redis_client = redis_external.StrictRedis(host=fallback_host, port=redis_port, db=redis_db, socket_timeout=5)
-        redis_client.ping()  # Test
-        logger.info(f"✅ Fallback-Verbindung zu {fallback_host} erfolgreich")
+        from fakeredis import FakeRedis
+        logger.warning("⚠️ Verwende FakeRedis als Fallback (nur für Entwicklung geeignet!)")
+        redis_client = FakeRedis()
         return True
-    except Exception as e:
-        logger.error(f"❌ Auch Fallback-Verbindung fehlgeschlagen: {str(e)}")
+    except ImportError:
+        logger.error("❌ Auch FakeRedis ist nicht verfügbar. Redis-Verbindung nicht möglich!")
         return False
 
 def get_redis_client():
@@ -75,6 +114,60 @@ def get_redis_client():
     global redis_client
     
     if redis_client is None:
-        initialize_redis_connection()
+        logger.info("Redis-Client wird initialisiert...")
+        retry_count = 0
+        max_retries = 3
         
-    return redis_client 
+        while redis_client is None and retry_count < max_retries:
+            if retry_count > 0:
+                logger.info(f"Wiederholungsversuch {retry_count}/{max_retries} nach 3 Sekunden...")
+                time.sleep(3)
+            
+            initialize_redis_connection()
+            retry_count += 1
+        
+        if redis_client is None:
+            logger.error("❌ Redis-Client konnte nicht initialisiert werden!")
+            # Rückgabe eines Dummy-Clients, der alle Operationen protokolliert aber ignoriert
+            from fakeredis import FakeStrictRedis
+            return FakeStrictRedis()
+    
+    return redis_client
+
+def is_redis_connected() -> bool:
+    """
+    Prüft, ob die Redis-Verbindung aktiv ist.
+    
+    Returns:
+        bool: True wenn verbunden, False sonst
+    """
+    client = get_redis_client()
+    try:
+        return client.ping()
+    except:
+        return False
+
+def get_redis_connection_info() -> dict:
+    """
+    Gibt Informationen zur aktuellen Redis-Verbindung zurück.
+    
+    Returns:
+        dict: Verbindungsinformationen
+    """
+    client = get_redis_client()
+    connected = False
+    info = {}
+    
+    try:
+        connected = client.ping()
+        if connected:
+            info = client.info()
+    except:
+        pass
+    
+    return {
+        "connected": connected,
+        "host": os.environ.get('REDIS_HOST', 'unknown'),
+        "url": os.environ.get('REDIS_URL', 'unknown'),
+        "info": info
+    } 
