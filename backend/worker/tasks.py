@@ -1691,23 +1691,95 @@ def check_and_set_fd_limits():
 
 # Überwachungsfunktion für Datei-Deskriptoren
 def monitor_file_descriptors():
-    """Überwacht die Anzahl der offenen Datei-Deskriptoren und loggt Warnungen."""
+    """Überwacht die Anzahl der offenen Datei-Deskriptoren und gibt Informationen aus"""
     try:
+        # Importiere psutil explizit im try-Block
+        import psutil
+        
         process = psutil.Process(os.getpid())
-        open_files = process.open_files()
-        open_connections = process.connections()
+        fds_count = len(process.open_files())
+        memory_info = process.memory_info()
         
-        num_files = len(open_files)
-        num_connections = len(open_connections)
-        
-        logger.info(f"Ressourcenüberwachung: {num_files} offene Dateien, {num_connections} offene Verbindungen")
-        
-        # Wenn viele Datei-Deskriptoren offen sind, führe Garbage Collection durch
-        if num_files + num_connections > 100:
-            logger.warning("Hohe Anzahl offener Deskriptoren erkannt. Führe Garbage Collection durch.")
-            gc.collect()
-            
-        return num_files + num_connections
-    except Exception as e:
-        logger.warning(f"Fehler bei der Überwachung der Datei-Deskriptoren: {e}")
+        logger.info(f"Aktuelle Anzahl offener Datei-Deskriptoren: {fds_count}")
+        logger.info(f"Aktuelle RAM-Nutzung: RSS={memory_info.rss / (1024*1024):.2f} MB, VMS={memory_info.vms / (1024*1024):.2f} MB")
+        return fds_count
+    except ImportError:
+        logger.warning("Fehler bei der Überwachung der Datei-Deskriptoren: psutil-Modul nicht verfügbar")
         return -1
+    except Exception as e:
+        logger.warning(f"Fehler bei der Überwachung der Datei-Deskriptoren: {str(e)}")
+        return -1
+
+# Einfacher HTTP-Server für Health-Checks
+import threading
+import time
+import http.server
+import socketserver
+from functools import partial
+
+def start_health_check_server():
+    """Startet einen einfachen HTTP-Server für Health-Checks"""
+    try:
+        class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/' or self.path == '/health':
+                    # Health-Check-Endpunkt
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    
+                    # Überprüfe Redis-Verbindung
+                    redis_ok = False
+                    try:
+                        import redis
+                        r = redis.from_url(REDIS_URL, socket_timeout=2)
+                        r.ping()
+                        redis_ok = True
+                    except:
+                        pass
+                    
+                    # Gesundheitsstatus
+                    health_info = {
+                        "status": "healthy" if redis_ok else "degraded",
+                        "redis_connected": redis_ok,
+                        "worker_uptime": time.time() - start_time,
+                        "timestamp": time.time()
+                    }
+                    
+                    self.wfile.write(json.dumps(health_info).encode())
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+            
+            def log_message(self, format, *args):
+                # Unterdrücke Logging für Health-Check-Anfragen
+                pass
+        
+        # Port für Health-Check-Server
+        health_port = int(os.environ.get('HEALTH_PORT', 8080))
+        handler = partial(HealthCheckHandler)
+        
+        logger.info(f"Starte Health-Check-Server auf Port {health_port}")
+        httpd = socketserver.TCPServer(("", health_port), handler)
+        
+        # Starte den Server in einem separaten Thread
+        server_thread = threading.Thread(target=httpd.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+        logger.info(f"Health-Check-Server läuft auf Port {health_port}")
+        
+    except Exception as e:
+        logger.warning(f"Konnte Health-Check-Server nicht starten: {str(e)}")
+
+# Aufzeichnung der Startzeit für Uptime-Berechnung
+start_time = time.time()
+
+# Starte HTTP-Server für Health-Checks in einem separaten Thread
+start_health_check_server()
+
+# Lade Celery-Konfiguration aus externer Datei, falls vorhanden
+try:
+    celery.config_from_object('core.celeryconfig')
+    print("Celery configuration loaded from celeryconfig.py")
+except ImportError:
+    print("celeryconfig.py not found, using default configuration")

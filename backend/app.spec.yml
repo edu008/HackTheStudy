@@ -179,6 +179,15 @@ services:
       delay: 15s
       max_attempts: 10
       window: 120s
+    # Optimierter Health-Check für Workers mit einfachem HTTP-Endpunkt
+    health_check:
+      http_path: /health
+      port: 8080
+      initial_delay_seconds: 180
+      period_seconds: 60
+      timeout_seconds: 10
+      success_threshold: 1
+      failure_threshold: 10
     # Verbindung zum Redis im API-Container über externe URL
     envs:
       - key: CONTAINER_TYPE
@@ -193,9 +202,9 @@ services:
         value: "${api.PRIVATE_URL}"
       # Direkte IP-Fallbacks (falls die DigitalOcean-Variablen nicht ersetzt werden)
       - key: API_HOST
-        value: "localhost" # oder bekannte DigitalOcean-Container-IP 
+        value: "${api.PRIVATE_URL}"
       - key: REDIS_FALLBACK_URLS
-        value: "localhost,10.0.0.3,api,hackthestudy-backend-api"
+        value: "${api.PRIVATE_URL},api,hackthestudy-backend-api,10.0.0.3"
 
 # Domain-Konfiguration
 domains:
