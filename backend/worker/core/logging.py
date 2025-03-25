@@ -4,7 +4,7 @@ Zentrale Logging-Konfiguration für den Worker-Microservice
 import os
 import sys
 import logging
-from backend.worker.config import LOG_LEVEL, LOG_PREFIX, LOG_API_REQUESTS
+from config import LOG_LEVEL, LOG_PREFIX, LOG_API_REQUESTS
 
 def setup_logging():
     """
@@ -34,7 +34,7 @@ def setup_logging():
     task_logger.info("📋 Celery-Task-Logger aktiviert")
 
     # Hauptlogger für den Worker
-    logger = logging.getLogger('backend.worker')
+    logger = logging.getLogger('worker')
     logger.setLevel(LOG_LEVEL)
     logger.info("📝 Worker-Hauptlogger aktiviert")
 
@@ -68,7 +68,7 @@ def log_environment_variables():
     """
     Protokolliert wichtige Umgebungsvariablen beim Start des Workers.
     """
-    logger = logging.getLogger('backend.worker')
+    logger = logging.getLogger('worker')
     
     important_vars = [
         "REDIS_URL", "REDIS_HOST", "REDIS_FALLBACK_URLS",

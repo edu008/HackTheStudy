@@ -5,7 +5,7 @@ import os
 import redis
 import logging
 import socket
-from backend.worker.config import REDIS_URL, REDIS_HOST, REDIS_FALLBACK_URLS, USE_API_URL, API_HOST
+from config import REDIS_URL, REDIS_HOST, REDIS_FALLBACK_URLS, USE_API_URL, API_HOST
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)

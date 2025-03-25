@@ -6,7 +6,7 @@ import logging
 import traceback
 from datetime import datetime
 import time
-from backend.worker.config import REDIS_TTL_DEFAULT, REDIS_TTL_SHORT
+from config import REDIS_TTL_DEFAULT, REDIS_TTL_SHORT
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def safe_redis_set(key, value, ex=REDIS_TTL_DEFAULT, redis_client=None):
     
     # Hole Redis-Client, falls nicht übergeben    
     if redis_client is None:
-        from backend.worker.redis.client import get_redis_client
+        from redis.client import get_redis_client
         redis_client = get_redis_client()
         
     try:
@@ -76,7 +76,7 @@ def safe_redis_get(key, default=None, redis_client=None):
     
     # Hole Redis-Client, falls nicht übergeben    
     if redis_client is None:
-        from backend.worker.redis.client import get_redis_client
+        from redis.client import get_redis_client
         redis_client = get_redis_client()
         
     try:
@@ -110,7 +110,7 @@ def log_debug_info(session_id, message, **extra_data):
         return
         
     # Hole Redis-Client   
-    from backend.worker.redis.client import get_redis_client
+    from redis.client import get_redis_client
     redis_client = get_redis_client()
     
     # Schreibe zuerst ins Log
