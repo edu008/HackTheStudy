@@ -4,6 +4,7 @@ import json
 import psutil
 import http.server
 import socketserver
+import os
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -26,5 +27,22 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
-    server = socketserver.TCPServer(('', 8080), HealthHandler)
+    port = int(os.environ.get('HEALTH_PORT', 8080))
+    
+    # Wenn Port belegt ist, versuche alternative Ports
+    try:
+        server = socketserver.TCPServer(('', port), HealthHandler)
+        print(f"[INFO] Health check server gestartet auf Port {port}")
+    except OSError:
+        # Wenn Port belegt ist, versuche Port 8081
+        alternative_port = 8081
+        try:
+            server = socketserver.TCPServer(('', alternative_port), HealthHandler)
+            print(f"[INFO] Health check server gestartet auf alternativem Port {alternative_port}")
+        except OSError:
+            # Als letzter Versuch nutze einen zufälligen Port
+            server = socketserver.TCPServer(('', 0), HealthHandler)
+            actual_port = server.server_address[1]
+            print(f"[INFO] Health check server gestartet auf zufälligem Port {actual_port}")
+    
     server.serve_forever() 

@@ -200,11 +200,15 @@ services:
         value: "redis://${api.PRIVATE_URL}:6379/0"
       - key: REDIS_HOST
         value: "${api.PRIVATE_URL}"
+      - key: CELERY_BROKER_URL
+        value: "redis://${api.PRIVATE_URL}:6379/0"
+      - key: CELERY_RESULT_BACKEND
+        value: "redis://${api.PRIVATE_URL}:6379/0"
       # Direkte IP-Fallbacks (falls die DigitalOcean-Variablen nicht ersetzt werden)
       - key: API_HOST
         value: "${api.PRIVATE_URL}"
       - key: REDIS_FALLBACK_URLS
-        value: "${api.PRIVATE_URL},api,hackthestudy-backend-api,10.0.0.3"
+        value: "${api.PRIVATE_URL},api,hackthestudy-backend-api,127.0.0.1,localhost"
 
 # Domain-Konfiguration
 domains:
