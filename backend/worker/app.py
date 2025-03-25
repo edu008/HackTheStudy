@@ -33,7 +33,7 @@ try:
     from health.server import start_health_check_server
     
     # Redis-Verbindung initialisieren
-    from redis.client import initialize_redis_connection
+    from redis_utils.client import initialize_redis_connection
     
     # Tasks registrieren
     from tasks import register_tasks

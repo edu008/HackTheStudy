@@ -1,8 +1,8 @@
 """
 Redis-Komponente für Worker-Microservice
 """
-from redis.client import get_redis_client, initialize_redis_connection
-from redis.utils import (
+from redis_utils.client import get_redis_client, initialize_redis_connection
+from redis_utils.utils import (
     safe_redis_get, 
     safe_redis_set, 
     log_debug_info,
@@ -11,7 +11,7 @@ from redis.utils import (
 )
 
 # Exportiere globale Redis-Client-Instanz
-from redis.client import redis_client
+from redis_utils.client import redis_client
 
 __all__ = [
     'get_redis_client', 

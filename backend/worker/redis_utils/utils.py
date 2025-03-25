@@ -30,7 +30,7 @@ def safe_redis_set(key, value, ex=REDIS_TTL_DEFAULT, redis_client=None):
     
     # Hole Redis-Client, falls nicht übergeben    
     if redis_client is None:
-        from redis.client import get_redis_client
+        from redis_utils.client import get_redis_client
         redis_client = get_redis_client()
         
     try:
@@ -76,7 +76,7 @@ def safe_redis_get(key, default=None, redis_client=None):
     
     # Hole Redis-Client, falls nicht übergeben    
     if redis_client is None:
-        from redis.client import get_redis_client
+        from redis_utils.client import get_redis_client
         redis_client = get_redis_client()
         
     try:
@@ -110,7 +110,7 @@ def log_debug_info(session_id, message, **extra_data):
         return
         
     # Hole Redis-Client   
-    from redis.client import get_redis_client
+    from redis_utils.client import get_redis_client
     redis_client = get_redis_client()
     
     # Schreibe zuerst ins Log

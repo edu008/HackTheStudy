@@ -30,7 +30,7 @@ def initialize_redis_connection():
     
     try:
         # Richtige Redis-Klasse importieren - von der externen Bibliothek
-        import redis.client as redis_external
+        import redis as redis_external
         client = redis_external.Redis(host=redis_host, port=redis_port, db=redis_db, socket_timeout=5)
         # Test-Ping, um die Verbindung zu überprüfen
         ping_result = client.ping()
@@ -54,7 +54,7 @@ def initialize_redis_connection():
     # Fallback: Versuche es mit einer alternativen Methode
     try:
         logger.info(f"⚙️ Versuche Fallback zur Standard-URL: {REDIS_URL}")
-        import redis.client as redis_external
+        import redis as redis_external
         # Direkter Import der Redis-Klasse aus dem externen redis Paket
         fallback_host = redis_host
         redis_client = redis_external.StrictRedis(host=fallback_host, port=redis_port, db=redis_db, socket_timeout=5)

@@ -23,7 +23,7 @@ logger = logging.getLogger("health_monitor")
 
 # Importiere Redis-Client
 try:
-    from redis.client import get_redis_client, safe_redis_set
+    from redis_utils.client import get_redis_client, safe_redis_set
     redis_client = get_redis_client()
     logger.info("Redis-Client erfolgreich initialisiert")
 except ImportError:
