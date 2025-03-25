@@ -46,6 +46,14 @@ def create_app(environment: Optional[str] = None) -> Flask:
     # Konfiguration laden
     load_env(app)
     
+    # Flask-Konfiguration für SQLAlchemy setzen
+    if 'DATABASE_URL' in os.environ and os.environ['DATABASE_URL']:
+        app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
+        app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+        logger.info("Datenbank-Konfiguration aus DATABASE_URL übernommen")
+    else:
+        logger.error("DATABASE_URL nicht gefunden in Umgebungsvariablen")
+    
     # Ressourcen konfigurieren
     _configure_resources(app)
     
