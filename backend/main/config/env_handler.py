@@ -2,6 +2,7 @@
 Umgebungsvariablen-Handler für HackTheStudy
 
 Lädt und verwaltet Umgebungsvariablen aus verschiedenen Quellen.
+Optimiert für DigitalOcean App Platform.
 """
 
 import os
@@ -17,6 +18,7 @@ def setup_cors_origins():
     """
     Ermittelt CORS-Origins aus verschiedenen Umgebungsvariablen und fasst sie zusammen.
     Gibt eine normalisierte Liste von Ursprüngen zurück.
+    Optimiert für DigitalOcean App Platform.
     """
     cors_origins = []
     sources = []
@@ -31,66 +33,32 @@ def setup_cors_origins():
             sources.append('CORS_ORIGINS')
             logger.info(f"CORS-Origins aus CORS_ORIGINS-Umgebungsvariable: {', '.join(origins)}")
     
-    # 2. Prüfe FRONTEND_URL als Fallback
-    if 'FRONTEND_URL' in os.environ and os.environ['FRONTEND_URL']:
-        frontend_url = os.environ['FRONTEND_URL'].strip()
-        if frontend_url and frontend_url not in cors_origins:
-            cors_origins.append(frontend_url)
-            sources.append('FRONTEND_URL')
-            logger.info(f"CORS-Origin aus FRONTEND_URL-Umgebungsvariable: {frontend_url}")
-            
-            # Füge auch die non-www Version oder www-Version hinzu
-            if 'www.' in frontend_url:
-                non_www = frontend_url.replace('www.', '')
-                if non_www not in cors_origins:
-                    cors_origins.append(non_www)
-                    logger.info(f"Non-www CORS-Origin hinzugefügt: {non_www}")
-            elif frontend_url.startswith('https://') or frontend_url.startswith('http://'):
-                protocol = frontend_url.split('://')[0]
-                domain = frontend_url.split('://')[1]
-                www_version = f"{protocol}://www.{domain}"
-                if www_version not in cors_origins:
-                    cors_origins.append(www_version)
-                    logger.info(f"WWW CORS-Origin hinzugefügt: {www_version}")
-                
-            # Füge die HTTP/HTTPS-Varianten hinzu
-            if frontend_url.startswith('https://'):
-                http_version = frontend_url.replace('https://', 'http://')
-                if http_version not in cors_origins:
-                    cors_origins.append(http_version)
-                    logger.info(f"HTTP CORS-Origin hinzugefügt: {http_version}")
-            elif frontend_url.startswith('http://'):
-                https_version = frontend_url.replace('http://', 'https://')
-                if https_version not in cors_origins:
-                    cors_origins.append(https_version)
-                    logger.info(f"HTTPS CORS-Origin hinzugefügt: {https_version}")
-    
-    # 3. Füge die API_URL hinzu, falls vorhanden (für lokale Entwicklung nützlich)
+    # 2. Prüfe API_URL, falls vorhanden (für lokale Entwicklung nützlich)
     if 'API_URL' in os.environ and os.environ['API_URL']:
         api_url = os.environ['API_URL'].strip()
         if api_url and api_url not in cors_origins:
             cors_origins.append(api_url)
             sources.append('API_URL')
             logger.info(f"CORS-Origin aus API_URL-Umgebungsvariable: {api_url}")
-            
-    # 4. Füge localhost hinzu für Entwicklungszwecke
-    dev_origins = [
-        'http://localhost:8080',
-        'http://localhost:3000',
-        'http://localhost:5000',
-        'http://127.0.0.1:8080',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:5000'
-    ]
     
-    for dev_origin in dev_origins:
-        if dev_origin not in cors_origins:
-            cors_origins.append(dev_origin)
-            logger.info(f"Entwicklungs-CORS-Origin hinzugefügt: {dev_origin}")
+    # 3. Füge localhost hinzu für Entwicklungszwecke
+    is_development = os.environ.get('ENVIRONMENT', '').lower() == 'development' or \
+                     os.environ.get('FLASK_DEBUG', '').lower() == 'true'
     
-    # 5. Wenn keine Origins gefunden wurden, füge den Wildcard-Ursprung hinzu (nur für Entwicklung)
+    if is_development:
+        dev_origins = [
+            'http://localhost:5000',
+            'http://127.0.0.1:5000'
+        ]
+        
+        for dev_origin in dev_origins:
+            if dev_origin not in cors_origins:
+                cors_origins.append(dev_origin)
+                logger.info(f"Entwicklungs-CORS-Origin hinzugefügt: {dev_origin}")
+    
+    # 4. Wenn keine Origins gefunden wurden, füge den Wildcard-Ursprung hinzu (nur für Entwicklung)
     if not cors_origins:
-        if os.environ.get('FLASK_ENV') == 'development' or os.environ.get('FLASK_DEBUG') == 'true':
+        if is_development:
             cors_origins.append('*')
             sources.append('Entwicklungsmodus-Wildcard')
             logger.info("CORS-Wildcard (*) wird im Entwicklungsmodus verwendet")
@@ -100,98 +68,110 @@ def setup_cors_origins():
             sources.append('Produktions-Standard')
             logger.info("Standard-CORS-Origin für Produktion verwendet: https://www.hackthestudy.ch")
     
-    # Setze die zusammengeführten Origins zurück in die Umgebungsvariable, 
-    # damit andere Teile der Anwendung darauf zugreifen können
-    # Verwende Leerzeichen nach den Kommas für bessere Kompatibilität
+    # Setze die zusammengeführten Origins zurück in die Umgebungsvariable
     os.environ['CORS_ORIGINS'] = ', '.join(cors_origins)
     
     logger.info(f"CORS-Konfiguration abgeschlossen. Quellen: {', '.join(sources)}")
-    logger.info(f"Finale CORS-Origins: {os.environ['CORS_ORIGINS']}")
     
     return cors_origins
 
 def load_env(env_file=None):
     """
     Lädt Umgebungsvariablen aus verschiedenen Quellen und setzt Standardwerte wenn nötig.
-    Berücksichtigt DigitalOcean App Platform-spezifische Umgebungsvariablen.
+    Optimiert für DigitalOcean App Platform - vermeidet unnötige .env-Dateisuche in Produktion.
     """
-    # Standardpfad zur .env-Datei
-    if env_file is None:
-        env_file = "/app/.env"
+    # Prüfe, ob wir in einer DigitalOcean oder Produktionsumgebung sind
+    is_digital_ocean = bool(os.environ.get('DIGITAL_OCEAN_APP_NAME'))
+    is_production = os.environ.get('ENVIRONMENT', 'production').lower() == 'production'
     
-    # .env-Datei laden, wenn sie existiert
-    if Path(env_file).exists():
-        logger.info(f"Lade .env-Datei von: {env_file}")
-        load_dotenv(env_file)
+    # .env-Datei nur in Entwicklungsumgebung laden
+    if not is_production and not is_digital_ocean:
+        # Standardpfad zur .env-Datei
+        if env_file is None:
+            # Prüfe zunächst im aktuellen Verzeichnis
+            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            env_file = os.path.join(current_dir, '.env')
+        
+        # .env-Datei laden, wenn sie existiert
+        if Path(env_file).exists():
+            logger.info(f"✅ Lade .env-Datei von: {env_file}")
+            load_dotenv(env_file)
+        else:
+            logger.info(f"⚠️ Keine .env-Datei gefunden unter: {env_file} - verwende Umgebungsvariablen")
     else:
-        logger.info(f"Keine .env-Datei gefunden unter: {env_file}")
+        logger.info("🚀 Produktionsumgebung erkannt - verwende DigitalOcean Umgebungsvariablen")
     
-    # Standardwerte für kritische Variablen
+    # Standardwerte für kritische Variablen (nur wenn nicht gesetzt)
     env_defaults = {
         "FLASK_APP": "app.py",
         "FLASK_RUN_HOST": "0.0.0.0",
-        "FLASK_RUN_PORT": "5000",
-        "PORT": "5000",  # DigitalOcean App Platform setzt PORT
+        "PORT": "8080" if is_digital_ocean else "5000",
         "LOG_LEVEL": "INFO",
-        "USE_COLORED_LOGS": "false",
         "REDIS_URL": "redis://localhost:6379/0",
-        # URL-Konfigurationen mit endgültigen Domains als Fallback
-        "API_URL": "https://api.hackthestudy.ch",
-        "FRONTEND_URL": "https://www.hackthestudy.ch",
-        # DigitalOcean-spezifische Werte
-        "APP_VERSION": "1.0.0"
+        "API_URL": "https://api.hackthestudy.ch" if is_production else "http://localhost:8080",
     }
     
     # Defaultwerte nur setzen, wenn nicht schon als Umgebungsvariable vorhanden
     for key, default_value in env_defaults.items():
         if key not in os.environ:
             os.environ[key] = default_value
-            logger.info(f"Setze Standardwert für {key}: {default_value}")
-    
-    # DigitalOcean App Platform PORT-Handling
-    if 'PORT' in os.environ and os.environ.get('PORT') != os.environ.get('FLASK_RUN_PORT'):
-        logger.info(f"PORT ({os.environ['PORT']}) und FLASK_RUN_PORT ({os.environ.get('FLASK_RUN_PORT')}) sind unterschiedlich. "
-                 f"Setze FLASK_RUN_PORT auf PORT-Wert.")
-        os.environ['FLASK_RUN_PORT'] = os.environ['PORT']
+            logger.info(f"⚙️ Standardwert für {key}: {default_value}")
     
     # CORS-Origins konfigurieren (zentralisiert)
     setup_cors_origins()
     
     # Wenn DigitalOcean-Proxy verwendet wird, setze Proxy-Variablen
-    if os.environ.get('DIGITAL_OCEAN_APP_NAME'):
-        os.environ['PROXY_FIX_X_FOR'] = "1"
-        os.environ['PROXY_FIX_X_PROTO'] = "1"
-        os.environ['PROXY_FIX_X_HOST'] = "1"
-        os.environ['PROXY_FIX_X_PORT'] = "1"
-        os.environ['PROXY_FIX_X_PREFIX'] = "1"
-        logger.info("ProxyFix-Unterstützung für DigitalOcean aktiviert")
-    
-    # Prüfe auf fehlende kritische Variablen
-    critical_envs = ["DATABASE_URL", "JWT_SECRET"]
-    missing_envs = [env for env in critical_envs if env not in os.environ]
-    
-    if missing_envs:
-        logger.warning(f"Folgende kritische Umgebungsvariablen fehlen: {', '.join(missing_envs)}")
-        logger.warning("Die Anwendung könnte möglicherweise nicht korrekt funktionieren!")
+    if is_digital_ocean:
+        proxy_settings = {
+            'PROXY_FIX_X_FOR': "1",
+            'PROXY_FIX_X_PROTO': "1",
+            'PROXY_FIX_X_HOST': "1",
+            'PROXY_FIX_X_PORT': "1",
+            'PROXY_FIX_X_PREFIX': "1"
+        }
+        
+        for key, value in proxy_settings.items():
+            if key not in os.environ:
+                os.environ[key] = value
+        
+        logger.info("🔄 ProxyFix-Unterstützung für DigitalOcean aktiviert")
     
     return os.environ
 
 def log_env_vars(censor_sensitive=True):
     """
     Protokolliert alle relevanten Umgebungsvariablen, zensiert sensible Daten.
+    Optimiert für strukturierte Ausgabe.
     """
-    logger.info("Aktuelle Umgebungsvariablen (sensible Daten zensiert):")
-    for key, value in sorted(os.environ.items()):
-        # Zeige keine Systemvariablen
-        if key.startswith(("PATH", "PS", "TERM", "HOME", "USER", "_", "LS_")):
-            continue
-            
-        # Zensiere sensible Werte
-        if censor_sensitive and any(secret in key.lower() for secret in ["key", "secret", "password", "token", "url"]):
-            censored_value = value[:3] + "***" if len(value) > 3 else "***"
-            logger.info(f"{key}={censored_value}")
-        else:
-            logger.info(f"{key}={value}")
+    # Wichtige Variablenkategorien
+    categories = {
+        "Plattform": ["ENVIRONMENT", "DIGITAL_OCEAN_APP_NAME", "CONTAINER_TYPE", "RUN_MODE"],
+        "Netzwerk": ["PORT", "FLASK_RUN_HOST", "FLASK_RUN_PORT", "API_URL", "FRONTEND_URL"],
+        "Datenbank": ["DATABASE_URL", "POSTGRES_HOST", "POSTGRES_PORT"],
+        "Sicherheit": ["FLASK_DEBUG", "JWT_SECRET"],
+        "Redis": ["REDIS_URL", "REDIS_HOST"],
+        "API": ["OPENAI_API_KEY", "STRIPE_API_KEY", "OPENAI_MODEL"]
+    }
+    
+    logger.info("🔍 Umgebungsvariablen nach Kategorien:")
+    
+    for category, keys in categories.items():
+        found_keys = []
+        for key in keys:
+            if key in os.environ:
+                value = os.environ[key]
+                # Zensiere sensible Werte
+                if censor_sensitive and any(secret in key.lower() for secret in ["key", "secret", "password", "token", "database_url"]):
+                    if len(value) > 8:
+                        censored_value = value[:4] + "****" + value[-4:]
+                    else:
+                        censored_value = "********"
+                    found_keys.append(f"{key}={censored_value}")
+                else:
+                    found_keys.append(f"{key}={value}")
+        
+        if found_keys:
+            logger.info(f"📋 {category}: {', '.join(found_keys)}")
 
 if __name__ == "__main__":
     # Wenn dieses Skript direkt ausgeführt wird

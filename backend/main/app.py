@@ -7,6 +7,11 @@ import os
 import logging
 import sys
 import socket
+
+# Setze die ENVIRONMENT-Variable direkt am Anfang, bevor etwas anderes geladen wird
+os.environ['ENVIRONMENT'] = os.environ.get('ENVIRONMENT', 'production')
+is_development = os.environ['ENVIRONMENT'].lower() == 'development'
+
 from dotenv import load_dotenv
 from flask import Flask, redirect, request, jsonify
 from flask_cors import CORS
@@ -244,6 +249,25 @@ def log_environment_variables():
     
     log_step("Umgebungsvariablen", "START", f"Prüfe Konfiguration für {container_type.upper()}")
     
+    # Prüfen, ob wir in einer Entwicklungsumgebung sind
+    is_dev = os.environ.get('FLASK_ENV') == 'development' or os.environ.get('FLASK_DEBUG') == '1'
+    
+    # .env-Datei nur in Entwicklungsumgebungen laden
+    if is_dev:
+        try:
+            from dotenv import load_dotenv
+            dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+            if os.path.exists(dotenv_path):
+                log_step("Umgebungsvariablen", "INFO", f".env-Datei gefunden: {dotenv_path}")
+                load_dotenv(dotenv_path)
+            else:
+                log_step("Umgebungsvariablen", "INFO", "Keine .env-Datei gefunden in Entwicklungsumgebung")
+        except ImportError:
+            log_step("Umgebungsvariablen", "WARNING", "python-dotenv nicht installiert")
+    else:
+        # In Produktion verwenden wir direkt die DigitalOcean-Umgebungsvariablen
+        log_step("Umgebungsvariablen", "INFO", "Produktionsumgebung erkannt, verwende System-Umgebungsvariablen")
+    
     # Wichtige Variablen, die angezeigt werden sollen
     important_vars = [
         'RUN_MODE', 'CONTAINER_TYPE', 'PORT', 'FLASK_DEBUG', 
@@ -274,7 +298,7 @@ def log_environment_variables():
     
     # Datenbank-Konfiguration überprüfen
     if 'DATABASE_URL' in critical_vars:
-        log_step("Datenbank-Konfiguration", "SUCCESS", "DATABASE_URL konfiguriert")
+        log_step("Datenbank-Konfiguration", "INFO", "DATABASE_URL gefunden (maskiert)")
     else:
         log_step("Datenbank-Konfiguration", "WARNING", "DATABASE_URL nicht gefunden", "warning")
     
@@ -291,11 +315,6 @@ def log_environment_variables():
             redis_hosts.append(host)
     
     log_step("Redis-Verbindungen", "INFO", f"Mögliche Hosts: {', '.join(redis_hosts)}")
-    
-    # Forciere Ausgabe sofort
-    sys.stdout.flush()
-    force_flush_handlers()
-    
     return redis_hosts
 
 # Konfiguriere Logging
@@ -305,7 +324,7 @@ logger = setup_logging()
 os.environ['OPENAI_LOG'] = 'debug'
 
 # Lade die Umgebungsvariablen - Nur in Entwicklung, nicht in Produktion
-if os.environ.get('ENVIRONMENT', 'production').lower() == 'development':
+if is_development:
     # Nur in Entwicklung .env-Datei laden
     load_dotenv(override=True, verbose=True)
     print("Entwicklungsumgebung: .env-Datei wird geladen")
@@ -331,7 +350,7 @@ def log_step(step_name, status="START", details=None, level="INFO"):
     """
     log_func = getattr(logger, level.lower(), logger.info)
     
-    # Status-Emojis für bessere Sichtbarkeit
+    # Status-Emojis für bessere visuelle Unterscheidung
     status_emojis = {
         "START": "🔄",
         "SUCCESS": "✅",
@@ -365,6 +384,7 @@ def test_redis_connections(redis_hosts, port=6379, db=0):
     
     log_step("Redis-Verbindungstests", "START", f"Teste {len(redis_hosts)} mögliche Hosts")
     
+    failed_hosts = []
     # Jeden Host testen
     for host in redis_hosts:
         redis_url = f"redis://{host}:{port}/{db}"
@@ -372,15 +392,21 @@ def test_redis_connections(redis_hosts, port=6379, db=0):
             # Verbindung mit Timeout testen
             client = Redis.from_url(redis_url, socket_timeout=5)
             client.ping()
+            # Nur erfolgreiche Verbindungen werden ausführlich geloggt
             log_step("Redis-Verbindung", "SUCCESS", f"Host: {host}, Port: {port}")
             # Erfolgreiche Verbindung zurückgeben
             return host, redis_url
         except Exception as e:
-            # Weniger ausführliches Logging für fehlgeschlagene Verbindungen
+            # Fehler sammeln, aber nicht einzeln loggen
+            failed_hosts.append(host)
             continue
     
+    # Fehlgeschlagene Verbindungen werden zusammengefasst
+    if failed_hosts:
+        log_step("Redis-Verbindungstests", "ERROR", 
+                f"Verbindungen fehlgeschlagen für: {', '.join(failed_hosts)}", "ERROR")
+    
     # Wenn keine Verbindung erfolgreich war, None zurückgeben
-    log_step("Redis-Verbindungstests", "ERROR", "Keine erfolgreiche Verbindung gefunden", "ERROR")
     return None, None
 
 def log_startup_info():
@@ -659,24 +685,28 @@ def init_app(run_mode=None):
             "timestamp": datetime.now().isoformat()
         }), 200
     
-    # Health-Check-Endpunkt für Digital Ocean
+    # Erweiterter Health-Check-Endpunkt für Status-Überwachung
     @app.route('/api/v1/health', methods=['GET'])
     def health_check():
-        """
-        Health-Check-Endpunkt für Digital Ocean App Platform.
-        Prüft, ob die Anwendung läuft und Datenbankverbindung besteht.
-        """
-        # Prüfe, ob wir die DB-Prüfung überspringen sollen
-        skipdb = request.args.get('skipdb', 'false').lower() == 'true'
+        """Erweiterter Health-Check für Container-Status und Systemgesundheit"""
+        # Parameter auslesen
+        skip_db = request.args.get('skip_db', 'false').lower() == 'true'
+        simple = request.args.get('simple', 'false').lower() == 'true'
         
-        # Log für alle API-Anfragen
-        log_step("Health-Check", "START", f"IP={request.remote_addr}, skipdb={skipdb}")
+        log_step("Health-Check", "START", f"Health-Check angefordert von {request.remote_addr}")
         
-        # Forciere Log-Ausgabe sofort
-        force_flush_handlers()
+        # Einfacher Health-Check ohne detaillierte Prüfungen
+        if simple:
+            return jsonify({
+                "status": "healthy",
+                "timestamp": datetime.now().isoformat(),
+                "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+                "environment": os.environ.get('FLASK_ENV', 'production'),
+                "uptime": int(time.time() - START_TIME)
+            }), 200
         
-        if skipdb:
-            log_step("Health-Check", "SUCCESS", "DB-Prüfung übersprungen auf Anfrage")
+        # Health-Check ohne Datenbank-Prüfung
+        if skip_db:
             return jsonify({
                 "status": "healthy",
                 "message": "DB-Prüfung übersprungen auf Anfrage",
@@ -685,10 +715,13 @@ def init_app(run_mode=None):
                 "version": "1.0.0"
             }), 200
         
+        health_status = {"status": "healthy", "checks": {}}
+        
         try:
             # Prüfe Datenbankverbindung mit einer einfachen Abfrage
             log_step("Health-Check", "INFO", "Prüfe Datenbankverbindung...")
             db.session.execute("SELECT 1")
+            health_status["checks"]["database"] = {"status": "healthy"}
             log_step("Health-Check", "SUCCESS", "Datenbankverbindung OK")
             
             # Prüfe Redis-Verbindung, wenn wir im API-Container sind
@@ -696,14 +729,80 @@ def init_app(run_mode=None):
                 log_step("Health-Check", "INFO", "Prüfe Redis-Verbindung...")
                 from core.redis_client import redis_client
                 redis_client.ping()
+                health_status["checks"]["redis"] = {"status": "healthy"}
                 log_step("Health-Check", "SUCCESS", "Redis-Verbindung OK")
             
-            return jsonify({
-                "status": "healthy",
-                "timestamp": datetime.now().isoformat(),
-                "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
-                "version": "1.0.0"
-            }), 200
+            # Prüfe Celery-Worker, falls vorhanden
+            try:
+                log_step("Health-Check", "INFO", "Prüfe Celery-Worker...")
+                workers = get_active_workers()
+                health_status["checks"]["celery"] = {
+                    "status": "healthy" if workers else "degraded",
+                    "worker_count": len(workers)
+                }
+                if workers:
+                    log_step("Health-Check", "SUCCESS", f"{len(workers)} aktive Worker gefunden")
+                else:
+                    log_step("Health-Check", "WARNING", "Keine aktiven Worker gefunden")
+            except Exception as worker_error:
+                health_status["checks"]["celery"] = {
+                    "status": "unhealthy", 
+                    "error": str(worker_error)
+                }
+                log_step("Health-Check", "ERROR", f"Celery-Fehler: {str(worker_error)}")
+            
+            # Überprüfe Speicher und CPU
+            try:
+                import psutil
+                memory = psutil.virtual_memory()
+                cpu_percent = psutil.cpu_percent(interval=0.5)
+                
+                memory_status = "healthy"
+                if memory.percent > 90:
+                    memory_status = "degraded"
+                if memory.percent > 95:
+                    memory_status = "critical"
+                    
+                cpu_status = "healthy"
+                if cpu_percent > 80:
+                    cpu_status = "degraded"
+                if cpu_percent > 90:
+                    cpu_status = "critical"
+                
+                health_status["checks"]["system"] = {
+                    "memory": {
+                        "status": memory_status,
+                        "used_percent": memory.percent,
+                        "available_mb": memory.available / (1024 * 1024)
+                    },
+                    "cpu": {
+                        "status": cpu_status,
+                        "percent": cpu_percent
+                    }
+                }
+            except Exception as sys_error:
+                health_status["checks"]["system"] = {
+                    "status": "unknown",
+                    "error": str(sys_error)
+                }
+            
+            # Gesamtstatus auf Basis aller Einzelprüfungen
+            if any(check.get("status") == "unhealthy" for check in health_status["checks"].values()):
+                health_status["status"] = "unhealthy"
+            elif any(check.get("status") == "critical" for check in health_status["checks"].values()):
+                health_status["status"] = "critical"
+            elif any(check.get("status") == "degraded" for check in health_status["checks"].values()):
+                health_status["status"] = "degraded"
+            
+            # Hinzufügen von Zeitstempel und Container-Info
+            health_status["timestamp"] = datetime.now().isoformat()
+            health_status["container_type"] = os.environ.get('CONTAINER_TYPE', 'unknown')
+            health_status["version"] = "1.0.0"
+            health_status["uptime"] = int(time.time() - START_TIME)
+            
+            log_step("Health-Check", "SUCCESS", f"Health-Check abgeschlossen: {health_status['status']}")
+            return jsonify(health_status), 200
+            
         except Exception as e:
             log_step("Health-Check", "ERROR", f"Fehlerhafte Komponente: {str(e)}")
             return jsonify({
@@ -722,10 +821,105 @@ def init_app(run_mode=None):
         force_flush_handlers()
         
         return jsonify({
-            "ping": "pong",
-            "timestamp": datetime.now().isoformat(),
-            "ip": request.remote_addr
+            "status": "ok",
+            "message": "pong",
+            "timestamp": datetime.now().isoformat()
         }), 200
+    
+    # Neuer Diagnose-Endpunkt für Systeminfos
+    @app.route('/api/v1/debug/diagnose', methods=['GET'])
+    def diagnose():
+        """Bereitstellung detaillierter Systemdiagnose für Fehleranalyse"""
+        import psutil
+        import platform
+        import socket
+        
+        # Grundlegende Authentifizierung (einfach für Debug-Zwecke)
+        auth_token = request.args.get('token')
+        expected_token = os.environ.get('DEBUG_TOKEN')
+        
+        if expected_token and auth_token != expected_token:
+            return jsonify({"error": "Nicht autorisiert"}), 401
+            
+        log_step("Diagnose", "START", "Sammle Systemdiagnose")
+        
+        # Systeminfos
+        system_info = {
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "hostname": socket.gethostname(),
+            "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+            "run_mode": os.environ.get('RUN_MODE', 'unknown'),
+            "process_id": os.getpid(),
+            "uptime": time.time() - psutil.Process(os.getpid()).create_time()
+        }
+        
+        # CPU und RAM
+        try:
+            cpu_info = {
+                "cpu_percent": psutil.cpu_percent(interval=1),
+                "cpu_count": psutil.cpu_count(),
+                "load_avg": os.getloadavg() if hasattr(os, 'getloadavg') else None
+            }
+            
+            memory_info = {
+                "total_memory": psutil.virtual_memory().total,
+                "available_memory": psutil.virtual_memory().available,
+                "memory_percent": psutil.virtual_memory().percent,
+                "used_memory": psutil.virtual_memory().used
+            }
+        except Exception as e:
+            cpu_info = {"error": str(e)}
+            memory_info = {"error": str(e)}
+        
+        # Netzwerkverbindungen
+        try:
+            connections = [
+                {
+                    "local_addr": f"{c.laddr.ip}:{c.laddr.port}",
+                    "remote_addr": f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else "None",
+                    "status": c.status,
+                    "type": c.type
+                }
+                for c in psutil.net_connections()
+                if c.status == 'ESTABLISHED'
+            ][:20]  # Begrenze auf 20 Verbindungen
+        except Exception as e:
+            connections = [{"error": str(e)}]
+        
+        # Celery-Worker-Status
+        try:
+            worker_status = {
+                "active_tasks": get_active_tasks(),
+                "worker_count": len(get_active_workers())
+            }
+        except Exception as e:
+            worker_status = {"error": str(e)}
+        
+        # Redis-Verbindungsstatus
+        try:
+            from core.redis_client import redis_client
+            redis_test = redis_client.ping()
+            redis_info = {
+                "connected": redis_test,
+                "url": REDIS_URL.replace("redis://", "redis://***:***@")
+            }
+        except Exception as e:
+            redis_info = {"error": str(e)}
+        
+        # Diagnose-Informationen zusammenstellen
+        diagnose_info = {
+            "timestamp": datetime.now().isoformat(),
+            "system": system_info,
+            "cpu": cpu_info,
+            "memory": memory_info,
+            "network_connections": connections,
+            "celery": worker_status,
+            "redis": redis_info
+        }
+        
+        log_step("Diagnose", "SUCCESS", "Systemdiagnose abgeschlossen")
+        return jsonify(diagnose_info), 200
     
     # Root-Route für API-Status
     @app.route('/', methods=['GET', 'OPTIONS'])
@@ -917,71 +1111,6 @@ def init_app(run_mode=None):
                 "path": path
             }
         }), 404
-    
-    # Debug-Diagnose-Endpunkt für die Anwendung
-    @app.route('/api/v1/debug/diagnose', methods=['GET'])
-    def diagnose():
-        """
-        Diagnose-Endpunkt, der grundlegende Systeminformationen zurückgibt
-        """
-        import psutil
-        import platform
-        
-        log_step("Diagnose", "START", f"Diagnose angefordert von {request.remote_addr}")
-        
-        # Systemressourcen sammeln
-        system_info = {
-            "cpu_percent": psutil.cpu_percent(interval=0.5),
-            "memory": {
-                "total": psutil.virtual_memory().total / (1024 * 1024),  # MB
-                "available": psutil.virtual_memory().available / (1024 * 1024),  # MB
-                "percent": psutil.virtual_memory().percent
-            },
-            "disk": {
-                "total": psutil.disk_usage('/').total / (1024 * 1024 * 1024),  # GB
-                "free": psutil.disk_usage('/').free / (1024 * 1024 * 1024),  # GB
-                "percent": psutil.disk_usage('/').percent
-            },
-            "platform": platform.platform(),
-            "python_version": platform.python_version(),
-            "open_file_descriptors": len(psutil.Process().open_files()),
-            "connections": len(psutil.Process().connections()),
-            "threads": psutil.Process().num_threads()
-        }
-        
-        # Container spezifische Informationen
-        container_info = {
-            "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
-            "run_mode": os.environ.get('RUN_MODE', 'unknown'),
-            "port": os.environ.get('PORT', 'unknown'),
-            "environment": os.environ.get('ENVIRONMENT', 'production'),
-            "hostname": socket.gethostname(),
-            "pid": os.getpid()
-        }
-        
-        # Redis-Status prüfen
-        redis_status = "unknown"
-        try:
-            from redis import Redis
-            redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-            client = Redis.from_url(redis_url, socket_timeout=2)
-            if client.ping():
-                redis_status = "connected"
-                log_step("Diagnose", "SUCCESS", "Redis-Verbindung erfolgreich")
-            else:
-                redis_status = "ping_failed"
-                log_step("Diagnose", "WARNING", "Redis-Ping fehlgeschlagen")
-        except Exception as e:
-            redis_status = f"error: {str(e)}"
-            log_step("Diagnose", "ERROR", f"Redis-Verbindungsfehler: {str(e)}")
-        
-        return jsonify({
-            "status": "success",
-            "timestamp": datetime.now().isoformat(),
-            "system": system_info,
-            "container": container_info,
-            "redis_status": redis_status
-        }), 200
     
     return app
 

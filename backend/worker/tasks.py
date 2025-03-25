@@ -531,6 +531,37 @@ def process_upload(self, session_id, files_data, user_id=None):
     Returns:
         dict: Ergebnis der Verarbeitung
     """
+    # Setze Timeout-Handler für detaillierte Diagnose
+    task_start_time = time.time()
+    
+    def on_soft_timeout(signum, frame):
+        """Handler für SoftTimeLimit-Signal"""
+        execution_time = time.time() - task_start_time
+        diagnostics = handle_worker_timeout(
+            task_id=self.request.id,
+            task_name="process_upload",
+            execution_time=execution_time,
+            traceback="".join(traceback.format_stack(frame))
+        )
+        # Setze relevante Fehlermeldung
+        error_msg = f"Worker-Timeout nach {execution_time:.1f}s (Limit: 3600s)"
+        # Speichere Diagnose in Redis für Frontend-Zugriff
+        safe_redis_set(f"error_details:{session_id}", {
+            "error_type": "worker_timeout",
+            "message": error_msg,
+            "diagnostics": diagnostics,
+            "timestamp": time.time()
+        }, ex=14400)
+        # Session-Status aktualisieren
+        safe_redis_set(f"processing_status:{session_id}", "error", ex=14400)
+        # Originales Signal weiterleiten, um Task zu beenden
+        raise SoftTimeLimitExceeded(error_msg)
+    
+    # Registriere Timeout-Handler
+    from celery.exceptions import SoftTimeLimitExceeded
+    import signal
+    signal.signal(signal.SIGTERM, on_soft_timeout)
+    
     # Direkte Konsolenausgabe für einfache Diagnose
     logger.info(f"🔄 FUNKTION START: process_upload() - Session: {session_id}")
     logger.info(f"===== WORKER TASK STARTED: {session_id} =====")
@@ -1445,10 +1476,35 @@ def start_worker():
     bind=True, 
     max_retries=3,
     acks_late=True,
-    reject_on_worker_lost=True
+    reject_on_worker_lost=True,
+    soft_time_limit=300,  # 5 Minuten Limit
+    time_limit=360        # 6 Minuten hartes Limit
 )
 def process_api_request(self, endpoint, method, payload=None, user_id=None):
     """Verarbeitet API-Anfragen asynchron und protokolliert sie."""
+    # Setze Timeout-Handler für detaillierte Diagnose
+    task_start_time = time.time()
+    task_id = self.request.id
+    
+    def on_soft_timeout(signum, frame):
+        """Handler für SoftTimeLimit-Signal"""
+        execution_time = time.time() - task_start_time
+        diagnostics = handle_worker_timeout(
+            task_id=task_id,
+            task_name="process_api_request",
+            execution_time=execution_time,
+            traceback="".join(traceback.format_stack(frame))
+        )
+        # Log erzeugen
+        logger.error(f"API-Anfrage Timeout für {method} {endpoint} nach {execution_time:.1f}s")
+        # Originales Signal weiterleiten, um Task zu beenden
+        from celery.exceptions import SoftTimeLimitExceeded
+        raise SoftTimeLimitExceeded(f"API-Anfrage Timeout: {method} {endpoint}")
+    
+    # Registriere Timeout-Handler
+    import signal
+    signal.signal(signal.SIGTERM, on_soft_timeout)
+    
     log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
     
     if log_api_requests:
@@ -1716,6 +1772,87 @@ import time
 import http.server
 import socketserver
 from functools import partial
+
+# Behandlung kritischer Timeout-Fehler mit detaillierter Diagnose
+def handle_worker_timeout(task_id, task_name, execution_time, traceback=None):
+    """
+    Erzeugt detaillierte Diagnose-Informationen bei Worker-Timeout (kritisches Problem)
+    
+    :param task_id: ID der fehlgeschlagenen Task
+    :param task_name: Name der Task-Funktion
+    :param execution_time: Wie lange die Task lief bevor sie abgebrochen wurde
+    :param traceback: Optional der Traceback des Fehlers
+    """
+    import psutil
+    import os
+    import json
+    import socket
+    from datetime import datetime
+    
+    # Aktuelle System-Ressourcen
+    process = psutil.Process(os.getpid())
+    
+    # Systemdiagnose sammeln
+    diagnostics = {
+        "timestamp": datetime.now().isoformat(),
+        "task": {
+            "id": task_id,
+            "name": task_name,
+            "execution_time_seconds": execution_time,
+            "timeout_threshold": os.environ.get('CELERY_TASK_TIME_LIMIT', '3600')
+        },
+        "system": {
+            "hostname": socket.gethostname(),
+            "pid": os.getpid(),
+            "memory_usage_percent": process.memory_percent(),
+            "cpu_percent": process.cpu_percent(interval=1.0),
+            "open_files": len(process.open_files()),
+            "connections": len(process.connections()),
+            "threads": process.num_threads(),
+            "uptime_seconds": time.time() - process.create_time()
+        }
+    }
+    
+    # Speicherverbrauch in Detail
+    try:
+        mem_info = process.memory_full_info()
+        diagnostics["system"]["memory_detail"] = {
+            "rss": mem_info.rss / (1024 * 1024),  # MB
+            "vms": mem_info.vms / (1024 * 1024),  # MB
+            "shared": getattr(mem_info, 'shared', 0) / (1024 * 1024),  # MB
+            "text": getattr(mem_info, 'text', 0) / (1024 * 1024),  # MB
+            "data": getattr(mem_info, 'data', 0) / (1024 * 1024)   # MB
+        }
+    except:
+        pass
+    
+    # Aktuelle Tasks in Redis speichern für Analyse
+    try:
+        from core.redis_client import redis_client
+        # Speichere Diagnose in Redis für 24 Stunden
+        redis_client.set(
+            f"worker:timeout:{task_id}", 
+            json.dumps(diagnostics),
+            ex=86400  # 24 Stunden
+        )
+        
+        # Füge zur Timeout-Liste hinzu
+        redis_client.lpush("worker:timeouts", task_id)
+        redis_client.ltrim("worker:timeouts", 0, 99)  # Behalte nur die letzten 100
+    except Exception as e:
+        diagnostics["redis_error"] = str(e)
+    
+    # Log erzeugen
+    logger.error(f"⚠️ KRITISCH: Worker-Timeout bei Task {task_name} (ID: {task_id}) nach {execution_time}s")
+    logger.error(f"Diagnose: CPU {diagnostics['system']['cpu_percent']}%, "
+                f"RAM {diagnostics['system']['memory_usage_percent']}%, "
+                f"Threads {diagnostics['system']['threads']}")
+    
+    # Traceback loggen, falls vorhanden
+    if traceback:
+        logger.error(f"Traceback für {task_id}:\n{traceback}")
+    
+    return diagnostics
 
 def start_health_check_server():
     """Startet einen einfachen HTTP-Server für Health-Checks"""
