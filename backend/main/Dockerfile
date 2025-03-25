@@ -62,7 +62,7 @@ RUN useradd -m -u 1000 appuser
 WORKDIR /app
 
 # Erstelle alle benötigten Verzeichnisse für die Anwendung und Logs
-RUN mkdir -p /app/config /app/core /app/api /app/redis /app/resource_manager \
+RUN mkdir -p /app/config /app/core /app/api /app/redis_utils /app/resource_manager \
     /app/tasks /app/health /app/utils /app/bootstrap \
     /var/run/redis /var/lib/redis /var/log/redis /var/log/app \
     && touch /var/log/supervisord.log /var/log/app-stdout.log /var/log/app-stderr.log \
@@ -97,7 +97,7 @@ COPY health_monitor.py .
 COPY api/ ./api/
 COPY core/ ./core/
 COPY config/ ./config/
-COPY redis/ ./redis/
+COPY redis_utils/ ./redis_utils/
 COPY resource_manager/ ./resource_manager/
 COPY tasks/ ./tasks/
 COPY utils/ ./utils/

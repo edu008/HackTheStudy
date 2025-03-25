@@ -75,7 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Erstelle alle benötigten Verzeichnisse
-RUN mkdir -p /app/config /app/core /app/health /app/redis /app/resource_manager /app/tasks /app/utils /var/log/app
+RUN mkdir -p /app/config /app/core /app/health /app/redis_utils /app/resource_manager /app/tasks /app/utils /var/log/app
 
 # Kopiere die Wheels und requirements.txt aus dem Builder-Stage
 COPY --from=builder /wheels /wheels
@@ -96,7 +96,7 @@ COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
 # Danach die restlichen Module
 COPY core/ ./core/
 COPY health/ ./health/
-COPY redis/ ./redis/
+COPY redis_utils/ ./redis_utils/
 COPY resource_manager/ ./resource_manager/
 COPY tasks/ ./tasks/
 COPY utils/ ./utils/
