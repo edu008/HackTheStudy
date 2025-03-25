@@ -6,7 +6,7 @@ import logging
 import time
 import socket
 import requests
-from backend.worker.redis import get_redis_client
+from redis import get_redis_client
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)

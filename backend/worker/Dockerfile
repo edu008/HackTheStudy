@@ -29,6 +29,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
     PYTHONHASHSEED=random \
     PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app \
     CONTAINER_TYPE=worker \
     RUN_MODE=worker \
     USE_SUPERVISOR=true \
@@ -74,9 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Erstelle alle benötigten Verzeichnisse
-RUN mkdir -p /app/config /app/core /app/health /app/redis /app/ressource_manager /app/tasks /app/utils /app/api /app/openaicache \
-    /var/log/app \
-    && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
+RUN mkdir -p /app/config /app/core /app/health /app/redis /app/ressource_manager /app/tasks /app/utils /var/log/app
 
 # Kopiere die Wheels und requirements.txt aus dem Builder-Stage
 COPY --from=builder /wheels /wheels
@@ -87,35 +86,29 @@ RUN pip install --no-index --find-links=/wheels requests==2.31.0 psutil==5.9.5 \
     && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
 
-# Kopiere die Quellcodedateien der neuen Microservice-Struktur
-COPY app.py .
-COPY __init__.py .
+# Kopiere die Quellcodedateien der Microservice-Struktur
+# Wichtig: Erst die Config-Verzeichnisse kopieren
+COPY config/ ./config/
+
+# Dann die Supervisor-Konfiguration
+COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Danach die restlichen Module
 COPY core/ ./core/
 COPY health/ ./health/
 COPY redis/ ./redis/
 COPY ressource_manager/ ./ressource_manager/
 COPY tasks/ ./tasks/
 COPY utils/ ./utils/
-COPY config/ ./config/
-COPY api/ ./api/
-COPY openaicache/ ./openaicache/
-COPY README.md .
 
-# Supervisord-Konfiguration
-COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
+# Kopiere die Hauptdateien
+COPY app.py .
+COPY __init__.py .
 
-# Stelle sicher, dass keine veralteten Socket-Dateien existieren
-RUN rm -f /var/run/supervisor.sock /tmp/supervisor-*.sock /tmp/supervisord-*.pid
-
-# Datei-Deskriptoren-Limit erhöhen
-RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
-    echo "* hard nofile 65536" >> /etc/security/limits.conf
-
-# Erstelle einen nicht-root Benutzer
-RUN useradd -m -u 1000 appuser
-
-# Ändere den Besitzer aller Dateien
-RUN chown -R appuser:appuser /app /var/log
+# Erstelle leere Log-Dateien mit korrekten Berechtigungen
+RUN mkdir -p /var/log/app \
+    && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log \
+    && chmod 666 /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
 
 # Verbesserter Healthcheck für Worker
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

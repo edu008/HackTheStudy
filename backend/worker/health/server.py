@@ -11,12 +11,12 @@ import socketserver
 from datetime import datetime
 import time
 
-from backend.worker.health.checks import (
+from health.checks import (
     check_redis_connection,
     check_system_resources,
     check_api_connection
 )
-from backend.worker.config import HEALTH_PORT
+from config import HEALTH_PORT
 
 # Globale Start-Zeit für Uptime-Berechnung
 start_time = time.time()
