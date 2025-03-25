@@ -11,11 +11,11 @@ from datetime import datetime
 
 from core.models import db
 from config.env_handler import load_env, setup_cors_origins
-from ..health.monitor import start_health_monitoring
-from ..health.server import setup_health_server
-from ..resource_manager.fd_monitor import check_and_set_fd_limits, monitor_file_descriptors
-from ..resource_manager.limits import set_memory_limit
-from ..utils.logging_utils import log_step
+from health.monitor import start_health_monitoring
+from health.server import setup_health_server
+from resource_manager.fd_monitor import check_and_set_fd_limits, monitor_file_descriptors
+from resource_manager.limits import set_memory_limit
+from utils.logging_utils import log_step
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ def _init_database(app: Flask):
 
 def _check_redis_connection():
     """Prüft die Redis-Verbindung."""
-    from ..redis.client import get_redis_client
+    from redis.client import get_redis_client
     
     try:
         redis_client = get_redis_client()

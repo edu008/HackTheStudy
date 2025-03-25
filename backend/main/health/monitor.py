@@ -13,8 +13,8 @@ import json
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 
-from ..redis.client import get_redis_client
-from ..resource_manager.limits import get_memory_usage, get_cpu_usage
+from redis.client import get_redis_client
+from resource_manager.limits import get_memory_usage, get_cpu_usage
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def update_health_data():
         # Offene Dateien zählen
         open_files = 0
         try:
-            from ..resource_manager.fd_monitor import get_open_file_descriptors
+            from resource_manager.fd_monitor import get_open_file_descriptors
             open_files = len(get_open_file_descriptors())
         except:
             pass
@@ -99,7 +99,7 @@ def update_health_data():
         
         # Celery-Verbindung prüfen
         try:
-            from ..tasks.task_dispatcher import celery_app
+            from tasks.task_dispatcher import celery_app
             celery_status = "connected" if celery_app.connection().connected else "disconnected"
         except Exception as e:
             celery_status = f"error: {str(e)}"
