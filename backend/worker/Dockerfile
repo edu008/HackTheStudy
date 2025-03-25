@@ -74,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Erstelle alle benötigten Verzeichnisse
-RUN mkdir -p /app/config /app/core /app/services /app/api /app/openaicache \
+RUN mkdir -p /app/config /app/core /app/health /app/redis /app/ressource_manager /app/tasks /app/utils /app/api /app/openaicache \
     /var/log/app \
     && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
 
@@ -87,16 +87,19 @@ RUN pip install --no-index --find-links=/wheels requests==2.31.0 psutil==5.9.5 \
     && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
 
-# Kopiere die Quellcodedateien
-COPY tasks.py .
-COPY health_check.py .
-COPY system_monitor.py .
-COPY api/ ./api/
+# Kopiere die Quellcodedateien der neuen Microservice-Struktur
+COPY app.py .
+COPY __init__.py .
 COPY core/ ./core/
+COPY health/ ./health/
+COPY redis/ ./redis/
+COPY ressource_manager/ ./ressource_manager/
+COPY tasks/ ./tasks/
+COPY utils/ ./utils/
 COPY config/ ./config/
+COPY api/ ./api/
 COPY openaicache/ ./openaicache/
-COPY services/ ./services/
-COPY .env.example ./.env.example
+COPY README.md .
 
 # Supervisord-Konfiguration
 COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf

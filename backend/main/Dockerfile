@@ -83,7 +83,7 @@ RUN pip install --no-index --find-links=/wheels gunicorn requests \
     && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
 
-# Kopiere die Anwendungsdateien
+# Kopiere die Anwendungsdateien - optimiert für bessere Organisation
 COPY app.py .
 COPY health_monitor.py .
 COPY api/ ./api/
@@ -91,7 +91,6 @@ COPY core/ ./core/
 COPY config/ ./config/
 COPY openaicache/ ./openaicache/
 COPY services/ ./services/
-COPY .env.example ./.env.example
 
 # Supervisord-Konfiguration
 COPY config/supervisor-api.conf /etc/supervisor/conf.d/supervisord.conf
