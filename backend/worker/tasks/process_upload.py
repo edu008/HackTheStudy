@@ -12,7 +12,8 @@ import signal
 from datetime import datetime
 from celery.exceptions import SoftTimeLimitExceeded
 from core import get_flask_app, acquire_session_lock, release_session_lock
-from redis import redis_client, safe_redis_set, safe_redis_get, log_debug_info
+from redis_utils.client import redis_client
+from redis_utils.utils import safe_redis_set, safe_redis_get, log_debug_info
 from utils import log_function_call
 from resource_manager import handle_worker_timeout
 

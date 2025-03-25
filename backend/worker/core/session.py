@@ -3,7 +3,10 @@ Session-Management für den Worker-Microservice
 """
 import logging
 import time
-from redis import get_redis_client, safe_redis_set, safe_redis_get
+from typing import Dict, Any, Optional
+
+from redis_utils.client import get_redis_client
+from redis_utils.utils import safe_redis_set, safe_redis_get
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)

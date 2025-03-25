@@ -6,7 +6,10 @@ import logging
 import time
 import socket
 import requests
-from redis import get_redis_client
+import psutil
+from datetime import datetime
+import json
+from redis_utils.client import get_redis_client
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -56,8 +59,6 @@ def check_system_resources():
         dict: Status und Details der Systemressourcen
     """
     try:
-        import psutil
-        
         # CPU und RAM prüfen
         cpu_percent = psutil.cpu_percent(interval=0.5)
         memory = psutil.virtual_memory()

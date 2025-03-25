@@ -54,7 +54,7 @@ def cleanup_signal_handler(signum, frame):
         
         # 3. Redis-Ressourcen freigeben, falls vorhanden
         try:
-            from redis import redis_client
+            from redis_utils.client import redis_client
             if redis_client is not None:
                 logger.info("Schließe Redis-Verbindung")
                 redis_client.close()
@@ -122,7 +122,8 @@ def handle_worker_timeout(task_id, task_name, execution_time, traceback=None):
         import json
         import socket
         from datetime import datetime
-        from redis import get_redis_client, safe_redis_set
+        from redis_utils.client import get_redis_client
+        from redis_utils.utils import safe_redis_set
         
         # Aktuelle System-Ressourcen
         process = psutil.Process(os.getpid())
