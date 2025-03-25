@@ -58,6 +58,8 @@ loglevel = log_level
 accesslog = "-"  # stdout
 errorlog = "-"   # stderr
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(L)s'
+capture_output = True
+enable_stdio_inheritance = True
 
 # Worker-Optionen
 worker_tmp_dir = "/dev/shm"
@@ -66,8 +68,8 @@ preload_app = True
 reuse_port = True
 
 # Maximale Anzahl gleichzeitiger Requests pro Worker
-max_requests = 1000
-max_requests_jitter = 50
+max_requests = 2000
+max_requests_jitter = 400
 
 # Maximale Anzahl offener Keep-Alive-Verbindungen pro Worker
 # Reduziert Druck auf Datenbank-Connections und RAM-Verbrauch
@@ -79,7 +81,7 @@ if os.getenv("ENABLE_METRICS", "").lower() in ("1", "true", "yes"):
     statsd_host = os.getenv("STATSD_HOST", None)
     if statsd_host:
         statsd_port = int(os.getenv("STATSD_PORT", "8125"))
-        statsd_prefix = os.getenv("STATSD_PREFIX", "hackthestudy.api")
+        statsd_prefix = os.getenv("STATSD_PREFIX", "gunicorn")
         
         # Aktiviere StatD
         statsd_host = f"{statsd_host}:{statsd_port}"
@@ -137,4 +139,57 @@ def worker_abort(worker):
     pass
 
 def on_exit(server):
-    server.log.info("Shutting down") 
+    server.log.info("Shutting down")
+
+# Debug-Modus (nur für Entwicklung)
+reload = os.environ.get("GUNICORN_RELOAD", "false").lower() == "true"
+reload_extra_files = []
+
+# Sicherheitseinstellungen
+limit_request_line = 4094
+limit_request_fields = 100
+limit_request_field_size = 8190
+
+# Header-Verarbeitung
+forwarded_allow_ips = '*'
+
+# Worker-Prozesse basierend auf CPU-Anzahl (mit Minimum von 2)
+workers = max(int(multiprocessing.cpu_count() * 0.75), 2)
+
+# Worker-Klasse für asynchrone Verarbeitung
+worker_class = "gevent"
+
+# Timeout-Einstellungen
+timeout = 120
+graceful_timeout = 30
+keepalive = 5
+
+# Logging-Einstellungen - sehr wichtig für Debugging
+loglevel = "info"
+accesslog = "-"  # Ausgabe auf stdout
+errorlog = "-"   # Ausgabe auf stderr
+access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(L)s'
+capture_output = True
+enable_stdio_inheritance = True
+
+# Statistische Erfassung aktivieren
+statsd_host = os.environ.get("STATSD_HOST", None)
+statsd_prefix = "gunicorn"
+
+# Performance-Einstellungen
+worker_connections = 1000
+backlog = 2048
+max_requests = 2000
+max_requests_jitter = 400
+
+# Debug-Modus (nur für Entwicklung)
+reload = os.environ.get("GUNICORN_RELOAD", "false").lower() == "true"
+reload_extra_files = []
+
+# Sicherheitseinstellungen
+limit_request_line = 4094
+limit_request_fields = 100
+limit_request_field_size = 8190
+
+# Header-Verarbeitung
+forwarded_allow_ips = '*' 
