@@ -12,6 +12,9 @@ Flask-Session==0.5.0     # Sitzungsverwaltung
 Werkzeug==2.3.8          # Flask-Abhängigkeit
 gunicorn==21.0.1         # WSGI-Server
 
+# Zahlungs-Integration
+stripe==2.65.0           # Stripe-Zahlungen
+
 # Dateiformatunterstützung
 PyPDF2==3.0.1            # PDF-Verarbeitung
 python-docx==1.1.0       # Word-Dokumente
@@ -34,6 +37,7 @@ PyJWT==2.8.0             # JWT-Verarbeitung
 marshmallow==3.21.1      # Daten-Serialisierung
 prometheus-flask-exporter==0.23.0  # Monitoring
 gevent==22.10.2          # Async-Support
+httpx==0.27.0            # HTTP-Client
 
 # Optional - je nach Anforderungen
 colorama==0.4.6          # Farbiges Terminal-Logging

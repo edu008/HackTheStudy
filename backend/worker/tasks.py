@@ -31,9 +31,45 @@ REDIS_TTL_SHORT = 3600    # 1 Stunde für kurzlebige Einträge
 # Importiere die benötigten Module
 from core.models import db, Upload, Flashcard, Question, Topic, UserActivity, Connection
 from core.redis_client import redis_client
-from api.utils import extract_text_from_file, unified_content_processing, clean_text_for_database
-from api.token_tracking import count_tokens
-from api.cleanup import cleanup_processing_for_session
+
+# Direkter Import der benötigten Funktionen, ohne die ganze API zu importieren
+# Dadurch vermeiden wir den Import von payment
+try:
+    from api.utils import extract_text_from_file, unified_content_processing, clean_text_for_database
+    from api.token_tracking import count_tokens
+    from api.cleanup import cleanup_processing_for_session
+except ImportError as e:
+    logger.error(f"Fehler beim Importieren der API-Module: {e}")
+    logger.error("Versuche alternative Import-Wege...")
+    
+    # Alternativ: Manuelles Laden der benötigten Module
+    import importlib.util
+    
+    # Hilfsfunktion zum Importieren von Modulen aus Dateipfaden
+    def import_module_from_file(module_name, file_path):
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    
+    # Versuche, die benötigten Module direkt zu laden
+    try:
+        utils_module = import_module_from_file("api.utils", "/app/api/utils.py")
+        extract_text_from_file = utils_module.extract_text_from_file
+        unified_content_processing = utils_module.unified_content_processing
+        clean_text_for_database = utils_module.clean_text_for_database
+        
+        token_tracking_module = import_module_from_file("api.token_tracking", "/app/api/token_tracking.py")
+        count_tokens = token_tracking_module.count_tokens
+        
+        cleanup_module = import_module_from_file("api.cleanup", "/app/api/cleanup.py")
+        cleanup_processing_for_session = cleanup_module.cleanup_processing_for_session
+        
+        logger.info("Alternativ-Import für API-Module war erfolgreich")
+    except Exception as alt_import_error:
+        logger.critical(f"Kritischer Fehler beim Importieren der API-Module: {alt_import_error}")
+        logger.critical("Worker kann ohne diese Module nicht starten!")
+        sys.exit(1)
 
 # Umgebungsvariablen für Logging-Konfiguration prüfen
 log_level_str = os.environ.get('LOG_LEVEL', 'INFO')
