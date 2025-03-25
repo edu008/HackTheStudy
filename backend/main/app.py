@@ -236,6 +236,71 @@ def setup_logging():
     LOGGING_INITIALIZED = True
     return logger
 
+# Neue Funktion, die Umgebungsvariablen ausgibt
+def log_environment_variables():
+    """Gibt alle relevanten Umgebungsvariablen aus, um die Konfiguration zu überprüfen"""
+    run_mode = os.environ.get('RUN_MODE', 'app')
+    container_type = os.environ.get('CONTAINER_TYPE', 'unknown')
+    
+    # Ausgabe von Container-Informationen
+    print(f"=== UMGEBUNGSVARIABLEN [{container_type.upper()}] ===")
+    
+    # Wichtige Variablen, die angezeigt werden sollen
+    important_vars = [
+        'RUN_MODE', 'CONTAINER_TYPE', 'PORT', 'FLASK_DEBUG', 
+        'REDIS_URL', 'REDIS_HOST', 'API_HOST',
+        'DATABASE_URL', 'CELERY_BROKER_URL', 'LOG_LEVEL'
+    ]
+    
+    # Ausgabe der wichtigen Variablen
+    for var in important_vars:
+        if var in os.environ:
+            # Verberge vertrauliche Informationen
+            value = os.environ.get(var)
+            if var in ['DATABASE_URL'] and value:
+                # Maskiere Passwörter in URLs
+                import re
+                value = re.sub(r'(://[^:]+:)([^@]+)(@)', r'\1*****\3', value)
+            print(f"{var}: {value}")
+    
+    # Netzwerkinformationen anzeigen
+    print("=== NETZWERKINFORMATIONEN ===")
+    
+    # Hostname und IPs ausgeben
+    print(f"Hostname: {socket.gethostname()}")
+    try:
+        print(f"IP-Adressen: {socket.gethostbyname_ex(socket.gethostname())}")
+    except:
+        print("Konnte IP-Adressen nicht auflösen")
+    
+    # Alle möglichen Redis-Hosts zum Verbinden erstellen
+    print("=== MÖGLICHE REDIS-VERBINDUNGEN ===")
+    redis_hosts = []
+    # Explizite Hosts
+    if 'REDIS_HOST' in os.environ and os.environ.get('REDIS_HOST'):
+        redis_hosts.append(os.environ.get('REDIS_HOST'))
+    
+    # Standardhosts für DigitalOcean App Platform
+    redis_hosts.extend(['api', 'localhost', '127.0.0.1', 'hackthestudy-backend-main'])
+    
+    # Entferne Duplikate
+    redis_hosts = list(dict.fromkeys(redis_hosts))
+    print(f"Redis-Hosts zum Verbinden: {', '.join(redis_hosts)}")
+    
+    print("==============================")
+    
+    # Auch ins Log schreiben
+    if logger:
+        logger.info(f"Container gestartet als: {container_type.upper()} im Modus: {run_mode.upper()}")
+        logger.info(f"Redis-Konfiguration: Host={os.environ.get('REDIS_HOST', 'nicht gesetzt')}, URL={os.environ.get('REDIS_URL', 'nicht gesetzt')}")
+        logger.info(f"Mögliche Redis-Hosts: {', '.join(redis_hosts)}")
+    
+    # Forciere Ausgabe sofort
+    sys.stdout.flush()
+    force_flush_handlers()
+    
+    return redis_hosts
+
 # Konfiguriere Logging
 logger = setup_logging()
 
@@ -250,6 +315,37 @@ def force_flush_handlers():
     for handler in logging.root.handlers:
         if hasattr(handler, 'flush'):
             handler.flush()
+
+# Dynamische Funktion zum Testen von Redis-Verbindungen
+def test_redis_connections(redis_hosts, port=6379, db=0):
+    """
+    Testet Redis-Verbindungen zu verschiedenen Hosts und gibt den ersten erfolgreichen Host zurück.
+    """
+    from redis import Redis
+    import time
+    
+    # Wenn keine Hosts angegeben sind, Standard-Hosts verwenden
+    if not redis_hosts:
+        redis_hosts = ['localhost', '127.0.0.1', 'api', 'redis']
+    
+    # Jeden Host testen
+    for host in redis_hosts:
+        redis_url = f"redis://{host}:{port}/{db}"
+        print(f"Teste Redis-Verbindung zu {host}:{port}...")
+        try:
+            # Verbindung mit Timeout testen
+            client = Redis.from_url(redis_url, socket_timeout=5)
+            client.ping()
+            print(f"✅ Redis verfügbar auf {host}:{port}")
+            # Erfolgreiche Verbindung zurückgeben
+            return host, redis_url
+        except Exception as e:
+            print(f"❌ Redis nicht verfügbar auf {host}:{port} - Fehler: {e}")
+            time.sleep(0.5)  # Kurze Pause vor dem nächsten Versuch
+    
+    # Wenn keine Verbindung erfolgreich war, None zurückgeben
+    print("⚠️ WARNUNG: Keine Redis-Verbindung konnte hergestellt werden!")
+    return None, None
 
 def log_startup_info():
     """Gibt wichtige Informationen beim Start der Anwendung aus"""
@@ -301,6 +397,14 @@ def init_app(run_mode=None):
     # Erzwinge Umgebungsvariable für andere Module
     os.environ['RUN_MODE'] = run_mode
     
+    # Stelle sicher, dass der Worker-Container einen anderen Port verwendet als der API-Container
+    if run_mode == 'worker' and os.environ.get('PORT') == '8080':
+        logger.info("Worker und API haben den gleichen Port. Ändere Worker-Port auf 8081...")
+        os.environ['PORT'] = '8081'
+    
+    # Umgebungsvariablen protokollieren - für ALLE Modi
+    redis_hosts = log_environment_variables()
+    
     # Worker- oder Payment-Service Modi
     if run_mode in ['worker', 'payment']:
         # Konfiguriere Logging für den Prozess
@@ -315,12 +419,44 @@ def init_app(run_mode=None):
         # Worker-Modus: Starte Celery-Worker
         if run_mode == 'worker':
             from celery import Celery
-            # Konfiguriere Celery-Worker direkt, statt eine externe Funktion aufzurufen
-            redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
+            
+            # Dynamisch Redis-Verbindung testen und beste URL finden
+            redis_host, redis_url = test_redis_connections(redis_hosts)
+            
+            if not redis_url:
+                # Wenn keine Verbindung erfolgreich war, Standard-URL verwenden
+                redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
+                logger.warning(f"KEINE Redis-Verbindung konnte getestet werden, verwende Standard-URL: {redis_url}")
+            else:
+                # Erfolgreiche Redis-URL verwenden und in Umgebungsvariablen speichern
+                logger.info(f"Verwende erfolgreiche Redis-Verbindung: {redis_url}")
+                os.environ['REDIS_URL'] = redis_url
+                os.environ['REDIS_HOST'] = redis_host
+                
+            # Konfiguriere Celery-Worker direkt
             celery_app = Celery('worker', broker=redis_url, backend=redis_url)
+            
+            # Setze Celery-Konfigurationen basierend auf Umgebungsvariablen
+            celery_config = {
+                'broker_url': redis_url,
+                'result_backend': redis_url,
+                'task_serializer': 'json',
+                'accept_content': ['json'],
+                'result_serializer': 'json',
+                'enable_utc': True,
+                'worker_concurrency': int(os.environ.get('CELERY_WORKER_CONCURRENCY', '2')),
+                'worker_max_tasks_per_child': int(os.environ.get('CELERY_MAX_TASKS_PER_CHILD', '100')),
+                'broker_connection_retry': True,
+                'broker_connection_retry_on_startup': True,
+                'broker_connection_max_retries': 10,
+            }
+            
+            # Anwenden der Konfiguration
+            celery_app.conf.update(celery_config)
             
             # Setze Logging für den Celery-Worker
             logging.info(f"Starte Celery-Worker mit Redis-URL: {redis_url}")
+            logging.info(f"Celery-Konfiguration: {celery_config}")
             
             # Beende die App-Initialisierung hier, da wir nur den Worker starten wollen
             return None  # Worker hat keine Flask-App
@@ -346,6 +482,16 @@ def init_app(run_mode=None):
     
     app.secret_key = secret_key
     logger.info("Secret key für Flask-App und Sessions konfiguriert")
+    
+    # Versuche, die beste Redis-Verbindung zu finden
+    redis_host, redis_url = test_redis_connections(redis_hosts)
+    if redis_url:
+        logger.info(f"API-Server: Erfolgreiche Redis-Verbindung zu {redis_host}: {redis_url}")
+        # Setze die erfolgreiche Verbindung in Umgebungsvariablen
+        os.environ['REDIS_URL'] = redis_url
+        os.environ['REDIS_HOST'] = redis_host
+    else:
+        logger.warning("API-Server: Konnte keine Redis-Verbindung herstellen!")
     
     # Konfiguriere App-Logger mit einheitlicher Formatierung
     app.logger.setLevel(logging.INFO)
