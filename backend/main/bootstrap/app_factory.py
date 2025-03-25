@@ -108,14 +108,26 @@ def _init_database(app: Flask):
 
 def _check_redis_connection():
     """Prüft die Redis-Verbindung."""
-    from redis.client import get_redis_client
-    
     try:
-        redis_client = get_redis_client()
+        # Verzögerter Import, um zirkuläre Importe zu vermeiden
+        import redis as redis_direct
+        
+        # Redis-Verbindung aus Umgebungsvariablen herstellen
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        redis_client = redis_direct.from_url(redis_url)
         redis_client.ping()
         logger.info("Redis-Verbindung erfolgreich hergestellt")
+    except ImportError:
+        logger.error("Redis-Paket nicht installiert")
     except Exception as e:
-        logger.error(f"Fehler bei der Redis-Verbindung: {str(e)}")
+        # Prüfen, ob wir Redis-Fehler ignorieren sollen
+        if os.environ.get('IGNORE_REDIS_ERRORS', 'false').lower() == 'true':
+            logger.warning(f"Redis-Verbindungsfehler ignoriert (wegen IGNORE_REDIS_ERRORS=true): {str(e)}")
+        else:
+            logger.error(f"Fehler bei der Redis-Verbindung: {str(e)}")
+            # In Entwicklungsumgebung Fehler nicht weiterwerfen
+            if os.environ.get('ENVIRONMENT', 'production').lower() != 'development':
+                raise
 
 def _register_blueprints(app: Flask):
     """Registriert die API-Blueprints."""

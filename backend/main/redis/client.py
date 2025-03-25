@@ -7,7 +7,8 @@ import os
 import json
 import logging
 from typing import Any, Dict, Optional, Union
-# Umbenennen des Redis-Imports, um Namenskonflikte zu vermeiden
+
+# Umbenennen des Redis-Imports mit einem klaren Namen, um zirkuläre Importe zu vermeiden
 import redis as redis_lib
 
 # Logger konfigurieren
