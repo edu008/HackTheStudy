@@ -5,6 +5,8 @@ import os
 import threading
 import logging
 import json
+import time
+import signal
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -17,6 +19,7 @@ DEFAULT_PORT = int(os.environ.get('HEALTH_PORT', 8080))
 # Flag, um den Server-Status zu verfolgen
 server_running = False
 server_instance = None
+shutdown_requested = False
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     """
@@ -93,6 +96,15 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """
     daemon_threads = True
 
+def signal_handler(signum, frame):
+    """
+    Behandelt Signale wie SIGTERM und SIGINT.
+    """
+    global shutdown_requested
+    logger.info(f"Signal {signum} empfangen, Herunterfahren...")
+    shutdown_requested = True
+    stop_health_check_server()
+
 def start_health_check_server(port=None):
     """
     Startet den Health-Check-Server im Hintergrund.
@@ -100,7 +112,7 @@ def start_health_check_server(port=None):
     Args:
         port: Der Port, auf dem der Server laufen soll (default: 8080)
     """
-    global server_running, server_instance
+    global server_running, server_instance, shutdown_requested
     
     if server_running:
         logger.info("Health-Check-Server läuft bereits")
@@ -126,7 +138,7 @@ def start_health_check_server(port=None):
             logger.error(f"❌ Fehler beim Starten des Health-Check-Servers: {str(e)}")
     
     # Starte den Server in einem eigenen Thread
-    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread = threading.Thread(target=run_server, daemon=False)  # Daemon auf False setzen, damit er nicht beendet wird
     server_thread.start()
 
 def stop_health_check_server():
@@ -143,4 +155,29 @@ def stop_health_check_server():
     server_instance.shutdown()
     server_running = False
     server_instance = None
-    logger.info("Health-Check-Server gestoppt") 
+    logger.info("Health-Check-Server gestoppt")
+
+# Wenn dieses Skript direkt ausgeführt wird
+if __name__ == "__main__":
+    # Logging konfigurieren, wenn nicht bereits geschehen
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format='[HEALTH] %(levelname)s: %(message)s')
+    
+    # Signal-Handler registrieren
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Server starten
+    start_health_check_server()
+    
+    logger.info("Health-Check-Server läuft im Vordergrund. Drücken Sie Strg+C zum Beenden.")
+    
+    # Hauptschleife, um den Prozess am Leben zu halten
+    try:
+        while not shutdown_requested:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Tastatur-Interrupt empfangen, Herunterfahren...")
+        stop_health_check_server()
+        
+    logger.info("Health-Check-Server-Prozess beendet") 

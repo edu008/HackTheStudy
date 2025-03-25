@@ -32,13 +32,15 @@ def setup_logging() -> logging.Logger:
     # Umgebungsvariablen für Logging-Konfiguration prüfen
     run_mode = os.environ.get('RUN_MODE', 'app')
     log_level_str = os.environ.get('LOG_LEVEL', 'INFO')
-    log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
+    
+    # API-Request-Logging standardmäßig aktivieren
+    log_api_requests = os.environ.get('LOG_API_REQUESTS', 'true').lower() == 'true'
     
     # Log-Level bestimmen
     log_level = getattr(logging, log_level_str.upper(), logging.INFO)
     
     # Log-Präfix aus Umgebungsvariable holen
-    log_prefix = os.environ.get('LOG_PREFIX', '[APP] ')
+    log_prefix = os.environ.get('LOG_PREFIX', '[API] ')
     
     # Entferne alle bestehenden Handler
     root_logger = logging.getLogger()

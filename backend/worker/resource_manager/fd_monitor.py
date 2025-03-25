@@ -1,118 +1,187 @@
 """
-Datei-Deskriptor-Überwachung für den Worker-Microservice
+Modul zur Überwachung der offenen Dateideskriptoren.
 """
 import os
+import sys
+import time
 import logging
-import resource
-import psutil
-import gc
 import signal
+import threading
+import psutil
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
 
-def check_and_set_fd_limits():
+# Prozess-Objekt für später
+process = None
+
+# Shutdown-Flag
+shutdown_requested = False
+
+def check_file_descriptors():
     """
-    Überprüft und setzt das Limit für Datei-Deskriptoren.
+    Überprüft die aktuelle Anzahl offener Dateideskriptoren.
     
     Returns:
-        tuple: Das aktuelle und maximale Datei-Deskriptor-Limit
+        int: Anzahl der offenen Datei-Deskriptoren
+    """
+    global process
+    
+    # Initialisiere das Prozess-Objekt, falls noch nicht geschehen
+    if process is None:
+        process = psutil.Process(os.getpid())
+    
+    try:
+        # Anzahl der offenen Datei-Deskriptoren ermitteln
+        # Dies funktioniert nur unter Linux/Unix
+        if hasattr(process, 'num_fds'):
+            return process.num_fds()
+        else:
+            # Unter Windows versuchen wir es mit handles
+            if hasattr(process, 'num_handles'):
+                return process.num_handles()
+            else:
+                logger.warning("Konnte offene Datei-Deskriptoren nicht ermitteln - nicht unterstützt auf dieser Plattform")
+                return 0
+    except Exception as e:
+        logger.error(f"Fehler beim Ermitteln der offenen Datei-Deskriptoren: {str(e)}")
+        return 0
+
+def check_and_set_fd_limits(soft_limit=None, hard_limit=None):
+    """
+    Überprüft und setzt die Limits für offene Dateideskriptoren.
+    
+    Args:
+        soft_limit: Gewünschtes Soft-Limit (oder None für Systemwert)
+        hard_limit: Gewünschtes Hard-Limit (oder None für Systemwert)
+    
+    Returns:
+        tuple: (soft_limit, hard_limit) nach dem Setzen
     """
     try:
-        # Aktuelle Limits abrufen
+        import resource
+        
+        # Aktuelles Limit abrufen
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         logger.info(f"Aktuelle Datei-Deskriptor-Limits: soft={soft}, hard={hard}")
         
-        # Versuche, das Soft-Limit zu erhöhen
-        target_soft = min(hard, 65536)  # Setze auf Hard-Limit oder 65536, was niedriger ist
-        if soft < target_soft:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (target_soft, hard))
-            new_soft, new_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-            logger.info(f"Datei-Deskriptor-Limits aktualisiert: soft={new_soft}, hard={new_hard}")
+        # Limits anpassen, falls angefordert
+        if soft_limit is not None or hard_limit is not None:
+            # Verwende aktuelle Werte, wenn nicht explizit angegeben
+            new_soft = soft_limit if soft_limit is not None else soft
+            new_hard = hard_limit if hard_limit is not None else hard
+            
+            # Hard-Limit kann nicht höher als das System-Hard-Limit sein
+            new_hard = min(new_hard, hard)
+            
+            # Soft-Limit kann nicht höher als Hard-Limit sein
+            new_soft = min(new_soft, new_hard)
+            
+            # Neue Limits setzen
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, new_hard))
+            logger.info(f"Neue Datei-Deskriptor-Limits gesetzt: soft={new_soft}, hard={new_hard}")
+            
             return new_soft, new_hard
         
         return soft, hard
+    except ImportError:
+        logger.warning("Das Modul 'resource' ist nicht verfügbar (wahrscheinlich Windows)")
+        return None, None
     except Exception as e:
-        logger.warning(f"Konnte Datei-Deskriptor-Limits nicht anpassen: {e}")
+        logger.error(f"Fehler beim Setzen der Datei-Deskriptor-Limits: {str(e)}")
         return None, None
 
 def monitor_file_descriptors():
     """
-    Überwacht die Anzahl der offenen Datei-Deskriptoren und gibt Informationen aus.
-    
-    Returns:
-        int: Die Anzahl der offenen Datei-Deskriptoren oder -1 bei Fehlern
+    Überwacht die Anzahl der offenen Dateideskriptoren und loggt sie.
     """
     try:
-        process = psutil.Process(os.getpid())
-        fds_count = len(process.open_files())
-        memory_info = process.memory_info()
+        # Offene Datei-Deskriptoren zählen
+        fd_count = check_file_descriptors()
+        logger.info(f"Aktuelle Anzahl offener Datei-Deskriptoren: {fd_count}")
         
-        logger.info(f"Aktuelle Anzahl offener Datei-Deskriptoren: {fds_count}")
-        logger.info(f"Aktuelle RAM-Nutzung: RSS={memory_info.rss / (1024*1024):.2f} MB, VMS={memory_info.vms / (1024*1024):.2f} MB")
+        # RAM-Nutzung überwachen
+        global process
+        if process is None:
+            process = psutil.Process(os.getpid())
         
-        # Zusätzliche Überwachung, falls viele Deskriptoren offen sind
-        if fds_count > 200:
-            logger.warning(f"Hohe Anzahl offener Datei-Deskriptoren: {fds_count}")
-            # Liste der offenen Dateien anzeigen
-            open_files = [f.path for f in process.open_files()]
-            logger.debug(f"Offene Dateien (Top 10): {open_files[:10]}")
-            
-            # Manuelles Abholen von Garbage Collection
-            if fds_count > 500:
-                logger.warning("Kritische Anzahl offener Datei-Deskriptoren - führe Garbage Collection durch")
-                collected = gc.collect()
-                logger.info(f"Garbage Collection abgeschlossen: {collected} Objekte eingesammelt")
-                
-                # Erneut prüfen nach GC
-                new_fds_count = len(process.open_files())
-                logger.info(f"Nach GC: {new_fds_count} offene Datei-Deskriptoren (vorher: {fds_count})")
-                return new_fds_count
+        # RAM-Nutzung in MB
+        rss = process.memory_info().rss / (1024 * 1024)
+        vms = process.memory_info().vms / (1024 * 1024)
+        logger.info(f"Aktuelle RAM-Nutzung: RSS={rss:.2f} MB, VMS={vms:.2f} MB")
         
-        return fds_count
-    except ImportError:
-        logger.warning("Fehler bei der Überwachung der Datei-Deskriptoren: psutil-Modul nicht verfügbar")
-        return -1
+        return {
+            'fd_count': fd_count,
+            'rss_mb': rss,
+            'vms_mb': vms,
+            'timestamp': time.time()
+        }
     except Exception as e:
-        logger.warning(f"Fehler bei der Überwachung der Datei-Deskriptoren: {str(e)}")
-        return -1
+        logger.error(f"Fehler bei der Ressourcenüberwachung: {str(e)}")
+        return None
 
-def schedule_periodic_check(interval=300):
+def schedule_periodic_check(interval_seconds=300):
     """
-    Planmäßige Überprüfung der Datei-Deskriptoren.
+    Plant eine periodische Überprüfung der Ressourcennutzung.
     
     Args:
-        interval: Zeit in Sekunden zwischen den Überprüfungen
-        
-    Returns:
-        bool: True bei Erfolg, False bei Fehler
+        interval_seconds: Anzahl der Sekunden zwischen den Überprüfungen
     """
-    import threading
+    global shutdown_requested
     
-    def periodic_check():
-        """Periodische Überprüfung der Ressourcen"""
-        try:
-            # Führe Datei-Deskriptor-Überwachung durch
-            fd_count = monitor_file_descriptors()
-            
-            # Wenn mehr als 800 Datei-Deskriptoren offen sind, empfehle Neustart
-            if fd_count > 800:
-                logger.critical(f"Kritische Anzahl offener Datei-Deskriptoren: {fd_count} - Worker sollte neu gestartet werden")
-                # Empfehle Neustart, aber erzwinge ihn nicht
-                return
-            
-            # Plane nächste Überprüfung
-            threading.Timer(interval, periodic_check).start()
-        except Exception as e:
-            logger.error(f"Fehler bei periodischer Ressourcenüberwachung: {e}")
-            # Auch bei Fehlern weiter überwachen
-            threading.Timer(interval, periodic_check).start()
+    def run_periodic_check():
+        while not shutdown_requested:
+            monitor_file_descriptors()
+            # Schlafe bis zum nächsten Intervall oder bis zum Shutdown
+            for _ in range(interval_seconds):
+                if shutdown_requested:
+                    break
+                time.sleep(1)
     
+    logger.info(f"Periodische Datei-Deskriptor-Überwachung alle {interval_seconds} Sekunden geplant")
+    thread = threading.Thread(target=run_periodic_check, daemon=False)
+    thread.start()
+    return thread
+
+def signal_handler(signum, frame):
+    """
+    Behandelt Signale wie SIGTERM und SIGINT.
+    """
+    global shutdown_requested
+    logger.info(f"Signal {signum} empfangen, Herunterfahren...")
+    shutdown_requested = True
+
+# Wenn als eigenständiges Skript ausgeführt
+if __name__ == "__main__":
+    # Konfiguriere Logging, wenn nicht bereits geschehen
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format='[FD-MONITOR] %(levelname)s: %(message)s')
+    
+    # Signal-Handler registrieren
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    logger.info("Dateisystem-Monitor gestartet")
+    
+    # Limits setzen und aktuelle Nutzung prüfen
+    check_and_set_fd_limits()
+    monitor_file_descriptors()
+    
+    # Periodische Überprüfung starten
+    monitor_thread = schedule_periodic_check(interval_seconds=60)
+    
+    logger.info("Dateisystem-Monitor läuft im Vordergrund. Drücken Sie Strg+C zum Beenden.")
+    
+    # Hauptschleife, um den Prozess am Leben zu halten
     try:
-        # Starte erste Überprüfung nach kurzer Verzögerung
-        threading.Timer(60, periodic_check).start()  # Erste Überprüfung nach 1 Minute
-        logger.info(f"Periodische Datei-Deskriptor-Überwachung alle {interval} Sekunden geplant")
-        return True
-    except Exception as e:
-        logger.error(f"Konnte periodische Überwachung nicht starten: {e}")
-        return False 
+        while not shutdown_requested:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Tastatur-Interrupt empfangen, Herunterfahren...")
+        shutdown_requested = True
+        
+    # Warte, bis der Monitor-Thread beendet ist
+    if monitor_thread.is_alive():
+        monitor_thread.join(timeout=5)
+        
+    logger.info("Dateisystem-Monitor-Prozess beendet") 

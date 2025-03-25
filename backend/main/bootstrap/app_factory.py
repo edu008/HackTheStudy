@@ -8,6 +8,9 @@ import logging
 from typing import Optional
 from flask import Flask, request, jsonify
 from datetime import datetime
+import uuid
+import time
+from flask import g
 
 from core.models import db
 from config.env_handler import load_env, setup_cors_origins
@@ -77,6 +80,9 @@ def create_app(environment: Optional[str] = None) -> Flask:
     
     # Basis-Routen registrieren
     _register_base_routes(app)
+    
+    # Globale Request-Handler einrichten
+    _setup_request_handlers(app)
     
     logger.info(f"App initialisiert im {os.environ['ENVIRONMENT']}-Modus")
     return app
@@ -195,6 +201,17 @@ def _register_base_routes(app: Flask):
             "timestamp": datetime.now().isoformat()
         })
     
+    # Ping-Endpunkt für einfache Verfügbarkeitsprüfung
+    @app.route('/ping', methods=['GET'])
+    def ping():
+        """
+        Ein einfacher Ping-Endpunkt zur Verfügbarkeitsprüfung.
+        Dieser Endpunkt wird von DigitalOcean für Health Checks verwendet.
+        """
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        log_step("Ping", "INFO", f"Ping-Anfrage von {client_ip}")
+        return "pong", 200
+    
     # Einfacher Health-Check für Load Balancer
     @app.route('/api/v1/simple-health', methods=['GET'])
     def simple_health_check():
@@ -246,4 +263,61 @@ def _register_base_routes(app: Flask):
                 "code": "SERVER_ERROR",
                 "message": "Ein interner Serverfehler ist aufgetreten"
             }
-        }), 500 
+        }), 500
+
+def _setup_request_handlers(app: Flask):
+    """Richtet globale Request-Handler für die App ein."""
+    @app.before_request
+    def log_request_info():
+        """Loggt Details zu eingehenden Anfragen."""
+        if request.endpoint and not request.endpoint.startswith('static'):
+            # Detailliertes Logging für alle eingehenden API-Requests, auch für /ping
+            request_id = str(uuid.uuid4())
+            g.request_id = request_id
+            
+            client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+            user_agent = request.headers.get('User-Agent', 'Unbekannt')
+            
+            log_message = f"➡️ EINGEHEND [{request_id}]: {request.method} {request.path} von {client_ip}"
+            logger.info(log_message)
+            
+            # Zusätzliches Logging für Debugging
+            detail_message = (f"Request-Details [{request_id}]: "
+                             f"UA={user_agent}, "
+                             f"Referer={request.headers.get('Referer', 'None')}, "
+                             f"Accept={request.headers.get('Accept', 'None')}")
+            logger.debug(detail_message)
+    
+    @app.after_request
+    def log_response_info(response):
+        """Loggt Details zu ausgehenden Antworten."""
+        if request.endpoint and not request.endpoint.startswith('static'):
+            request_id = getattr(g, 'request_id', 'keine-id')
+            duration = getattr(g, 'request_duration', 0)
+            
+            # Alle Antworten loggen, unabhängig vom Status-Code
+            status_emoji = "✅" if response.status_code < 400 else "❌"
+            log_message = f"{status_emoji} AUSGEHEND [{request_id}]: {response.status_code} für {request.method} {request.path} in {duration:.2f}ms"
+            
+            # Je nach Status-Code das richtige Log-Level verwenden
+            if response.status_code >= 500:
+                logger.error(log_message)
+            elif response.status_code >= 400:
+                logger.warning(log_message)
+            else:
+                logger.info(log_message)
+        
+        return response
+    
+    @app.before_request
+    def start_timer():
+        """Startet einen Timer für die Request-Dauer."""
+        g.start_time = time.time()
+    
+    @app.after_request
+    def calculate_duration(response):
+        """Berechnet die Dauer der Request-Verarbeitung."""
+        if hasattr(g, 'start_time'):
+            duration = (time.time() - g.start_time) * 1000  # in Millisekunden
+            g.request_duration = duration
+        return response 
