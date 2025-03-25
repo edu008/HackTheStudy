@@ -71,7 +71,8 @@ RUN chmod +x /app/start.sh
 
 # Celery Worker Konfiguration für bessere Stabilität
 ENV CELERY_WORKERS=1 \
-    CELERY_MAX_TASKS_PER_CHILD=1 \
+    CELERY_MAX_TASKS_PER_CHILD=10 \
+    CELERY_MAX_MEMORY_PER_CHILD=512000 \
     CELERY_DISABLE_RATE_LIMITS=1 \
     CELERY_WORKER_PREFETCH_MULTIPLIER=1 \
     CELERY_WORKER_WITHOUT_HEARTBEAT=1 \
@@ -81,7 +82,8 @@ ENV CELERY_WORKERS=1 \
     CELERY_POOL=solo \
     LOG_PREFIX="[WORKER] " \
     LOG_LEVEL="INFO" \
-    LOG_API_REQUESTS="true"
+    LOG_API_REQUESTS="true" \
+    C_FORCE_ROOT=1
 
 # Starte den Container mit dem Startskript
 CMD ["/app/start.sh"] 

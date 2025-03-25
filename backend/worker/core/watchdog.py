@@ -62,19 +62,36 @@ def check_celery_workers():
         'problematic': []
     }
     
+    # Detaillierteres Logging für die Fehlersuche
+    logger.info("Starte Überprüfung der Celery-Worker-Prozesse...")
+    
+    # Erweiterte Suchkriterien
+    celery_keywords = ['celery', 'tasks.worker', '-A tasks']
+    
     for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
         try:
             proc_info = proc.info
             cmdline = proc_info.get('cmdline', [])
+            cmdline_str = ' '.join([str(arg) for arg in cmdline if arg])
             
-            # Identifiziere Celery-Worker
+            # Verbesserte Identifikation von Celery-Workern mit flexibleren Kriterien
             is_celery = False
-            for arg in cmdline:
-                if isinstance(arg, str) and 'celery' in arg and 'worker' in str(arg):
+            for keyword in celery_keywords:
+                if keyword in cmdline_str:
                     is_celery = True
                     break
             
+            # Erweiterte Prüfung für Python-Prozesse
+            if not is_celery and 'python' in cmdline_str:
+                for arg in cmdline:
+                    if isinstance(arg, str) and ('celery' in arg.lower() or 'tasks.worker' in arg.lower()):
+                        is_celery = True
+                        break
+            
             if is_celery:
+                # Debug-Info zum erkannten Prozess
+                logger.debug(f"Celery-Worker gefunden: PID={proc_info['pid']}, CMD={cmdline_str[:100]}")
+                
                 # Sammle Informationen über den Worker
                 pid = proc_info['pid']
                 create_time = datetime.fromtimestamp(proc_info['create_time'])
@@ -103,7 +120,8 @@ def check_celery_workers():
                     'cpu_percent': cpu_percent,
                     'memory_percent': memory_percent,
                     'open_files': open_files,
-                    'connections': connections
+                    'connections': connections,
+                    'cmdline': cmdline_str[:200] # Speichere Befehlszeile für Debugging
                 }
                 
                 # Prüfe Worker-Gesundheit

@@ -111,7 +111,7 @@ except Exception as e:
 
 # Setze auch Socket-Timeout auf einen höheren Wert
 import socket
-socket.setdefaulttimeout(120)  # 2 Minuten Timeout
+socket.setdefaulttimeout(300)  # 5 Minuten Timeout
 
 # Gevent patch für multithreading
 try:
