@@ -85,6 +85,7 @@ RUN pip install --no-index --find-links=/wheels gunicorn requests \
 
 # Kopiere die Anwendungsdateien
 COPY app.py .
+COPY health_monitor.py .
 COPY api/ ./api/
 COPY core/ ./core/
 COPY config/ ./config/

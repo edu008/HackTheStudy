@@ -89,6 +89,8 @@ RUN pip install --no-index --find-links=/wheels requests==2.31.0 psutil==5.9.5 \
 
 # Kopiere die Quellcodedateien
 COPY tasks.py .
+COPY health_check.py .
+COPY system_monitor.py .
 COPY api/ ./api/
 COPY core/ ./core/
 COPY config/ ./config/
