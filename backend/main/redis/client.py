@@ -7,7 +7,7 @@ import os
 import json
 import logging
 from typing import Any, Dict, Optional, Union
-import redis
+import redis as redis_lib
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Redis-Client als Singleton
 _redis_client = None
 
-def get_redis_client() -> redis.Redis:
+def get_redis_client() -> redis_lib.Redis:
     """
     Gibt einen Redis-Client zurück. 
     Erstellt ihn bei Bedarf neu und speichert ihn als Singleton.
@@ -27,7 +27,7 @@ def get_redis_client() -> redis.Redis:
     
     if _redis_client is None:
         redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-        _redis_client = redis.from_url(redis_url)
+        _redis_client = redis_lib.from_url(redis_url)
         logger.info(f"Redis-Client initialisiert mit URL: {redis_url}")
     
     return _redis_client

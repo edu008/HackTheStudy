@@ -9,7 +9,7 @@ import time
 import logging
 from typing import Dict, Any, Optional, Union, List, Tuple
 from celery import Celery
-import redis
+import redis as redis_lib
 
 from .task_definitions import UploadTask, APIRequestTask
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Redis-Client konfigurieren
 redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-redis_client = redis.from_url(redis_url)
+redis_client = redis_lib.from_url(redis_url)
 
 # Celery-Client zum Senden von Tasks an den Worker
 celery_app = Celery('api', broker=redis_url, backend=redis_url)

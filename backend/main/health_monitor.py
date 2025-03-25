@@ -29,10 +29,10 @@ try:
 except ImportError:
     logger.error("Konnte Redis-Client nicht importieren, versuche direkte Redis-Import")
     try:
-        import redis
+        import redis as redis_lib
         import json
         
-        redis_client = redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+        redis_client = redis_lib.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
         
         def safe_redis_set(key, value, ex=None, nx=False):
             try:
