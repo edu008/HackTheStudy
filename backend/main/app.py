@@ -242,8 +242,7 @@ def log_environment_variables():
     run_mode = os.environ.get('RUN_MODE', 'app')
     container_type = os.environ.get('CONTAINER_TYPE', 'unknown')
     
-    # Ausgabe von Container-Informationen
-    print(f"=== UMGEBUNGSVARIABLEN [{container_type.upper()}] ===")
+    log_step("Umgebungsvariablen", "START", f"Prüfe Konfiguration für {container_type.upper()}")
     
     # Wichtige Variablen, die angezeigt werden sollen
     important_vars = [
@@ -252,7 +251,8 @@ def log_environment_variables():
         'DATABASE_URL', 'CELERY_BROKER_URL', 'LOG_LEVEL'
     ]
     
-    # Ausgabe der wichtigen Variablen
+    # Sammle alle verfügbaren kritischen Variablen
+    critical_vars = {}
     for var in important_vars:
         if var in os.environ:
             # Verberge vertrauliche Informationen
@@ -261,39 +261,36 @@ def log_environment_variables():
                 # Maskiere Passwörter in URLs
                 import re
                 value = re.sub(r'(://[^:]+:)([^@]+)(@)', r'\1*****\3', value)
-            print(f"{var}: {value}")
+            critical_vars[var] = value
     
-    # Netzwerkinformationen anzeigen
-    print("=== NETZWERKINFORMATIONEN ===")
+    # Logge kritische Variablen in Gruppen
+    log_step("Netzwerkkonfiguration", "INFO", 
+             f"PORT={critical_vars.get('PORT', 'nicht gesetzt')}")
     
-    # Hostname und IPs ausgeben
-    print(f"Hostname: {socket.gethostname()}")
-    try:
-        print(f"IP-Adressen: {socket.gethostbyname_ex(socket.gethostname())}")
-    except:
-        print("Konnte IP-Adressen nicht auflösen")
+    # Redis-Konfiguration zusammenfassen
+    redis_info = (f"REDIS_HOST={critical_vars.get('REDIS_HOST', 'nicht gesetzt')}, "
+                 f"REDIS_URL={critical_vars.get('REDIS_URL', 'nicht gesetzt')}")
+    log_step("Redis-Konfiguration", "INFO", redis_info)
+    
+    # Datenbank-Konfiguration überprüfen
+    if 'DATABASE_URL' in critical_vars:
+        log_step("Datenbank-Konfiguration", "SUCCESS", "DATABASE_URL konfiguriert")
+    else:
+        log_step("Datenbank-Konfiguration", "WARNING", "DATABASE_URL nicht gefunden", "warning")
     
     # Alle möglichen Redis-Hosts zum Verbinden erstellen
-    print("=== MÖGLICHE REDIS-VERBINDUNGEN ===")
     redis_hosts = []
     # Explizite Hosts
     if 'REDIS_HOST' in os.environ and os.environ.get('REDIS_HOST'):
         redis_hosts.append(os.environ.get('REDIS_HOST'))
     
     # Standardhosts für DigitalOcean App Platform
-    redis_hosts.extend(['api', 'localhost', '127.0.0.1', 'hackthestudy-backend-main'])
+    standard_hosts = ['api', 'localhost', '127.0.0.1', 'hackthestudy-backend-main']
+    for host in standard_hosts:
+        if host not in redis_hosts:
+            redis_hosts.append(host)
     
-    # Entferne Duplikate
-    redis_hosts = list(dict.fromkeys(redis_hosts))
-    print(f"Redis-Hosts zum Verbinden: {', '.join(redis_hosts)}")
-    
-    print("==============================")
-    
-    # Auch ins Log schreiben
-    if logger:
-        logger.info(f"Container gestartet als: {container_type.upper()} im Modus: {run_mode.upper()}")
-        logger.info(f"Redis-Konfiguration: Host={os.environ.get('REDIS_HOST', 'nicht gesetzt')}, URL={os.environ.get('REDIS_URL', 'nicht gesetzt')}")
-        logger.info(f"Mögliche Redis-Hosts: {', '.join(redis_hosts)}")
+    log_step("Redis-Verbindungen", "INFO", f"Mögliche Hosts: {', '.join(redis_hosts)}")
     
     # Forciere Ausgabe sofort
     sys.stdout.flush()
@@ -307,8 +304,14 @@ logger = setup_logging()
 # Explizites Debug-Logging von OpenAI ermöglichen
 os.environ['OPENAI_LOG'] = 'debug'
 
-# Lade die Umgebungsvariablen
-load_dotenv(override=True, verbose=True)
+# Lade die Umgebungsvariablen - Nur in Entwicklung, nicht in Produktion
+if os.environ.get('ENVIRONMENT', 'production').lower() == 'development':
+    # Nur in Entwicklung .env-Datei laden
+    load_dotenv(override=True, verbose=True)
+    print("Entwicklungsumgebung: .env-Datei wird geladen")
+else:
+    # In Produktion nur Digital Ocean Umgebungsvariablen verwenden
+    print("Produktionsumgebung: Verwende Digital Ocean Umgebungsvariablen")
 
 def force_flush_handlers():
     """Flusht alle Logger-Handler, um sicherzustellen, dass Logs geschrieben werden"""
@@ -316,10 +319,42 @@ def force_flush_handlers():
         if hasattr(handler, 'flush'):
             handler.flush()
 
+# Verbesserte, strukturierte Logging-Funktion
+def log_step(step_name, status="START", details=None, level="INFO"):
+    """
+    Strukturiertes Logging mit klaren Schritt-Namen und Status
+    
+    :param step_name: Name des Schritts (z.B. "Redis-Verbindung")
+    :param status: Status (START, SUCCESS, ERROR, WARNING, INFO)
+    :param details: Zusätzliche Details (optional)
+    :param level: Log-Level (INFO, WARNING, ERROR, DEBUG)
+    """
+    log_func = getattr(logger, level.lower(), logger.info)
+    
+    # Status-Emojis für bessere Sichtbarkeit
+    status_emojis = {
+        "START": "🔄",
+        "SUCCESS": "✅",
+        "ERROR": "❌",
+        "WARNING": "⚠️",
+        "INFO": "ℹ️"
+    }
+    
+    emoji = status_emojis.get(status, "")
+    message = f"{emoji} [{status}] {step_name}"
+    
+    if details:
+        message += f": {details}"
+    
+    log_func(message)
+    # Sofortiges Flushen für Echtzeit-Logs
+    force_flush_handlers()
+
 # Dynamische Funktion zum Testen von Redis-Verbindungen
 def test_redis_connections(redis_hosts, port=6379, db=0):
     """
     Testet Redis-Verbindungen zu verschiedenen Hosts und gibt den ersten erfolgreichen Host zurück.
+    Reduziertes Logging für klarere Ausgabe.
     """
     from redis import Redis
     import time
@@ -328,60 +363,50 @@ def test_redis_connections(redis_hosts, port=6379, db=0):
     if not redis_hosts:
         redis_hosts = ['localhost', '127.0.0.1', 'api', 'redis']
     
+    log_step("Redis-Verbindungstests", "START", f"Teste {len(redis_hosts)} mögliche Hosts")
+    
     # Jeden Host testen
     for host in redis_hosts:
         redis_url = f"redis://{host}:{port}/{db}"
-        print(f"Teste Redis-Verbindung zu {host}:{port}...")
         try:
             # Verbindung mit Timeout testen
             client = Redis.from_url(redis_url, socket_timeout=5)
             client.ping()
-            print(f"✅ Redis verfügbar auf {host}:{port}")
+            log_step("Redis-Verbindung", "SUCCESS", f"Host: {host}, Port: {port}")
             # Erfolgreiche Verbindung zurückgeben
             return host, redis_url
         except Exception as e:
-            print(f"❌ Redis nicht verfügbar auf {host}:{port} - Fehler: {e}")
-            time.sleep(0.5)  # Kurze Pause vor dem nächsten Versuch
+            # Weniger ausführliches Logging für fehlgeschlagene Verbindungen
+            continue
     
     # Wenn keine Verbindung erfolgreich war, None zurückgeben
-    print("⚠️ WARNUNG: Keine Redis-Verbindung konnte hergestellt werden!")
+    log_step("Redis-Verbindungstests", "ERROR", "Keine erfolgreiche Verbindung gefunden", "ERROR")
     return None, None
 
 def log_startup_info():
     """Gibt wichtige Informationen beim Start der Anwendung aus"""
-    logger.info("================== HACKTHESTUDY BACKEND STARTET ==================")
-    logger.info(f"PID: {os.getpid()}")
-    logger.info(f"Python-Version: {sys.version}")
-    logger.info(f"Hostname: {socket.gethostname()}")
-    logger.info(f"Arbeitsverzechnis: {os.getcwd()}")
+    container_type = os.environ.get('CONTAINER_TYPE', 'unbekannt')
+    run_mode = os.environ.get('RUN_MODE', 'app')
     
-    logger.info("DIGITAL_OCEAN_APP_PLATFORM: TRUE")
+    log_step("Anwendungsstart", "START", f"Container: {container_type}, Modus: {run_mode}")
+    log_step("System-Info", "INFO", f"PID: {os.getpid()}, Hostname: {socket.gethostname()}")
     
-    # Umgebungsinformationen (ohne sensible Daten)
-    env_vars = [
-        'FLASK_ENV', 'FLASK_DEBUG', 'PORT', 'SERVER_SOFTWARE',
-        'DIGITAL_OCEAN_APP_NAME', 'DIGITAL_OCEAN_DEPLOYMENT_ID',
-        'RUN_MODE'
-    ]
-    logger.info("Umgebungsvariablen:")
-    for var in env_vars:
-        if var in os.environ:
-            logger.info(f"  - {var}: {os.environ.get(var)}")
-    
-    # Server-Prozess-Info
+    # Server-Umgebung ermitteln
     if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', ''):
-        logger.info("Server läuft unter Gunicorn")
-        worker_id = os.environ.get('GUNICORN_WORKER_ID', 'unbekannt')
-        logger.info(f"Gunicorn Worker ID: {worker_id}")
+        log_step("Server", "INFO", "Läuft unter Gunicorn")
     else:
-        logger.info("Server läuft im Flask-Entwicklungsmodus")
+        log_step("Server", "INFO", "Läuft im Flask-Entwicklungsmodus")
     
     # DigitalOcean-spezifische Informationen
     if 'DIGITAL_OCEAN_APP_NAME' in os.environ:
-        logger.info(f"DigitalOcean App Platform: {os.environ.get('DIGITAL_OCEAN_APP_NAME')}")
-        logger.info(f"WICHTIG: Runtime Logs werden für diesen Service angezeigt")
+        log_step("Plattform", "INFO", f"DigitalOcean App: {os.environ.get('DIGITAL_OCEAN_APP_NAME')}")
     
-    logger.info("==============================")
+    # Netzwerk-Informationen
+    try:
+        ip_addresses = socket.gethostbyname_ex(socket.gethostname())
+        log_step("Netzwerk", "INFO", f"IP-Adressen: {ip_addresses[2]}")
+    except:
+        log_step("Netzwerk", "WARNING", "IP-Adressen konnten nicht ermittelt werden")
     
     force_flush_handlers()
 
@@ -399,7 +424,7 @@ def init_app(run_mode=None):
     
     # Stelle sicher, dass der Worker-Container einen anderen Port verwendet als der API-Container
     if run_mode == 'worker' and os.environ.get('PORT') == '8080':
-        logger.info("Worker und API haben den gleichen Port. Ändere Worker-Port auf 8081...")
+        log_step("Port-Konfiguration", "WARNING", "Worker und API haben den gleichen Port. Ändere Worker-Port auf 8081...")
         os.environ['PORT'] = '8081'
     
     # Umgebungsvariablen protokollieren - für ALLE Modi
@@ -409,12 +434,12 @@ def init_app(run_mode=None):
     if run_mode in ['worker', 'payment']:
         # Konfiguriere Logging für den Prozess
         logger = setup_logging()
-        logger.info(f"Starte im {run_mode.upper()}-Modus...")
+        log_step("Service", "START", f"Starte im {run_mode.upper()}-Modus")
         
         # Überprüfe, ob API-Anfragen protokolliert werden sollen
         log_api_requests = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
         if log_api_requests:
-            logger.info("API-Anfragen-Protokollierung aktiviert")
+            log_step("Logging", "INFO", "API-Anfragen-Protokollierung aktiviert")
         
         # Worker-Modus: Starte Celery-Worker
         if run_mode == 'worker':
@@ -426,14 +451,15 @@ def init_app(run_mode=None):
             if not redis_url:
                 # Wenn keine Verbindung erfolgreich war, Standard-URL verwenden
                 redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
-                logger.warning(f"KEINE Redis-Verbindung konnte getestet werden, verwende Standard-URL: {redis_url}")
+                log_step("Redis", "WARNING", f"Keine Verbindung hergestellt. Standard-URL: {redis_url}", "warning")
             else:
                 # Erfolgreiche Redis-URL verwenden und in Umgebungsvariablen speichern
-                logger.info(f"Verwende erfolgreiche Redis-Verbindung: {redis_url}")
+                log_step("Redis", "SUCCESS", f"Verbindung hergestellt: {redis_url}")
                 os.environ['REDIS_URL'] = redis_url
                 os.environ['REDIS_HOST'] = redis_host
                 
             # Konfiguriere Celery-Worker direkt
+            log_step("Celery", "START", "Initialisiere Celery-Worker")
             celery_app = Celery('worker', broker=redis_url, backend=redis_url)
             
             # Setze Celery-Konfigurationen basierend auf Umgebungsvariablen
@@ -453,10 +479,10 @@ def init_app(run_mode=None):
             
             # Anwenden der Konfiguration
             celery_app.conf.update(celery_config)
+            log_step("Celery", "SUCCESS", "Konfiguration angewendet")
             
             # Setze Logging für den Celery-Worker
-            logging.info(f"Starte Celery-Worker mit Redis-URL: {redis_url}")
-            logging.info(f"Celery-Konfiguration: {celery_config}")
+            log_step("Celery", "INFO", f"Worker bereit mit Redis-URL: {redis_url}")
             
             # Beende die App-Initialisierung hier, da wir nur den Worker starten wollen
             return None  # Worker hat keine Flask-App
@@ -464,9 +490,11 @@ def init_app(run_mode=None):
         # Payment-Service: Starte speziellen Server
         if run_mode == 'payment':
             from services.payment_service import create_payment_app
+            log_step("Payment-Service", "INFO", "Starte Payment-Service")
             return create_payment_app()
     
     # Standard-App-Modus für API und Web-Funktionen
+    log_step("API-Server", "START", "Initialisiere Flask-Anwendung")
     app = Flask(__name__)
     
     # Protokolliere wichtige Startinformationen
@@ -478,20 +506,20 @@ def init_app(run_mode=None):
         # Generiere einen zufälligen Schlüssel, wenn keiner gesetzt ist
         import secrets
         secret_key = secrets.token_hex(32)
-        logger.warning("Kein FLASK_SECRET_KEY in Umgebungsvariablen gefunden. Verwende einen zufällig generierten Schlüssel (gilt nur für diese Sitzung).")
+        log_step("Sicherheit", "WARNING", "Kein FLASK_SECRET_KEY gefunden. Verwende zufälligen Schlüssel für diese Sitzung.", "warning")
     
     app.secret_key = secret_key
-    logger.info("Secret key für Flask-App und Sessions konfiguriert")
+    log_step("Sicherheit", "SUCCESS", "Secret Key für Sessions konfiguriert")
     
     # Versuche, die beste Redis-Verbindung zu finden
     redis_host, redis_url = test_redis_connections(redis_hosts)
     if redis_url:
-        logger.info(f"API-Server: Erfolgreiche Redis-Verbindung zu {redis_host}: {redis_url}")
+        log_step("Redis", "SUCCESS", f"API-Server: Erfolgreiche Redis-Verbindung zu {redis_host}: {redis_url}")
         # Setze die erfolgreiche Verbindung in Umgebungsvariablen
         os.environ['REDIS_URL'] = redis_url
         os.environ['REDIS_HOST'] = redis_host
     else:
-        logger.warning("API-Server: Konnte keine Redis-Verbindung herstellen!")
+        log_step("Redis", "WARNING", "API-Server: Konnte keine Redis-Verbindung herstellen!")
     
     # Konfiguriere App-Logger mit einheitlicher Formatierung
     app.logger.setLevel(logging.INFO)
@@ -509,14 +537,14 @@ def init_app(run_mode=None):
     try:
         from api.auth import setup_oauth
         setup_oauth(app)
-        logger.info("OAuth erfolgreich initialisiert und in Flask-App eingebunden")
+        log_step("OAuth", "SUCCESS", "OAuth erfolgreich initialisiert und in Flask-App eingebunden")
     except Exception as e:
-        logger.error(f"Fehler bei der OAuth-Konfiguration: {str(e)}")
-        logger.error(traceback.format_exc())
+        log_step("OAuth", "ERROR", f"Fehler bei der OAuth-Konfiguration: {str(e)}")
+        log_step("OAuth", "ERROR", traceback.format_exc())
     
     # Konfiguriere CORS
     cors_origins = setup_cors_origins()
-    logger.info("Finale CORS-Origins: %s", ", ".join(cors_origins))
+    log_step("CORS", "INFO", f"Finale CORS-Origins: %s", ", ".join(cors_origins))
     
     # Initialisiere CORS mit den erlaubten Origins
     CORS(app, 
@@ -642,12 +670,13 @@ def init_app(run_mode=None):
         skipdb = request.args.get('skipdb', 'false').lower() == 'true'
         
         # Log für alle API-Anfragen
-        logger.info(f"HEALTH CHECK AUFGERUFEN: IP={request.remote_addr}, skipdb={skipdb}")
+        log_step("Health-Check", "START", f"IP={request.remote_addr}, skipdb={skipdb}")
         
         # Forciere Log-Ausgabe sofort
         force_flush_handlers()
         
         if skipdb:
+            log_step("Health-Check", "SUCCESS", "DB-Prüfung übersprungen auf Anfrage")
             return jsonify({
                 "status": "healthy",
                 "message": "DB-Prüfung übersprungen auf Anfrage",
@@ -658,12 +687,16 @@ def init_app(run_mode=None):
         
         try:
             # Prüfe Datenbankverbindung mit einer einfachen Abfrage
+            log_step("Health-Check", "INFO", "Prüfe Datenbankverbindung...")
             db.session.execute("SELECT 1")
+            log_step("Health-Check", "SUCCESS", "Datenbankverbindung OK")
             
             # Prüfe Redis-Verbindung, wenn wir im API-Container sind
             if os.environ.get('CONTAINER_TYPE') == 'api':
+                log_step("Health-Check", "INFO", "Prüfe Redis-Verbindung...")
                 from core.redis_client import redis_client
                 redis_client.ping()
+                log_step("Health-Check", "SUCCESS", "Redis-Verbindung OK")
             
             return jsonify({
                 "status": "healthy",
@@ -672,7 +705,7 @@ def init_app(run_mode=None):
                 "version": "1.0.0"
             }), 200
         except Exception as e:
-            logger.error(f"Health check fehlgeschlagen: {e}")
+            log_step("Health-Check", "ERROR", f"Fehlerhafte Komponente: {str(e)}")
             return jsonify({
                 "status": "unhealthy",
                 "error": str(e),
@@ -683,9 +716,7 @@ def init_app(run_mode=None):
     @app.route('/api/v1/ping', methods=['GET'])
     def ping():
         """Einfacher Ping-Endpunkt ohne Datenbankprüfung oder andere Abhängigkeiten"""
-        logger.info(f"PING AUFGERUFEN: IP={request.remote_addr}")
-        api_request_logger.info(f"PING API TEST: {request.method} /api/v1/ping - IP: {request.remote_addr}")
-        app.logger.info(f"APP LOGGER TEST - PING von {request.remote_addr}")
+        log_step("Ping", "INFO", f"Ping-Anfrage von {request.remote_addr}")
         
         # Forciere Log-Ausgabe sofort
         force_flush_handlers()
@@ -702,7 +733,7 @@ def init_app(run_mode=None):
         """
         Liefert den API-Status und grundlegende Informationen.
         """
-        app.logger.info("API-Status-Anfrage erhalten von %s", request.remote_addr)
+        log_step("API-Status", "INFO", f"Anfrage von {request.remote_addr}")
         if request.method == 'OPTIONS':
             response = jsonify({"success": True})
             return response
@@ -722,7 +753,7 @@ def init_app(run_mode=None):
         Ein extrem einfacher Health-Check-Endpunkt für DigitalOcean App Platform,
         der keine Abhängigkeiten wie Datenbank oder Redis prüft.
         """
-        logger.info(f"EINFACHER HEALTH CHECK AUFGERUFEN: IP={request.remote_addr}")
+        log_step("Simple-Health", "SUCCESS", f"Anfrage von {request.remote_addr}")
         force_flush_handlers()
         
         return jsonify({
@@ -730,13 +761,14 @@ def init_app(run_mode=None):
             "message": "Einfacher Health Check - keine DB-Prüfung",
             "timestamp": datetime.now().isoformat(),
             "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
-            "version": "1.0.0"
+            "version": "1.0.0",
+            "environment": os.environ.get('ENVIRONMENT', 'production')
         }), 200
     
     # Globaler Error Handler für 405 Method Not Allowed
     @app.errorhandler(405)
     def method_not_allowed(e):
-        app.logger.warning(f"405 Method Not Allowed: {request.method} {request.path}")
+        log_step("API-Error", "WARNING", f"405 Method Not Allowed: {request.method} {request.path}")
         return jsonify({
             "success": False,
             "error": {
@@ -749,7 +781,7 @@ def init_app(run_mode=None):
     # Globaler Error Handler für 401 Unauthorized
     @app.errorhandler(401)
     def unauthorized(e):
-        app.logger.warning(f"401 Unauthorized: {request.path}")
+        log_step("API-Error", "WARNING", f"401 Unauthorized: {request.path}")
         return jsonify({
             "success": False,
             "error": {
@@ -762,8 +794,16 @@ def init_app(run_mode=None):
     # Globaler Error Handler für alle anderen Fehler
     @app.errorhandler(Exception)
     def handle_exception(e):
-        app.logger.error(f"Unbehandelter Fehler: {str(e)}")
-        app.logger.error(traceback.format_exc())
+        log_step("API-Error", "ERROR", f"Unbehandelter Fehler: {str(e)}")
+        
+        # Verbesserte Diagnose für Worker Timeout
+        if "WORKER TIMEOUT" in str(e):
+            log_step("Worker", "ERROR", "Gunicorn Worker Timeout - Überprüfe blockierende Operationen", "error")
+            # Erfasse Systeminformationen zur Diagnose
+            import psutil
+            memory_info = psutil.virtual_memory()
+            log_step("System-Diagnose", "INFO", 
+                     f"RAM: {memory_info.percent}% genutzt, Verfügbar: {memory_info.available/1024/1024:.1f} MB")
         
         if isinstance(e, HTTPException):
             response = e.get_response()
@@ -877,6 +917,71 @@ def init_app(run_mode=None):
                 "path": path
             }
         }), 404
+    
+    # Debug-Diagnose-Endpunkt für die Anwendung
+    @app.route('/api/v1/debug/diagnose', methods=['GET'])
+    def diagnose():
+        """
+        Diagnose-Endpunkt, der grundlegende Systeminformationen zurückgibt
+        """
+        import psutil
+        import platform
+        
+        log_step("Diagnose", "START", f"Diagnose angefordert von {request.remote_addr}")
+        
+        # Systemressourcen sammeln
+        system_info = {
+            "cpu_percent": psutil.cpu_percent(interval=0.5),
+            "memory": {
+                "total": psutil.virtual_memory().total / (1024 * 1024),  # MB
+                "available": psutil.virtual_memory().available / (1024 * 1024),  # MB
+                "percent": psutil.virtual_memory().percent
+            },
+            "disk": {
+                "total": psutil.disk_usage('/').total / (1024 * 1024 * 1024),  # GB
+                "free": psutil.disk_usage('/').free / (1024 * 1024 * 1024),  # GB
+                "percent": psutil.disk_usage('/').percent
+            },
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "open_file_descriptors": len(psutil.Process().open_files()),
+            "connections": len(psutil.Process().connections()),
+            "threads": psutil.Process().num_threads()
+        }
+        
+        # Container spezifische Informationen
+        container_info = {
+            "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+            "run_mode": os.environ.get('RUN_MODE', 'unknown'),
+            "port": os.environ.get('PORT', 'unknown'),
+            "environment": os.environ.get('ENVIRONMENT', 'production'),
+            "hostname": socket.gethostname(),
+            "pid": os.getpid()
+        }
+        
+        # Redis-Status prüfen
+        redis_status = "unknown"
+        try:
+            from redis import Redis
+            redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+            client = Redis.from_url(redis_url, socket_timeout=2)
+            if client.ping():
+                redis_status = "connected"
+                log_step("Diagnose", "SUCCESS", "Redis-Verbindung erfolgreich")
+            else:
+                redis_status = "ping_failed"
+                log_step("Diagnose", "WARNING", "Redis-Ping fehlgeschlagen")
+        except Exception as e:
+            redis_status = f"error: {str(e)}"
+            log_step("Diagnose", "ERROR", f"Redis-Verbindungsfehler: {str(e)}")
+        
+        return jsonify({
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "system": system_info,
+            "container": container_info,
+            "redis_status": redis_status
+        }), 200
     
     return app
 
