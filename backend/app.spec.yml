@@ -181,7 +181,7 @@ services:
       window: 300s
     # Vereinfachter Health-Check für den Worker (einfacher TCP-Check)
     health_check:
-      http_path: /
+      http_path: /ping
       port: 8080
       initial_delay_seconds: 300
       period_seconds: 60
