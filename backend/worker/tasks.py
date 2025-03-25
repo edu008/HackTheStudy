@@ -112,6 +112,54 @@ api_request_logger.setLevel(log_level if log_api_requests else logging.WARNING)
 api_request_logger.info("🌐 API-Request-Logger aktiviert")
 
 # Umgebungsvariablen protokollieren
+# Umgebungsvariablen bei Startup protokollieren
+def log_environment_variables():
+    important_vars = [
+        "REDIS_URL", "REDIS_HOST", "REDIS_FALLBACK_URLS",
+        "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND",
+        "API_HOST", "API_URL", 
+        "DO_APP_PLATFORM", "DIGITAL_OCEAN_DEPLOYMENT",
+        "CONTAINER_TYPE", "RUN_MODE", "HEALTH_PORT"
+    ]
+    
+    logger.info("=== Worker-Service Umgebungsvariablen ===")
+    for var in important_vars:
+        value = os.environ.get(var, "NICHT GESETZT")
+        # Wenn es ein Passwort enthält, dann zensieren
+        if var.lower().find("password") >= 0 or var.lower().find("secret") >= 0:
+            value = "******" if value != "NICHT GESETZT" else "NICHT GESETZT"
+        logger.info(f"{var}: {value}")
+    
+    # Redis-spezifische Konfiguration anzeigen
+    logger.info("=== Celery & Redis-Konfiguration ===")
+    broker_url = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "NICHT GESETZT"))
+    result_backend = os.environ.get("CELERY_RESULT_BACKEND", os.environ.get("REDIS_URL", "NICHT GESETZT"))
+    logger.info(f"Effektive Broker-URL: {broker_url}")
+    logger.info(f"Effektives Result-Backend: {result_backend}")
+    
+    # IP und DNS-Auflösung testen
+    logger.info("=== Netzwerk-Diagnose ===")
+    try:
+        import socket
+        redis_host = os.environ.get("REDIS_HOST", "localhost")
+        api_host = os.environ.get("API_HOST", "localhost")
+        
+        try:
+            redis_ip = socket.gethostbyname(redis_host)
+            logger.info(f"DNS-Auflösung für REDIS_HOST ({redis_host}): {redis_ip}")
+        except socket.gaierror:
+            logger.error(f"DNS-Auflösung für REDIS_HOST ({redis_host}) fehlgeschlagen")
+        
+        try:
+            api_ip = socket.gethostbyname(api_host)
+            logger.info(f"DNS-Auflösung für API_HOST ({api_host}): {api_ip}")
+        except socket.gaierror:
+            logger.error(f"DNS-Auflösung für API_HOST ({api_host}) fehlgeschlagen")
+    except Exception as e:
+        logger.error(f"Fehler bei Netzwerkdiagnose: {str(e)}")
+    
+    logger.info("========================")
+
 log_environment_variables()
 
 # Decorator zur Funktionsverfolgung
@@ -2168,53 +2216,5 @@ except ImportError:
             raise ImportError("requests-Modul nicht verfügbar")
             
     requests = DummyRequests()
-
-# Umgebungsvariablen bei Startup protokollieren
-def log_environment_variables():
-    important_vars = [
-        "REDIS_URL", "REDIS_HOST", "REDIS_FALLBACK_URLS",
-        "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND",
-        "API_HOST", "API_URL", 
-        "DO_APP_PLATFORM", "DIGITAL_OCEAN_DEPLOYMENT",
-        "CONTAINER_TYPE", "RUN_MODE", "HEALTH_PORT"
-    ]
-    
-    logger.info("=== Worker-Service Umgebungsvariablen ===")
-    for var in important_vars:
-        value = os.environ.get(var, "NICHT GESETZT")
-        # Wenn es ein Passwort enthält, dann zensieren
-        if var.lower().find("password") >= 0 or var.lower().find("secret") >= 0:
-            value = "******" if value != "NICHT GESETZT" else "NICHT GESETZT"
-        logger.info(f"{var}: {value}")
-    
-    # Redis-spezifische Konfiguration anzeigen
-    logger.info("=== Celery & Redis-Konfiguration ===")
-    broker_url = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "NICHT GESETZT"))
-    result_backend = os.environ.get("CELERY_RESULT_BACKEND", os.environ.get("REDIS_URL", "NICHT GESETZT"))
-    logger.info(f"Effektive Broker-URL: {broker_url}")
-    logger.info(f"Effektives Result-Backend: {result_backend}")
-    
-    # IP und DNS-Auflösung testen
-    logger.info("=== Netzwerk-Diagnose ===")
-    try:
-        import socket
-        redis_host = os.environ.get("REDIS_HOST", "localhost")
-        api_host = os.environ.get("API_HOST", "localhost")
-        
-        try:
-            redis_ip = socket.gethostbyname(redis_host)
-            logger.info(f"DNS-Auflösung für REDIS_HOST ({redis_host}): {redis_ip}")
-        except socket.gaierror:
-            logger.error(f"DNS-Auflösung für REDIS_HOST ({redis_host}) fehlgeschlagen")
-        
-        try:
-            api_ip = socket.gethostbyname(api_host)
-            logger.info(f"DNS-Auflösung für API_HOST ({api_host}): {api_ip}")
-        except socket.gaierror:
-            logger.error(f"DNS-Auflösung für API_HOST ({api_host}) fehlgeschlagen")
-    except Exception as e:
-        logger.error(f"Fehler bei Netzwerkdiagnose: {str(e)}")
-    
-    logger.info("========================")
 
 # Umgebungsvariablen beim Start anzeigen (an einer passenden Stelle im Code aufrufen)
