@@ -13,7 +13,8 @@ import json
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 
-from redis.client import get_redis_client
+# Zirkulären Import beheben - import erst wenn benötigt
+# from redis.client import get_redis_client
 from resource_manager.limits import get_memory_usage, get_cpu_usage
 
 # Logger konfigurieren
@@ -91,6 +92,8 @@ def update_health_data():
         
         # Redis-Verbindung prüfen
         try:
+            # Redis-Client verzögert importieren
+            from redis.client import get_redis_client
             redis_client = get_redis_client()
             redis_client.ping()
             redis_status = "connected"
@@ -129,6 +132,8 @@ def update_health_data():
         
         # In Redis speichern für Worker-Zugriff
         try:
+            # Redis-Client verzögert importieren
+            from redis.client import get_redis_client
             redis_client = get_redis_client()
             redis_client.set(
                 "health:api",
