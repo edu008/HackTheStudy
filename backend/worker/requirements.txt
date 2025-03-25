@@ -3,7 +3,7 @@ openai[datalib]==1.10.0  # Für OpenAI-API-Zugriff
 celery==5.3.6            # Für Worker-Tasks
 billiard==4.2.0          # Celery-Abhängigkeit
 kombu==5.3.5             # Celery-Abhängigkeit
-redis==5.0.1             # Für Redis-Verbindung
+redis==4.4.4             # Für Redis-Verbindung
 psycopg2-binary==2.9.9   # Für PostgreSQL-Verbindung
 Flask-SQLAlchemy==3.0.5  # Für Datenbankzugriff
 Flask==2.3.3             # Flask-Framework
