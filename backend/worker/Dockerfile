@@ -78,10 +78,13 @@ RUN mkdir -p /app/config /app/core /app/services /app/api /app/openaicache \
     /var/log/app \
     && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
 
-# Kopiere die Wheels aus dem Builder-Stage und installiere
+# Kopiere die Wheels und requirements.txt aus dem Builder-Stage
 COPY --from=builder /wheels /wheels
+COPY --from=builder /build/requirements.txt /app/requirements.txt
+
+# Installiere die Abhängigkeiten
 RUN pip install --no-index --find-links=/wheels requests==2.31.0 psutil==5.9.5 \
-    && pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
+    && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
 
 # Kopiere die Quellcodedateien

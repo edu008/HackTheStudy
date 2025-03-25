@@ -74,10 +74,13 @@ RUN sed -i 's/bind 127.0.0.1/bind 0.0.0.0/g' /etc/redis/redis.conf \
     && sed -i 's/# maxmemory-policy noeviction/maxmemory-policy allkeys-lru/g' /etc/redis/redis.conf \
     && sed -i 's/# maxmemory <bytes>/maxmemory 128mb/g' /etc/redis/redis.conf
 
-# Kopiere die Wheels aus dem Builder-Stage und installiere
+# Kopiere die Wheels und requirements.txt aus dem Builder-Stage
 COPY --from=builder /wheels /wheels
+COPY --from=builder /build/requirements.txt /app/requirements.txt
+
+# Installiere die Abhängigkeiten
 RUN pip install --no-index --find-links=/wheels gunicorn requests \
-    && pip install --no-index --find-links=/wheels -r /wheels/requirements.txt \
+    && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
 
 # Kopiere die Anwendungsdateien
