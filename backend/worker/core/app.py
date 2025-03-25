@@ -87,7 +87,7 @@ def create_celery_app(redis_url=None):
         Eine konfigurierte Celery-Instanz
     """
     if not redis_url:
-        from backend.worker.config import REDIS_URL
+        from config import REDIS_URL
         redis_url = REDIS_URL
     
     celery_app = Celery(

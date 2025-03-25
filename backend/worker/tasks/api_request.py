@@ -4,8 +4,8 @@ Task zur Verarbeitung von API-Anfragen
 import logging
 import traceback
 import time
-from backend.worker.core import get_flask_app
-from backend.worker.utils import log_function_call
+from core import get_flask_app
+from utils import log_function_call
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)

@@ -11,10 +11,10 @@ import threading
 import signal
 from datetime import datetime
 from celery.exceptions import SoftTimeLimitExceeded
-from backend.worker.core import get_flask_app, acquire_session_lock, release_session_lock
-from backend.worker.redis import redis_client, safe_redis_set, safe_redis_get, log_debug_info
-from backend.worker.utils import log_function_call
-from backend.worker.ressource_manager import handle_worker_timeout
+from core import get_flask_app, acquire_session_lock, release_session_lock
+from redis import redis_client, safe_redis_set, safe_redis_get, log_debug_info
+from utils import log_function_call
+from ressource_manager import handle_worker_timeout
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)

@@ -1,8 +1,8 @@
 """
 Task-Definitionen für den Worker-Microservice
 """
-from backend.worker.tasks.process_upload import register_task as register_process_upload
-from backend.worker.tasks.api_request import register_task as register_api_request
+from tasks.process_upload import register_task as register_process_upload
+from tasks.api_request import register_task as register_api_request
 
 def register_tasks(celery_app):
     """
