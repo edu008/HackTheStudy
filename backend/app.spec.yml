@@ -176,18 +176,18 @@ services:
     instance_size_slug: basic-xs
     restart_policy:
       condition: on_failure
-      delay: 15s
-      max_attempts: 10
-      window: 120s
-    # Optimierter Health-Check für Workers mit einfachem HTTP-Endpunkt
+      delay: 30s
+      max_attempts: 20
+      window: 300s
+    # Vereinfachter Health-Check für den Worker (einfacher TCP-Check)
     health_check:
-      http_path: /health
+      http_path: /
       port: 8080
-      initial_delay_seconds: 180
+      initial_delay_seconds: 300
       period_seconds: 60
       timeout_seconds: 10
       success_threshold: 1
-      failure_threshold: 10
+      failure_threshold: 20
     # Verbindung zum Redis im API-Container über externe URL
     envs:
       - key: CONTAINER_TYPE

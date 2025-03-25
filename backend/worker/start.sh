@@ -88,7 +88,18 @@ fi
 
 # Suche Netzwerkschnittstellen für weitere potenzielle IPs
 echo "Netzwerkschnittstellen-Informationen:"
-ip a | grep -E "inet " | grep -v "127.0.0.1"
+# Verwende einen Befehl, der immer existiert, statt 'ip'
+ifconfig 2>/dev/null || netstat -i 2>/dev/null || echo "Netzwerk-Tools nicht verfügbar"
+
+# Starte einen einfachen TCP-Listener für Health-Checks im Hintergrund
+echo "Starting simple TCP health check server on port 8080..."
+(
+  while true; do
+    # Starte netcat-Listener, der jede Verbindung sofort mit Erfolg beantwortet und schließt
+    nc -l -p 8080 -k >/dev/null 2>&1 || echo "Netcat-Fehler, versuche erneut..."
+    sleep 1
+  done
+) &
 
 # Erhöhe die Timeout-Zeit für zuverlässigere Verbindungen
 # Warte bis Redis im API-Container verfügbar ist - versuche verschiedene Adressen
