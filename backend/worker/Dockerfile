@@ -97,7 +97,7 @@ COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
 COPY core/ ./core/
 COPY health/ ./health/
 COPY redis/ ./redis/
-COPY ressource_manager/ ./resource_manager/
+COPY resource_manager/ ./resource_manager/
 COPY tasks/ ./tasks/
 COPY utils/ ./utils/
 

@@ -26,8 +26,8 @@ try:
     logger = setup_logging() or logger
     
     # Ressourcen-Manager und Signal-Handler
-    from ressource_manager.fd_monitor import check_and_set_fd_limits, monitor_file_descriptors, schedule_periodic_check
-    from ressource_manager.signals import register_signal_handlers
+    from resource_manager.fd_monitor import check_and_set_fd_limits, monitor_file_descriptors, schedule_periodic_check
+    from resource_manager.signals import register_signal_handlers
     
     # Health-Check-Server
     from health.server import start_health_check_server
