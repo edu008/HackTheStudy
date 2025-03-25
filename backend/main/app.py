@@ -272,7 +272,9 @@ def log_environment_variables():
     important_vars = [
         'RUN_MODE', 'CONTAINER_TYPE', 'PORT', 'FLASK_DEBUG', 
         'REDIS_URL', 'REDIS_HOST', 'API_HOST',
-        'DATABASE_URL', 'CELERY_BROKER_URL', 'LOG_LEVEL'
+        'DATABASE_URL', 'CELERY_BROKER_URL', 'LOG_LEVEL',
+        'API_URL', 'CORS_ORIGINS', 'FLASK_APP',
+        'DO_APP_PLATFORM', 'DIGITAL_OCEAN_DEPLOYMENT'
     ]
     
     # Sammle alle verfügbaren kritischen Variablen
@@ -314,6 +316,31 @@ def log_environment_variables():
             redis_hosts.append(host)
     
     log_step("Redis-Verbindungen", "INFO", f"Mögliche Hosts: {', '.join(redis_hosts)}")
+    
+    # Logging einrichten, um Umgebungsvariablen anzuzeigen
+    logger = logging.getLogger("app_startup")
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter('[API] %(levelname)s: %(message)s'))
+    logger.addHandler(handler)
+
+    # Wichtige Umgebungsvariablen ausgeben
+    logger.info("=== API-Service Umgebungsvariablen ===")
+    for var in important_vars:
+        value = os.environ.get(var, "NICHT GESETZT")
+        # Wenn es ein Passwort enthält, dann zensieren
+        if var.lower().find("password") >= 0 or var.lower().find("secret") >= 0:
+            value = "******" if value != "NICHT GESETZT" else "NICHT GESETZT"
+        logger.info(f"{var}: {value}")
+    
+    # Redis-spezifische Konfiguration
+    logger.info("=== Redis-Konfiguration ===")
+    redis_host = os.environ.get("REDIS_HOST", "localhost")
+    redis_port = os.environ.get("REDIS_PORT", "6379")
+    redis_url = os.environ.get("REDIS_URL", f"redis://{redis_host}:{redis_port}/0")
+    logger.info(f"Effektive Redis-URL: {redis_url}")
+    logger.info("========================")
+    
     return redis_hosts
 
 # Konfiguriere Logging
