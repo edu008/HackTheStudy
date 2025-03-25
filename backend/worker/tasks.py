@@ -83,8 +83,7 @@ log_level = getattr(logging, log_level_str.upper(), logging.INFO)
 logging.basicConfig(
     level=log_level,
     # Optimiertes Format für DigitalOcean App Platform Logs - konsistent mit Flask
-    format=f'[%(asctime)s] {log_prefix}[%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
+    format=f'{log_prefix}[%(levelname)s] %(name)s: %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)  # Explizit stdout verwenden für DigitalOcean
     ],
@@ -309,7 +308,7 @@ openai_logger.addHandler(logging.StreamHandler(sys.stdout))
 # Konfiguriere den Handler, um die Logs auf der Konsole auszugeben
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(name)s: %(message)s')
+formatter = logging.Formatter('[%(levelname)s] %(name)s: %(message)s')
 console_handler.setFormatter(formatter)
 openai_logger.addHandler(console_handler)
 

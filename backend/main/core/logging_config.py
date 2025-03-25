@@ -42,14 +42,12 @@ def setup_logging():
             root_logger.removeHandler(handler)
 
     # Angepasstes Logformat mit Präfix
-    log_format = f'[%(asctime)s] {log_prefix}[%(levelname)s] %(name)s: %(message)s'
-    date_format = '%Y-%m-%d %H:%M:%S'
+    log_format = f'{log_prefix}[%(levelname)s] %(name)s: %(message)s'
     
     # Konfiguriere das Logging-System mit verbessertem Format
     logging.basicConfig(
         level=log_level,
         format=log_format,
-        datefmt=date_format,
         handlers=[
             logging.StreamHandler(sys.stdout)
         ],
@@ -91,7 +89,7 @@ def setup_logging():
     
     # Gemeinsamer Handler mit einheitlicher Formatierung
     handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(log_format, date_format)
+    formatter = logging.Formatter(log_format)
     handler.setFormatter(formatter)
     
     for logger_name in special_loggers:
