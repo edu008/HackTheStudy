@@ -32,7 +32,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     CONTAINER_TYPE=worker \
     RUN_MODE=worker \
-    USE_SUPERVISOR=true \
+    USE_SUPERVISOR=false \
     DO_APP_PLATFORM=true \
     USE_COLORED_LOGS=false \
     DIGITAL_OCEAN_DEPLOYMENT=true \
@@ -63,7 +63,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     postgresql-client \
     redis-tools \
-    supervisor \
     netcat-openbsd \
     net-tools \
     procps \
@@ -87,11 +86,8 @@ RUN pip install --no-index --find-links=/wheels requests==2.31.0 psutil==5.9.5 \
     && rm -rf /wheels
 
 # Kopiere die Quellcodedateien der Microservice-Struktur
-# Wichtig: Erst die Config-Verzeichnisse kopieren
+# Erst die Config-Verzeichnisse kopieren
 COPY config/ ./config/
-
-# Dann die Supervisor-Konfiguration
-COPY config/supervisor-worker.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Danach die restlichen Module
 COPY core/ ./core/
@@ -107,8 +103,8 @@ COPY __init__.py .
 
 # Erstelle leere Log-Dateien mit korrekten Berechtigungen
 RUN mkdir -p /var/log/app /var/log/hackthestudy \
-    && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log \
-    && chmod 666 /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log \
+    && touch /var/log/worker-stdout.log /var/log/worker-stderr.log \
+    && chmod 666 /var/log/worker-stdout.log /var/log/worker-stderr.log \
     && chmod 777 /var/log/hackthestudy
 
 # Verbesserter Healthcheck für Worker
@@ -118,5 +114,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Port für Health-Check
 EXPOSE 8080
 
-# Starte den Container mit Supervisor
-CMD exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf 
+# Starte den Worker direkt
+CMD ["python", "app.py"] 

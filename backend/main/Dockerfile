@@ -32,10 +32,9 @@ ENV PYTHONUNBUFFERED=1 \
     FLASK_APP=app.py \
     CONTAINER_TYPE=api \
     LOG_API_REQUESTS=true \
-    USE_SUPERVISOR=true \
+    USE_SUPERVISOR=false \
     DO_APP_PLATFORM=true \
     USE_COLORED_LOGS=false \
-    GUNICORN_WORKERS=2 \
     DIGITAL_OCEAN_DEPLOYMENT=true \
     PORT=8080
 
@@ -47,7 +46,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     redis-tools \
     redis-server \
-    supervisor \
     procps \
     ca-certificates \
     gnupg \
@@ -65,7 +63,7 @@ WORKDIR /app
 RUN mkdir -p /app/config /app/core /app/api /app/redis_utils /app/resource_manager \
     /app/tasks /app/health /app/utils /app/bootstrap /app/openaicache \
     /var/run/redis /var/lib/redis /var/log/redis /var/log/app /var/log/hackthestudy \
-    && touch /var/log/supervisord.log /var/log/app-stdout.log /var/log/app-stderr.log \
+    && touch /var/log/app-stdout.log /var/log/app-stderr.log \
     && chmod 777 /var/run/redis /var/lib/redis /var/log/redis /var/log/hackthestudy \
     && chown -R redis:redis /var/run/redis /var/lib/redis /var/log/redis
 
@@ -105,15 +103,6 @@ COPY bootstrap/ ./bootstrap/
 COPY health/ ./health/
 COPY openaicache/ ./openaicache/
 
-# Kopiere die Gunicorn-Konfigurationsdatei
-COPY config/gunicorn.conf.py ./gunicorn.conf.py
-
-# Supervisord-Konfiguration
-COPY config/supervisor-api.conf /etc/supervisor/conf.d/supervisord.conf
-
-# Stelle sicher, dass keine veralteten Socket-Dateien existieren
-RUN rm -f /var/run/supervisor.sock /tmp/supervisor-*.sock /tmp/supervisord-*.pid
-
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
     echo "* hard nofile 65536" >> /etc/security/limits.conf
@@ -128,5 +117,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # Ports freigeben
 EXPOSE 8080
 
-# Starte den Container mit dem Supervisor direkt
-CMD exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf 
+# Starte Redis im Hintergrund und dann die Flask-Anwendung
+CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && \
+    python app.py 

@@ -51,21 +51,9 @@ except ImportError:
             logger.warning("Redis-Client nicht verfügbar, kein Datenzugriff möglich")
             return False
 
-def main():
-    """Hauptfunktion für das Health-Monitoring."""
-    logger.info("Health-Monitor gestartet")
-    
-    # Für sauberes Herunterfahren
-    stop_event = threading.Event()
-    
-    # Signalhandler für sauberes Herunterfahren
-    def signal_handler(sig, frame):
-        logger.info(f"Signal {sig} empfangen, fahre herunter...")
-        stop_event.set()
-    
-    # Signal-Handler registrieren
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+def health_monitor_task(stop_event):
+    """Die eigentliche Health-Monitor-Aufgabe, die im Thread ausgeführt wird."""
+    logger.info("Health-Monitor-Thread gestartet")
     
     # Startzeitpunkt speichern
     start_time = time.time()
@@ -103,12 +91,49 @@ def main():
             
             # Alle 30 Sekunden prüfen, mit Möglichkeit zum vorzeitigen Abbruch
             stop_event.wait(30)
-    except KeyboardInterrupt:
-        logger.info("Tastaturunterbrechung empfangen, fahre herunter...")
     except Exception as e:
-        logger.error(f"Unerwarteter Fehler: {str(e)}")
+        logger.error(f"Unerwarteter Fehler im Health-Monitor-Thread: {str(e)}")
     finally:
-        logger.info("Health-Monitor wird beendet")
+        logger.info("Health-Monitor-Thread wird beendet")
+
+def start_monitor_thread():
+    """Startet den Health-Monitor als Thread und gibt ihn zurück."""
+    stop_event = threading.Event()
+    
+    # Thread erstellen und starten
+    monitor_thread = threading.Thread(
+        target=health_monitor_task,
+        args=(stop_event,),
+        daemon=True,  # Daemon-Thread beendet sich, wenn Hauptprogramm endet
+        name="HealthMonitorThread"
+    )
+    
+    monitor_thread.start()
+    logger.info("Health-Monitor-Thread gestartet")
+    
+    # Speichere stop_event als Thread-Attribut für späteres sauberes Herunterfahren
+    monitor_thread.stop_event = stop_event
+    
+    return monitor_thread
+
+def main():
+    """Hauptfunktion für das Health-Monitoring."""
+    logger.info("Health-Monitor gestartet")
+    
+    # Für sauberes Herunterfahren
+    stop_event = threading.Event()
+    
+    # Signalhandler für sauberes Herunterfahren
+    def signal_handler(sig, frame):
+        logger.info(f"Signal {sig} empfangen, fahre herunter...")
+        stop_event.set()
+    
+    # Signal-Handler registrieren
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Health-Monitor-Task direkt ausführen
+    health_monitor_task(stop_event)
 
 if __name__ == "__main__":
     main() 

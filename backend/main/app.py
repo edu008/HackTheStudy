@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import logging
+import signal
 from datetime import datetime
 
 # Stelle sicher, dass Verzeichnis-Struktur zum Pfad hinzugefügt wird
@@ -46,6 +47,34 @@ def root():
         "timestamp": datetime.now().isoformat()
     })
 
+# Signal-Handler für graceful shutdown
+def signal_handler(sig, frame):
+    logger.info("Signal empfangen, beende Anwendung...")
+    sys.exit(0)
+
+# Registriere Signal-Handler
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 # Führe die Anwendung aus, wenn diese Datei direkt aufgerufen wird
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    port = int(os.environ.get('PORT', 5000))
+    host = os.environ.get('HOST', '0.0.0.0')
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    
+    logger.info(f"Starte API auf {host}:{port}, Debug-Modus: {debug}")
+    
+    try:
+        # Starte den Health-Monitor in einem separaten Thread
+        try:
+            from health_monitor import start_monitor_thread
+            monitor_thread = start_monitor_thread()
+            logger.info("Health-Monitor im Hintergrund gestartet")
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Health-Monitor konnte nicht gestartet werden: {e}")
+        
+        # Starte die Flask-Anwendung
+        app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
+    except Exception as e:
+        logger.error(f"Fehler beim Starten der Anwendung: {e}")
+        sys.exit(1)
