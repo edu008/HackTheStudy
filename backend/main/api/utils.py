@@ -1521,16 +1521,36 @@ def unified_content_processing(text, client, file_names=None, user_id=None, lang
         prompt_length=len(system_content)
     )
     
-    # Implementierung des restlichen Codes für die Funktion
-    # Platzhalter, um die Funktion syntaktisch korrekt zu beenden
-    return {
-        "main_topic": "Automatisch generiert",
-        "subtopics": [],
-        "estimated_flashcards": min_flashcards,
-        "estimated_questions": min_questions,
-        "key_terms": [],
-        "content_type": "unknown"
-    }
+    try:
+        # Implementierung des restlichen Codes für die Funktion
+        # Platzhalter, um die Funktion syntaktisch korrekt zu beenden
+        return {
+            "main_topic": "Automatisch generiert",
+            "subtopics": [],
+            "estimated_flashcards": min_flashcards,
+            "estimated_questions": min_questions,
+            "key_terms": [],
+            "content_type": "unknown"
+        }
+    except Exception as e:
+        # Fehlerbehandlung
+        error_message = f"Fehler bei der einheitlichen Inhaltsverarbeitung: {str(e)}"
+        AppLogger.structured_log(
+            "ERROR",
+            error_message,
+            session_id=session_id,
+            component="content_processor",
+            exception=traceback.format_exc()
+        )
+        return {
+            "error": error_message,
+            "main_topic": "Fehler bei der Verarbeitung",
+            "subtopics": [],
+            "estimated_flashcards": min_flashcards,
+            "estimated_questions": min_questions,
+            "key_terms": [],
+            "content_type": "unknown"
+        }
 
 def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=None):
     """
