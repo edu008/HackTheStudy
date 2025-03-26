@@ -67,8 +67,7 @@ def create_app(config_name='default'):
         # KEINE FEHLER WERFEN - App muss für Health-Checks starten
         app.logger.warning("⚠️ App startet trotz Redis-Fehler, damit Health-Checks funktionieren")
         # Erstelle einen Dummy-Redis-Client für das Main-Backend
-        from redis.client import Redis
-        class DummyRedis(Redis):
+        class DummyRedis:
             def __init__(self, *args, **kwargs):
                 pass
             def ping(self):
@@ -80,6 +79,11 @@ def create_app(config_name='default'):
             def set(self, *args, **kwargs):
                 app.logger.warning("DummyRedis.set() aufgerufen")
                 return True
+            def __getattr__(self, name):
+                def dummy_method(*args, **kwargs):
+                    app.logger.warning(f"DummyRedis.{name} aufgerufen")
+                    return None
+                return dummy_method
         
         # Verwende den Dummy-Redis
         redis_client = DummyRedis()
@@ -93,9 +97,15 @@ def create_app(config_name='default'):
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(api_v1_bp, url_prefix='/api/v1')
     
-    # Health-Monitoring starten
-    from health.monitor import start_health_monitor
-    start_health_monitor(app)
+    # Health-Monitoring starten - Korrekter Funktionsname
+    try:
+        from health.monitor import start_health_monitoring
+        start_health_monitoring(app)
+        app.logger.info(f"✅ Health-Monitoring erfolgreich gestartet")
+    except ImportError as e:
+        app.logger.warning(f"⚠️ Fehler beim Importieren des Health-Monitorings: {str(e)} - überspringe")
+    except Exception as e:
+        app.logger.error(f"❌ Fehler beim Starten des Health-Monitorings: {str(e)}")
     
     # Explizit Health-Check-Server auf Port 8080 starten für Kubernetes/DigitalOcean Checks
     try:
