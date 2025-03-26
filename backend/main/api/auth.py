@@ -202,7 +202,9 @@ def login(provider):
             return jsonify({"success": False, "error": {"code": "PROVIDER_ERROR", "message": f"Error creating OAuth client for {provider}"}}), 500
         
         # Use the exact redirect URI that matches the OAuth app configuration
-        redirect_uri = url_for('api.auth.callback', provider=provider, _external=True)
+        # Erzwinge HTTPS für die Redirect-URI
+        redirect_uri = url_for('api.auth.callback', provider=provider, _external=True, _scheme='https')
+        logger.info(f"Redirect URI für {provider}: {redirect_uri}")
         return oauth_client.authorize_redirect(redirect_uri)
     except Exception as e:
         logger.error(f"Fehler beim Redirect zu {provider}: {str(e)}")
