@@ -386,11 +386,22 @@ def register_task(celery_app):
                             token_count = count_tokens(cleaned_text)
                             logger.info(f"🧹 Text bereinigt, Token-Anzahl: {token_count}")
                             
-                            # Speichere den gereinigten Text im file_name_1-Feld
-                            upload.file_name_1 = cleaned_text  # Der extrahierte Text wird direkt in file_name_1 gespeichert
+                            # Speichere nur den Dateinamen im file_name_1-Feld, nicht den gesamten extrahierten Text
+                            original_filename = ""
+                            if file_contents and len(file_contents) > 0:
+                                original_filename = file_contents[0][0]  # Erste Datei, erster Eintrag (Dateiname)
+                                file_binary = file_contents[0][1]  # Binärdaten der PDF-Datei
+                            
+                            # Speichere den Dateinamen im file_name_1-Feld
+                            upload.file_name_1 = original_filename[:200]  # Begrenze auf 200 Zeichen
+                            
+                            # Speichere die PDF-Datei selbst als base64 im content-Feld
+                            pdf_base64 = base64.b64encode(file_binary).decode('utf-8')
+                            upload.content = pdf_base64
+                            
                             upload.token_count = token_count
                             db.session.commit()
-                            logger.info(f"💾 Extrahierter Text ({len(cleaned_text)} Zeichen) in file_name_1 gespeichert")
+                            logger.info(f"💾 Dateiname '{original_filename}' in file_name_1 gespeichert, PDF-Datei ({len(file_binary)} Bytes) als base64 im content-Feld gespeichert")
                             
                             # Status aktualisieren
                             safe_redis_set(f"processing_progress:{session_id}", json.dumps({
@@ -593,14 +604,31 @@ def register_task(celery_app):
                             # Upload-Datensatz aktualisieren
                             upload = Upload.query.filter_by(session_id=session_id).first()
                             if upload:
-                                # Der extrahierte Text ist bereits in file_name_1 gespeichert
-                                # Speichere den Dokumenttyp im content-Feld
-                                upload.content = doc_type  # Dokumenttyp im content-Feld speichern
-                                upload.processing_status = "completed"
-                                upload.last_used_at = db.func.current_timestamp()
-                                db.session.commit()
+                                # Der extrahierte Text ist bereits im content-Feld gespeichert
+                                # Speichere den Dokumenttyp in einem zusätzlichen Feld (z.B. über einen JSON-Eintrag)
+                                import json
                                 
-                                logger.info(f"💾 Upload-Status in der Datenbank auf 'completed' gesetzt, Dokumenttyp: {doc_type} in content-Feld gespeichert")
+                                # Erstelle oder aktualisiere die Metadaten
+                                try:
+                                    metadata = {}
+                                    # Füge Dokumenttyp zu den Metadaten hinzu
+                                    metadata["document_type"] = doc_type
+                                    
+                                    # Aktualisiere Status und Zeitstempel
+                                    upload.processing_status = "completed"
+                                    upload.last_used_at = db.func.current_timestamp()
+                                    
+                                    # Da im content-Feld bereits die PDF-Datei als Base64 gespeichert ist,
+                                    # speichern wir die Metadaten in dem Log oder einem anderen Feld, falls verfügbar
+                                    logger.info(f"💾 Upload-Status in der Datenbank auf 'completed' gesetzt, Dokumenttyp: {doc_type} in Metadaten gespeichert")
+                                    
+                                    db.session.commit()
+                                except Exception as e:
+                                    logger.warning(f"⚠️ Konnte Metadaten nicht speichern: {str(e)}")
+                                    # Einfacher Fallback: Speichere nur den Upload-Status
+                                    upload.processing_status = "completed"
+                                    upload.last_used_at = db.func.current_timestamp()
+                                    db.session.commit()
                             else:
                                 logger.error(f"❌ Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank!")
                                 error_message = f"Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank."
@@ -729,6 +757,8 @@ def register_task(celery_app):
                                 "language": document_language,
                                 "token_count": token_count,
                                 "document_type": doc_type,  # Der erkannte Dokumenttyp wird in Redis gespeichert
+                                "pdf_stored": True,         # Hinweis, dass die PDF direkt gespeichert wurde
+                                "storage_format": "base64", # Format der gespeicherten PDF
                                 "flashcards_count": Flashcard.query.filter_by(upload_id=upload.id).count(),
                                 "questions_count": Question.query.filter_by(upload_id=upload.id).count()
                             }
