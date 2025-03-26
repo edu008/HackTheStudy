@@ -64,9 +64,9 @@ WORKDIR /app
 # Erstelle alle benötigten Verzeichnisse für die Anwendung und Logs
 RUN mkdir -p /app/config /app/core /app/api /app/redis_utils /app/resource_manager \
     /app/tasks /app/health /app/utils /app/bootstrap /app/openaicache \
-    /var/run/redis /var/lib/redis /var/log/redis /var/log/app \
+    /var/run/redis /var/lib/redis /var/log/redis /var/log/app /var/log/hackthestudy \
     && touch /var/log/supervisord.log /var/log/app-stdout.log /var/log/app-stderr.log \
-    && chmod 777 /var/run/redis /var/lib/redis /var/log/redis \
+    && chmod 777 /var/run/redis /var/lib/redis /var/log/redis /var/log/hackthestudy \
     && chown -R redis:redis /var/run/redis /var/lib/redis /var/log/redis
 
 # Redis-Konfiguration für bessere Stabilität und Performance

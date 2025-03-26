@@ -75,7 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Erstelle alle benötigten Verzeichnisse
-RUN mkdir -p /app/config /app/core /app/health /app/redis_utils /app/resource_manager /app/tasks /app/utils /var/log/app
+RUN mkdir -p /app/config /app/core /app/health /app/redis_utils /app/resource_manager /app/tasks /app/utils /var/log/app /var/log/hackthestudy
 
 # Kopiere die Wheels und requirements.txt aus dem Builder-Stage
 COPY --from=builder /wheels /wheels
@@ -106,9 +106,10 @@ COPY app.py .
 COPY __init__.py .
 
 # Erstelle leere Log-Dateien mit korrekten Berechtigungen
-RUN mkdir -p /var/log/app \
+RUN mkdir -p /var/log/app /var/log/hackthestudy \
     && touch /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log \
-    && chmod 666 /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log
+    && chmod 666 /var/log/supervisord.log /var/log/worker-stdout.log /var/log/worker-stderr.log \
+    && chmod 777 /var/log/hackthestudy
 
 # Verbesserter Healthcheck für Worker
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
