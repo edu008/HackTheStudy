@@ -38,6 +38,22 @@ if 'redis://http://' in REDIS_URL:
         hostname = host_match.group(1)
         REDIS_URL = f"redis://{hostname}:6379/0"
 
+# Weitere Prüfung für ungültiges Redis-URL-Format
+if ':' in REDIS_URL and not REDIS_URL.startswith('redis://'):
+    # Wenn URL wie "hackthestudy-backend-main:8080:6379/0" aussieht
+    parts = REDIS_URL.split(':')
+    if len(parts) >= 3:  # Format hostname:port1:port2/db
+        hostname = parts[0]
+        # Nehme immer den port vor dem slash als Redis-Port
+        redis_port = parts[-1].split('/')[0] if '/' in parts[-1] else parts[-1]
+        # Wenn port2 ist 6379, benutze das
+        redis_port = parts[-2] if parts[-2] == '6379' else redis_port
+        db = parts[-1].split('/')[1] if '/' in parts[-1] else '0'
+        REDIS_URL = f"redis://{hostname}:{redis_port}/{db}"
+        
+# Schreibe Debug-Logs
+print(f"REDIS_URL nach Bereinigung: {REDIS_URL}")
+
 # Setze das bereinigte Ergebnis in die Umgebungsvariablen zurück
 os.environ['REDIS_HOST'] = REDIS_HOST
 os.environ['REDIS_URL'] = REDIS_URL
