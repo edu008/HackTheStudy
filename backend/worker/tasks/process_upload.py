@@ -213,7 +213,7 @@ def register_task(celery_app):
                     
                     # Aktualisiere Datenbankstatus auf "processing"
                     try:
-                        from core.models import db, Upload
+                        from core.models import db, Upload, Topic, Flashcard, Question, Connection, UserActivity
                         
                         logger.info(f"💾 Aktualisiere Datenbankstatus für Session {session_id} auf 'processing'")
                         upload = Upload.query.filter_by(session_id=session_id).first()
@@ -223,7 +223,6 @@ def register_task(celery_app):
                             if upload.processing_status == 'completed':
                                 logger.info(f"Upload wurde bereits verarbeitet, prüfe auf bestehende Daten...")
                                 # Prüfe, ob bereits Daten vorhanden sind
-                                from core.models import Topic, Flashcard, Question
                                 topics_count = Topic.query.filter_by(upload_id=upload.id).count()
                                 flashcards_count = Flashcard.query.filter_by(upload_id=upload.id).count()
                                 questions_count = Question.query.filter_by(upload_id=upload.id).count()
@@ -638,18 +637,31 @@ def register_task(celery_app):
                                         # Lösche die überschüssigen Uploads
                                         logger.info(f"Lösche {len(uploads_to_delete)} überschüssige Uploads für Benutzer {user_id}")
                                         for upload_to_delete in uploads_to_delete:
-                                            logger.info(f"Lösche Upload {upload_to_delete.id}, Session {upload_to_delete.session_id}")
-                                            
+                                            # Separate Transaktion für jeden Upload um fortfahren zu können, wenn einer fehlschlägt
                                             try:
-                                                # Lösche zugehörige Daten
-                                                Topic.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                logger.info(f"Lösche Upload {upload_to_delete.id}, Session {upload_to_delete.session_id}")
+                                                
+                                                # WICHTIG: Korrekte Reihenfolge des Löschens - erst Abhängigkeiten, dann Haupteinträge
+                                                # 1. Lösche zuerst die Verbindungen (diese referenzieren Topics)
+                                                Connection.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                logger.info(f"Verbindungen für Upload {upload_to_delete.id} gelöscht")
+                                                
+                                                # 2. Lösche andere abhängige Daten
                                                 Flashcard.query.filter_by(upload_id=upload_to_delete.id).delete()
                                                 Question.query.filter_by(upload_id=upload_to_delete.id).delete()
-                                                Connection.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                
+                                                # 3. Lösche jetzt die Topics
+                                                Topic.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                
+                                                # 4. Lösche UserActivity-Einträge
                                                 UserActivity.query.filter_by(session_id=upload_to_delete.session_id).delete()
                                                 
-                                                # Lösche den Upload selbst
+                                                # 5. Schließlich den Upload selbst löschen
                                                 db.session.delete(upload_to_delete)
+                                                
+                                                # Commit für diesen einzelnen Upload
+                                                db.session.commit()
+                                                logger.info(f"Upload {upload_to_delete.id} erfolgreich aus der Datenbank gelöscht")
                                                 
                                                 # Lösche Redis-Schlüssel
                                                 session_to_delete = upload_to_delete.session_id
@@ -669,13 +681,15 @@ def register_task(celery_app):
                                                 ]
                                                 for key in redis_keys:
                                                     redis_client.delete(key)
+                                                    
                                             except Exception as delete_error:
+                                                # Bei einem Fehler: Rollback nur für diesen Upload und mit dem nächsten fortfahren
+                                                db.session.rollback()
                                                 logger.error(f"Fehler beim Löschen von Upload {upload_to_delete.id}: {str(delete_error)}")
-                                                # Fahre mit dem nächsten Upload fort
+                                                logger.error(traceback.format_exc())
+                                                # Wir machen mit dem nächsten Upload weiter
                                                 continue
                                         
-                                        # Speichere alle Änderungen
-                                        db.session.commit()
                                         logger.info(f"Alle überschüssigen Uploads für Benutzer {user_id} wurden gelöscht")
                                     else:
                                         logger.info(f"Benutzer {user_id} hat nur {total_uploads} Uploads, kein Löschen nötig")

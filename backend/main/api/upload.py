@@ -185,17 +185,30 @@ def upload_file():
                             component="session_management"
                         )
                         
-                        # Lösche alle verknüpften Daten
-                        Flashcard.query.filter_by(upload_id=upload_id).delete()
-                        Topic.query.filter_by(upload_id=upload_id).delete()
-                        Question.query.filter_by(upload_id=upload_id).delete()
+                        # WICHTIG: Korrekte Reihenfolge beim Löschen - erst Abhängigkeiten, dann Haupteinträge
+                        # 1. Zuerst Verbindungen löschen, weil sie auf Topics verweisen
                         Connection.query.filter_by(upload_id=upload_id).delete()
+                        AppLogger.structured_log(
+                            "INFO", 
+                            f"Verbindungen für Upload {upload_id} gelöscht",
+                            user_id=user_id,
+                            component="session_management"
+                        )
+                        
+                        # 2. Andere abhängige Daten löschen
+                        Flashcard.query.filter_by(upload_id=upload_id).delete()
+                        Question.query.filter_by(upload_id=upload_id).delete()
+                        
+                        # 3. Topics löschen (nachdem Verbindungen gelöscht wurden)
+                        Topic.query.filter_by(upload_id=upload_id).delete()
+                        
+                        # 4. UserActivity-Einträge löschen
                         UserActivity.query.filter_by(session_id=session_id).delete()
                         
-                        # Lösche den Upload selbst
+                        # 5. Schließlich den Upload selbst löschen
                         db.session.delete(upload)
                         
-                        # Committe die Änderungen sofort
+                        # Commit der Änderungen sofort für jeden Upload
                         db.session.commit()
                         
                         # Lösche auch zugehörige Redis-Daten
