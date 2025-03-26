@@ -107,15 +107,8 @@ def create_app(config_name='default'):
     except Exception as e:
         app.logger.error(f"❌ Fehler beim Starten des Health-Monitorings: {str(e)}")
     
-    # Explizit Health-Check-Server auf Port 8080 starten für Kubernetes/DigitalOcean Checks
-    try:
-        from health.server import setup_health_server
-        health_port = int(os.environ.get('HEALTH_PORT', 8080))
-        app.logger.info(f"Starte Health-Check-Server auf Port {health_port}")
-        setup_health_server(health_port, app)
-        app.logger.info(f"✅ Health-Check-Server erfolgreich gestartet auf Port {health_port}")
-    except Exception as e:
-        app.logger.error(f"❌ Fehler beim Starten des Health-Check-Servers: {str(e)}")
+    # Kein separater Health-Check-Server mehr - Health-Checks direkt in Flask integriert
+    app.logger.info("Health-Checks sind direkt in der Flask-App unter /health, /ping, etc. verfügbar")
     
     app.logger.info("App initialisiert im %s-Modus", config_name)
     return app
@@ -203,7 +196,7 @@ def _setup_health_monitoring(app: Flask):
         # Health-Check-Server starten (falls aktiviert)
         if os.environ.get('ENABLE_HEALTH_SERVER', 'false').lower() == 'true':
             port = int(os.environ.get('HEALTH_SERVER_PORT', '8080'))
-            setup_health_server(port)
+            setup_health_server(port, app)
             logger.info(f"Health-Check-Server auf Port {port} gestartet")
     except Exception as e:
         logger.error(f"Fehler beim Starten des Health-Monitorings: {str(e)}")
