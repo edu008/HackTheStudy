@@ -105,6 +105,14 @@ def create_app(config_name='default'):
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(api_v1_bp, url_prefix='/api/v1')
     
+    # OAuth-Konfiguration initialisieren
+    try:
+        from api import setup_oauth
+        setup_oauth(app)
+        app.logger.info("✅ OAuth erfolgreich konfiguriert (Google, GitHub)")
+    except Exception as e:
+        app.logger.error(f"❌ Fehler bei der OAuth-Konfiguration: {str(e)}")
+    
     # Health-Monitoring starten - Korrekter Funktionsname
     try:
         from health.monitor import start_health_monitoring
