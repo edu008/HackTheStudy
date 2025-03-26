@@ -151,11 +151,12 @@ def upload_file():
                     user_id=user_id,
                     component="session_management"
                 )
-                old_deleted = check_and_manage_user_sessions(user_id)
-                if old_deleted:
+                # Setze max_sessions=5 und session_to_exclude=None für die Überprüfung
+                sessions_removed = check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=None)
+                if sessions_removed:
                     AppLogger.structured_log(
                         "INFO",
-                        f"Eine alte Session wurde gelöscht, da der Benutzer das Limit erreicht hat",
+                        f"Alte Sessions wurden gelöscht, da der Benutzer das Limit erreicht hat",
                         user_id=user_id,
                         component="session_management"
                     )

@@ -1523,108 +1523,146 @@ def unified_content_processing(text, client, file_names=None, user_id=None, lang
     
     # ... rest of the function remains unchanged ...
 
-def check_and_manage_user_sessions(user_id):
+def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=None):
     """
-    Überprüft, ob ein Benutzer bereits 5 Sessions hat und löscht gegebenenfalls die älteste,
-    BEVOR ein neuer Upload eingefügt wird.
+    Überprüft und begrenzt die Anzahl der aktiven Sessions eines Benutzers.
+    Löscht die ältesten Sessions (basierend auf last_used_at), wenn die maximale Anzahl überschritten wird.
+    NULL-Werte in last_used_at werden als älteste betrachtet und priorisiert gelöscht.
     
     Args:
         user_id (str): Die ID des Benutzers
-        
+        max_sessions (int): Maximale Anzahl erlaubter Sessions (Standard: 5)
+        session_to_exclude (str): Eine Session-ID, die von der Zählung ausgeschlossen werden soll
+    
     Returns:
-        bool: True, wenn eine Session gelöscht wurde, False sonst
+        bool: True, wenn die maximale Anzahl der Sessions nicht überschritten wurde, 
+              False, wenn eine oder mehrere Sessions gelöscht wurden
     """
     if not user_id:
-        return False
+        return True
     
-    try:
-        # Finde alle Sessions des Benutzers, sortiert nach letzter Nutzung (älteste zuerst)
-        user_uploads = Upload.query.filter_by(user_id=user_id).order_by(Upload.last_used_at.asc()).all()
+    sessions_removed = False
+    
+    # SQL-Abfrage, um Uploads zu holen:
+    # 1. Sessions mit NULL in last_used_at zuerst
+    # 2. Dann nach last_used_at aufsteigend sortiert (älteste zuerst)
+    user_sessions = Upload.query.filter_by(
+        user_id=user_id
+    ).order_by(
+        Upload.last_used_at.is_(None).desc(),  # NULL-Werte zuerst
+        Upload.last_used_at.asc()              # Dann nach Alter sortiert (älteste zuerst)
+    ).all()
+    
+    # Wenn session_to_exclude angegeben ist, diese ausschließen
+    if session_to_exclude:
+        user_sessions = [s for s in user_sessions if s.session_id != session_to_exclude]
+    
+    # Wenn die Anzahl der Sessions das Maximum überschreitet, lösche die ältesten
+    excess_count = len(user_sessions) - max_sessions
+    if excess_count > 0:
+        AppLogger.structured_log(
+            "INFO",
+            f"Benutzer {user_id} hat {len(user_sessions)} Sessions, Maximum ist {max_sessions}. Lösche {excess_count} älteste(n).",
+            user_id=user_id,
+            component="check_and_manage_user_sessions"
+        )
         
-        # Wenn der Benutzer bereits 5 oder mehr Sessions hat
-        if len(user_uploads) >= 5:
-            oldest_upload = user_uploads[0]
-            oldest_session_id = oldest_upload.session_id
-            
-            # Verwende strukturiertes Logging
-            AppLogger.structured_log(
-                "INFO",
-                f"Benutzer {user_id} hat bereits {len(user_uploads)} Sessions. Lösche älteste Session: {oldest_session_id}",
-                component="session_management",
-                user_id=user_id,
-                session_id=oldest_session_id,
-                last_used=oldest_upload.last_used_at.isoformat() if oldest_upload.last_used_at else None
-            )
-            
-            # Lösche alle mit der Session verbundenen Daten
-            # 1. Lösche alle Flashcards
-            Flashcard.query.filter_by(upload_id=oldest_upload.id).delete()
-            
-            # 2. Lösche alle Fragen
-            Question.query.filter_by(upload_id=oldest_upload.id).delete()
-            
-            # 3. Lösche alle Verbindungen
-            Connection.query.filter_by(upload_id=oldest_upload.id).delete()
-            
-            # 4. Lösche alle Themen
-            Topic.query.filter_by(upload_id=oldest_upload.id).delete()
-            
-            # 5. Lösche alle Benutzeraktivitäten für diese Session
-            UserActivity.query.filter_by(session_id=oldest_session_id).delete()
-            
-            # 6. Lösche den Upload-Eintrag selbst
-            db.session.delete(oldest_upload)
-            
-            # Commit der Änderungen
-            db.session.commit()
-            
-            # Lösche auch alle in Redis gespeicherten Daten für diese Session
-            try:
-                keys_to_delete = [
-                    f"processing_status:{oldest_session_id}",
-                    f"processing_progress:{oldest_session_id}",
-                    f"processing_start_time:{oldest_session_id}",
-                    f"processing_heartbeat:{oldest_session_id}",
-                    f"processing_last_update:{oldest_session_id}",
-                    f"processing_details:{oldest_session_id}",
-                    f"processing_result:{oldest_session_id}",
-                    f"task_id:{oldest_session_id}",
-                    f"error_details:{oldest_session_id}",
-                    f"openai_error:{oldest_session_id}"
-                ]
+        for i in range(excess_count):
+            if i < len(user_sessions):
+                session_to_remove = user_sessions[i]
                 
-                # Verwende Redis pipeline für effizientes Löschen
-                pipeline = redis_client.pipeline()
-                for key in keys_to_delete:
-                    pipeline.delete(key)
-                pipeline.execute()
-                
+                # Debug-Ausgabe für last_used_at-Wert
+                last_used_value = "NULL" if session_to_remove.last_used_at is None else session_to_remove.last_used_at.isoformat()
                 AppLogger.structured_log(
                     "INFO",
-                    f"Redis-Daten für Session {oldest_session_id} gelöscht",
-                    component="session_management",
+                    f"Lösche Session {session_to_remove.session_id} mit last_used_at={last_used_value}",
                     user_id=user_id,
-                    session_id=oldest_session_id
+                    component="check_and_manage_user_sessions"
                 )
-            except Exception as redis_error:
-                AppLogger.track_error(
-                    oldest_session_id,
-                    "redis_cleanup_error",
-                    f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
-                    trace=traceback.format_exc()
-                )
-            
-            return True
-    except Exception as e:
-        AppLogger.track_error(
-            None,
-            "session_management_error",
-            f"Fehler beim Löschen der ältesten Session: {str(e)}",
-            trace=traceback.format_exc()
-        )
-        db.session.rollback()
+                
+                # Lösche alle verknüpften Daten (Themen, Karteikarten, Fragen, etc.)
+                try:
+                    # Lösche zugehörige Karteikarten
+                    Flashcard.query.filter_by(upload_id=session_to_remove.id).delete()
+                    
+                    # Lösche zugehörige Themen
+                    Topic.query.filter_by(upload_id=session_to_remove.id).delete()
+                    
+                    # Lösche zugehörige Fragen
+                    Question.query.filter_by(upload_id=session_to_remove.id).delete()
+                    
+                    # Lösche zugehörige Verbindungen
+                    Connection.query.filter_by(upload_id=session_to_remove.id).delete()
+                    
+                    # Lösche zugehörige Benutzeraktivitäten
+                    UserActivity.query.filter_by(session_id=session_to_remove.session_id).delete()
+                    
+                    # Lösche den Upload-Eintrag selbst
+                    db.session.delete(session_to_remove)
+                    
+                    # Commit nach jedem gelöschten Upload
+                    db.session.commit()
+                    
+                    sessions_removed = True
+                    AppLogger.structured_log(
+                        "INFO",
+                        f"Upload {session_to_remove.session_id} gelöscht, da Benutzer Limit erreicht hat",
+                        user_id=user_id,
+                        session_id=session_to_remove.session_id,
+                        component="check_and_manage_user_sessions"
+                    )
+                    
+                    # Lösche auch alle in Redis gespeicherten Daten für diese Session
+                    try:
+                        from redis_connection import redis_client
+                        keys_to_delete = [
+                            f"processing_status:{session_to_remove.session_id}",
+                            f"processing_progress:{session_to_remove.session_id}",
+                            f"processing_start_time:{session_to_remove.session_id}",
+                            f"processing_heartbeat:{session_to_remove.session_id}",
+                            f"processing_last_update:{session_to_remove.session_id}",
+                            f"processing_details:{session_to_remove.session_id}",
+                            f"processing_result:{session_to_remove.session_id}",
+                            f"task_id:{session_to_remove.session_id}",
+                            f"error_details:{session_to_remove.session_id}",
+                            f"openai_error:{session_to_remove.session_id}",
+                            f"all_data_stored:{session_to_remove.session_id}"
+                        ]
+                        
+                        # Verwende Redis pipeline für effizientes Löschen
+                        pipeline = redis_client.pipeline()
+                        for key in keys_to_delete:
+                            pipeline.delete(key)
+                        pipeline.execute()
+                        
+                        AppLogger.structured_log(
+                            "INFO",
+                            f"Redis-Daten für Session {session_to_remove.session_id} gelöscht",
+                            user_id=user_id,
+                            session_id=session_to_remove.session_id,
+                            component="check_and_manage_user_sessions"
+                        )
+                    except Exception as redis_error:
+                        AppLogger.structured_log(
+                            "ERROR",
+                            f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
+                            user_id=user_id,
+                            session_id=session_to_remove.session_id,
+                            component="check_and_manage_user_sessions",
+                            exception=traceback.format_exc()
+                        )
+                except Exception as e:
+                    db.session.rollback()
+                    AppLogger.structured_log(
+                        "ERROR",
+                        f"Fehler beim Löschen des Uploads: {str(e)}",
+                        user_id=user_id,
+                        session_id=session_to_remove.session_id,
+                        component="check_and_manage_user_sessions",
+                        exception=traceback.format_exc()
+                    )
     
-    return False
+    return not sessions_removed
 
 def update_session_timestamp(session_id):
     """
