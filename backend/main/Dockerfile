@@ -121,4 +121,15 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
 EXPOSE 8080
 
 # Starte Redis im Hintergrund und dann die Flask-Anwendung
-CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && python app.py 
+CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && \
+    echo "Redis gestartet, warte 2 Sekunden..." && \
+    sleep 2 && \
+    redis-cli ping && \
+    echo "Redis bereit, starte Flask-App..." && \
+    export FLASK_APP=app.py && \
+    export FLASK_RUN_HOST=0.0.0.0 && \
+    export FLASK_RUN_PORT=8080 && \
+    export PORT=8080 && \
+    export REDIS_URL=redis://localhost:6379/0 && \
+    export REDIS_HOST=localhost && \
+    python app.py 

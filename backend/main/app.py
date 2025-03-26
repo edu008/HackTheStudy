@@ -76,15 +76,23 @@ app = create_app()
 # Definiere die Health-Check-Endpunkte direkt in der app.py, um sicherzustellen, dass sie verfügbar sind
 @app.route('/api/v1/simple-health', methods=['GET'])
 def simple_health():
-    """Einfacher Health-Check-Endpunkt für Docker/DigitalOcean Healthchecks.
-    Dieser Endpunkt wird im Dockerfile für den Health-Check verwendet."""
-    logger.info(f"Simple-Health-Anfrage empfangen")
+    """Einfacher Health-Check-Endpunkt für Docker/DigitalOcean Healthchecks."""
+    logger.info(f"HEALTH-CHECK: Simple-Health-Anfrage empfangen von {request.remote_addr}")
+    print(f"DIREKT-PRINT: Simple-Health-Anfrage empfangen von {request.remote_addr}", flush=True)
     return "ok", 200
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Allgemeiner Health-Check-Endpunkt."""
+    logger.info(f"HEALTH-CHECK: Health-Anfrage empfangen von {request.remote_addr}")
+    print(f"DIREKT-PRINT: Health-Anfrage empfangen von {request.remote_addr}", flush=True)
+    return "healthy", 200
 
 @app.route('/ping', methods=['GET'])
 def ping():
     """Einfacher Ping-Endpunkt für Health-Checks."""
-    logger.info(f"Ping-Anfrage empfangen")
+    logger.info(f"HEALTH-CHECK: Ping-Anfrage empfangen von {request.remote_addr}")
+    print(f"DIREKT-PRINT: Ping-Anfrage empfangen von {request.remote_addr}", flush=True)
     return "pong", 200
 
 @app.route('/', methods=['GET'])
@@ -117,6 +125,7 @@ if __name__ == '__main__':
     logger.info(f"Starte API auf {host}:{port}, Debug-Modus: {debug}")
     logger.info(f"Health-Check-Endpunkte verfügbar unter:")
     logger.info(f"  - http://{host}:{port}/api/v1/simple-health")
+    logger.info(f"  - http://{host}:{port}/health")
     logger.info(f"  - http://{host}:{port}/ping")
     
     try:
