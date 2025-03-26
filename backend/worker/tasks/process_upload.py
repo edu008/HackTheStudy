@@ -225,6 +225,20 @@ def register_task(celery_app):
                             log_debug_info(session_id, "Datenbankstatus aktualisiert: processing", progress=5, stage="database_update")
                         else:
                             logger.warning(f"⚠️ Kein Upload-Eintrag für Session {session_id} in der Datenbank gefunden")
+                            # Erstelle einen neuen Upload-Eintrag, wenn keiner gefunden wurde
+                            logger.info(f"Erstelle neuen Upload-Eintrag für Session {session_id}")
+                            import uuid
+                            upload = Upload(
+                                id=str(uuid.uuid4()),
+                                user_id=user_id,
+                                session_id=session_id,
+                                title=f"Upload vom {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}",
+                                processing_status="processing",
+                                started_at=datetime.utcnow(),
+                                file_count=len(files_data)
+                            )
+                            db.session.add(upload)
+                            logger.info(f"✅ Neuer Upload-Eintrag erstellt: ID={upload.id}")
                         
                         db.session.commit()
                         logger.info(f"💾 Datenbankaktualisierung erfolgreich für Session {session_id}")
