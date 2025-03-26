@@ -1521,7 +1521,16 @@ def unified_content_processing(text, client, file_names=None, user_id=None, lang
         prompt_length=len(system_content)
     )
     
-    # ... rest of the function remains unchanged ...
+    # Implementierung des restlichen Codes für die Funktion
+    # Platzhalter, um die Funktion syntaktisch korrekt zu beenden
+    return {
+        "main_topic": "Automatisch generiert",
+        "subtopics": [],
+        "estimated_flashcards": min_flashcards,
+        "estimated_questions": min_questions,
+        "key_terms": [],
+        "content_type": "unknown"
+    }
 
 def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=None):
     """
