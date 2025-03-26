@@ -209,8 +209,46 @@ def _register_base_routes(app: Flask):
         Dieser Endpunkt wird von DigitalOcean für Health Checks verwendet.
         """
         client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        print(f"PING-ANFRAGE von {client_ip} - ZEIT: {datetime.now().isoformat()}", flush=True)
         log_step("Ping", "INFO", f"Ping-Anfrage von {client_ip}")
         return "pong", 200
+    
+    # Logging-Test-Endpunkt
+    @app.route('/api/log-test', methods=['GET'])
+    def log_test():
+        """
+        Test-Endpunkt für Logging, der alle Log-Level verwendet.
+        Hilfreich zur Überprüfung, ob Logs korrekt erfasst werden.
+        """
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        test_message = f"LOG-TEST von {client_ip} - ZEIT: {datetime.now().isoformat()}"
+        
+        # Direkte Print-Anweisungen
+        print("DIREKT-PRINT:", test_message, flush=True)
+        
+        # Standard Python-Logging
+        logging.debug("DEBUG-PYTHON: " + test_message)
+        logging.info("INFO-PYTHON: " + test_message)
+        logging.warning("WARNING-PYTHON: " + test_message)
+        logging.error("ERROR-PYTHON: " + test_message)
+        
+        # Flask App-Logger
+        app.logger.debug("DEBUG-FLASK: " + test_message)
+        app.logger.info("INFO-FLASK: " + test_message)
+        app.logger.warning("WARNING-FLASK: " + test_message)
+        app.logger.error("ERROR-FLASK: " + test_message)
+        
+        # Eigene Logging-Funktion
+        log_step("Log-Test", "DEBUG", test_message)
+        log_step("Log-Test", "INFO", test_message)
+        log_step("Log-Test", "WARNING", test_message)
+        log_step("Log-Test", "ERROR", test_message)
+        
+        return jsonify({
+            "success": True, 
+            "message": "Logging-Test durchgeführt",
+            "log_message": test_message
+        })
     
     # Einfacher Health-Check für Load Balancer
     @app.route('/api/v1/simple-health', methods=['GET'])
