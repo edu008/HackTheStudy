@@ -234,6 +234,13 @@ try:
             try:
                 logger.info("Worker ist bereit für Tasks")
                 
+                # Starte den Celery-Worker in einem Thread
+                logger.info("🚀 Starte Celery-Worker-Thread...")
+                worker_thread = threading.Thread(target=run_celery_worker)
+                worker_thread.daemon = True
+                worker_thread.start()
+                logger.info("🌟 Celery-Worker-Thread gestartet")
+                
                 # Halte den Prozess am Leben und warte auf Shutdown-Signal
                 while not stop_flag.is_set():
                     time.sleep(1)

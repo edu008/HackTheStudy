@@ -17,7 +17,8 @@ import json
 import redis
 from celery import Celery
 
-redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+# Verwende die korrekte Redis-URL, die auch der Worker nutzt
+redis_url = os.environ.get('REDIS_URL', 'redis://hackthestudy-backend-main:6379/0')
 redis_client = redis.from_url(redis_url)
 
 # Celery-Client zum Senden von Tasks an den Worker
@@ -28,7 +29,7 @@ def delegate_to_worker(task_name, *args, **kwargs):
     """Delegiert eine Aufgabe an den Worker über Celery."""
     try:
         logger.info(f"📤 WORKER-DELEGATION: Sende Task '{task_name}' an Worker mit args={args[:30]} und kwargs={kwargs}")
-        task = celery_app.send_task(f'tasks.{task_name}', args=args, kwargs=kwargs)
+        task = celery_app.send_task(task_name, args=args, kwargs=kwargs)
         logger.info(f"✅ WORKER-DELEGATION: Task erfolgreich gesendet - Task-ID: {task.id}")
         
         # Zusätzliche Diagnoseinformationen
