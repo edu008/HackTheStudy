@@ -19,7 +19,6 @@ from core.models import db
 from config.env_handler import load_env, setup_cors_origins
 from config.app_config import config
 from health.monitor import start_health_monitoring
-from health.server import setup_health_server
 from resource_manager.fd_monitor import check_and_set_fd_limits, monitor_file_descriptors
 from resource_manager.limits import set_memory_limit
 from utils.logging_utils import log_step
@@ -107,7 +106,7 @@ def create_app(config_name='default'):
     except Exception as e:
         app.logger.error(f"❌ Fehler beim Starten des Health-Monitorings: {str(e)}")
     
-    # Kein separater Health-Check-Server mehr - Health-Checks direkt in Flask integriert
+    # Kein separater Health-Check-Server mehr - Health-Checks direkt in Flask
     app.logger.info("Health-Checks sind direkt in der Flask-App unter /health, /ping, etc. verfügbar")
     
     app.logger.info("App initialisiert im %s-Modus", config_name)
@@ -193,11 +192,10 @@ def _setup_health_monitoring(app: Flask):
         # Health-Monitoring für die API starten
         start_health_monitoring(app)
         
-        # Health-Check-Server starten (falls aktiviert)
+        # Kein separater Health-Check-Server mehr - Health-Checks direkt in Flask
         if os.environ.get('ENABLE_HEALTH_SERVER', 'false').lower() == 'true':
             port = int(os.environ.get('HEALTH_SERVER_PORT', '8080'))
-            setup_health_server(port, app)
-            logger.info(f"Health-Check-Server auf Port {port} gestartet")
+            logger.info(f"Health-Checks verfügbar in der Flask-App auf Port {port}")
     except Exception as e:
         logger.error(f"Fehler beim Starten des Health-Monitorings: {str(e)}")
 
