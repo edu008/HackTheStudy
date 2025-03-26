@@ -200,6 +200,42 @@ def check_credits_available(cost, user_id=None):
     
     return user.credits >= cost
 
+def deduct_credits(user_id, cost, session_id=None, function_name=None):
+    """
+    Zieht Credits von einem Benutzer ab.
+    
+    Args:
+        user_id (str): Die ID des Benutzers
+        cost (int): Die Anzahl der abzuziehenden Credits
+        session_id (str, optional): Die ID der Session
+        function_name (str, optional): Der Name der Funktion, für die Credits abgezogen werden
+        
+    Returns:
+        bool: True, wenn die Credits erfolgreich abgezogen wurden, False sonst
+    """
+    try:
+        user = User.query.get(user_id)
+        
+        if not user:
+            logger.warning(f"Benutzer {user_id} nicht gefunden für Credits-Abzug")
+            return False
+        
+        if user.credits < cost:
+            logger.warning(f"Benutzer {user_id} hat nicht genügend Credits: {user.credits} < {cost}")
+            return False
+        
+        # Credits abziehen
+        user.credits -= cost
+        db.session.commit()
+        
+        logger.info(f"Credits abgezogen: {cost} von Benutzer {user_id}, neue Bilanz: {user.credits}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Abziehen von Credits: {str(e)}")
+        db.session.rollback()
+        return False
+
 def update_token_usage(user_id, session_id, input_tokens, output_tokens, model="gpt-4o", endpoint=None, function_name=None, is_cached=False, metadata=None):
     """
     Aktualisiert die Token-Nutzungsstatistik für einen Benutzer und zieht die entsprechenden Credits ab.
