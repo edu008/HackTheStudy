@@ -19,7 +19,7 @@ import json
 import logging
 import signal
 from datetime import datetime
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
 
 # Stelle sicher, dass Verzeichnis-Struktur zum Pfad hinzugefügt wird
