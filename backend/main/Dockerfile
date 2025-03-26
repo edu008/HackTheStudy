@@ -86,6 +86,9 @@ RUN pip install --no-index --find-links=/wheels gunicorn requests psycopg2-binar
     && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
 
+# Prüfe, ob Gunicorn korrekt installiert wurde
+RUN gunicorn --version || pip install gunicorn==21.2.0
+
 # Erstelle core/__init__.py wenn noch nicht vorhanden
 RUN mkdir -p /app/core && touch /app/core/__init__.py
 
@@ -111,12 +114,11 @@ RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
 RUN chown -R appuser:appuser /app /var/log
 
 # Healthcheck für DigitalOcean App Platform - vereinfacht und zuverlässiger
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v1/simple-health || exit 1
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/api/v1/simple-health || curl -f http://localhost:8080/ping || exit 1
 
 # Ports freigeben
 EXPOSE 8080
 
 # Starte Redis im Hintergrund und dann die Flask-Anwendung
-CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && \
-    python app.py 
+CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && python app.py 

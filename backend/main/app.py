@@ -73,27 +73,11 @@ from bootstrap.extensions import db, cache, migrate, jwt, cors
 # Erstelle die Flask-Anwendung mit der Factory
 app = create_app()
 
-# Explizit Health-Check-Server auf Port 8080 starten
-try:
-    from health.server import setup_health_server
-    health_port = int(os.environ.get('HEALTH_PORT', 8080))
-    logger.info(f"Starte expliziten Health-Check-Server auf Port {health_port}")
-    health_server_thread = setup_health_server(health_port, app)
-    logger.info(f"✅ Health-Check-Server erfolgreich gestartet auf Port {health_port}")
-    
-    # Verifiziere, dass der Server läuft
-    import socket
-    import time
-    time.sleep(1)  # Kurz warten, damit der Server starten kann
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    result = sock.connect_ex(('localhost', health_port))
-    if result == 0:
-        logger.info(f"✅ Health-Check-Server auf Port {health_port} ist erreichbar!")
-    else:
-        logger.error(f"❌ Health-Check-Server auf Port {health_port} ist NICHT erreichbar (Fehlercode: {result})")
-    sock.close()
-except Exception as e:
-    logger.error(f"❌ Fehler beim Starten des Health-Check-Servers: {str(e)}")
+@app.route('/api/v1/simple-health', methods=['GET'])
+def simple_health():
+    """Einfacher Health-Check-Endpunkt für Docker/DigitalOcean Healthchecks"""
+    logger.info(f"Simple-Health-Anfrage empfangen")
+    return "ok", 200
 
 @app.route('/ping', methods=['GET'])
 def ping():
@@ -122,8 +106,8 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Führe die Anwendung aus, wenn diese Datei direkt aufgerufen wird
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 8080))  # Stelle sicher, dass Port 8080 verwendet wird
+    host = '0.0.0.0'  # Binde an alle Interfaces
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     
     logger.info(f"Starte API auf {host}:{port}, Debug-Modus: {debug}")
@@ -137,8 +121,40 @@ if __name__ == '__main__':
         except (ImportError, AttributeError) as e:
             logger.warning(f"Health-Monitor konnte nicht gestartet werden: {e}")
         
-        # Starte die Flask-Anwendung
-        app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
+        # Verwende Gunicorn für Produktionsumgebungen wenn möglich
+        if os.environ.get('USE_GUNICORN', 'true').lower() == 'true':
+            try:
+                from gunicorn.app.wsgiapp import WSGIApplication
+                
+                # Gunicorn-Konfiguration als String
+                gunicorn_conf = f"""
+                bind = '{host}:{port}'
+                workers = {os.environ.get('GUNICORN_WORKERS', '2')}
+                worker_class = 'gevent'
+                timeout = {os.environ.get('GUNICORN_TIMEOUT', '120')}
+                keepalive = {os.environ.get('GUNICORN_KEEPALIVE', '5')}
+                accesslog = '-'
+                errorlog = '-'
+                loglevel = 'info'
+                """
+                
+                # Schreibe die Gunicorn-Konfiguration in eine temporäre Datei
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.py') as f:
+                    f.write(gunicorn_conf)
+                    conf_path = f.name
+                
+                logger.info(f"Starte Gunicorn mit Konfiguration: {conf_path}")
+                
+                # Starte Gunicorn mit der Konfiguration
+                sys.argv = ['gunicorn', 'app:app', '-c', conf_path]
+                WSGIApplication().run()
+            except ImportError:
+                logger.warning("Gunicorn nicht verfügbar, verwende Flask-Entwicklungsserver")
+                app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
+        else:
+            # Starte die Flask-Anwendung mit dem Entwicklungsserver
+            app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
     except Exception as e:
         logger.error(f"Fehler beim Starten der Anwendung: {e}")
         sys.exit(1)
