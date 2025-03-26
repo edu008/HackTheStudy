@@ -195,7 +195,7 @@ def start_health_monitoring(app=None):
         while True:
             try:
                 # Loggen wir einfach die aktuelle Zeit als Heartbeat
-                current_time = datetime.datetime.now().isoformat()
+                current_time = datetime.now().isoformat()
                 logger.info(f"Health-Monitor-Heartbeat: {current_time}")
                 
                 # Wenn wir eine App haben, prüfen wir auch den Redis-Status

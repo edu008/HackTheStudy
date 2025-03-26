@@ -113,12 +113,12 @@ RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
 # Ändere den Besitzer aller Dateien
 RUN chown -R appuser:appuser /app /var/log
 
-# Healthcheck für DigitalOcean App Platform - vereinfacht und zuverlässiger
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v1/simple-health || curl -f http://localhost:8080/ping || exit 1
-
 # Ports freigeben
-EXPOSE 8080
+EXPOSE 8080 8081
+
+# Healthcheck für DigitalOcean App Platform - prüft den Health-Check-Server
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/api/v1/simple-health || curl -f http://localhost:8080/ping || curl -f http://localhost:8080/health || exit 1
 
 # Starte Redis im Hintergrund und dann die Flask-Anwendung
 CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && \
@@ -128,8 +128,10 @@ CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && \
     echo "Redis bereit, starte Flask-App..." && \
     export FLASK_APP=app.py && \
     export FLASK_RUN_HOST=0.0.0.0 && \
-    export FLASK_RUN_PORT=8080 && \
-    export PORT=8080 && \
+    export FLASK_RUN_PORT=8081 && \
+    export APP_PORT=8081 && \
+    export HEALTH_PORT=8080 && \
+    export PORT=8081 && \
     export REDIS_URL=redis://localhost:6379/0 && \
     export REDIS_HOST=localhost && \
     python app.py 

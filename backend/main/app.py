@@ -116,17 +116,18 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Führe die Anwendung aus, wenn diese Datei direkt aufgerufen wird
 if __name__ == '__main__':
-    # Verwende IMMER Port 8080 für DigitalOcean
-    port = int(os.environ.get('PORT', 8080))
+    # Verwende Port 8080 für den Health-Check-Server und 8081 für die Flask-App
+    health_port = int(os.environ.get('HEALTH_PORT', 8080))
+    app_port = int(os.environ.get('APP_PORT', 8081))  # Flask-App auf 8081
     # Binde an ALLE Netzwerk-Interfaces (0.0.0.0)
     host = '0.0.0.0'
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     
-    logger.info(f"Starte API auf {host}:{port}, Debug-Modus: {debug}")
+    logger.info(f"Starte API auf {host}:{app_port}, Debug-Modus: {debug}")
     logger.info(f"Health-Check-Endpunkte verfügbar unter:")
-    logger.info(f"  - http://{host}:{port}/api/v1/simple-health")
-    logger.info(f"  - http://{host}:{port}/health")
-    logger.info(f"  - http://{host}:{port}/ping")
+    logger.info(f"  - http://{host}:{health_port}/api/v1/simple-health")
+    logger.info(f"  - http://{host}:{health_port}/health")
+    logger.info(f"  - http://{host}:{health_port}/ping")
     
     try:
         # Starte den Health-Monitor in einem separaten Thread
@@ -137,8 +138,8 @@ if __name__ == '__main__':
         except (ImportError, AttributeError) as e:
             logger.warning(f"Health-Monitor konnte nicht gestartet werden: {e}")
         
-        # Starte die Flask-Anwendung
-        app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
+        # Starte die Flask-Anwendung auf Port 8081
+        app.run(debug=debug, host=host, port=app_port, threaded=True, use_reloader=False)
     except Exception as e:
         logger.error(f"Fehler beim Starten der Anwendung: {e}")
         sys.exit(1)
