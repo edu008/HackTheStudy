@@ -57,6 +57,11 @@ for bp in [api_bp, api_v1_bp]:
     bp.register_blueprint(payment_bp, url_prefix='/payment')
     bp.register_blueprint(admin_bp, url_prefix='/admin')
 
+# Registriere explizit die wichtigen Routen unter verschiedenen Pfaden
+# Dies stellt sicher, dass alle wichtigen Routes registriert sind, auch wenn sie nicht importiert wurden
+api_bp.add_url_rule('/upload/chunk', view_func=upload_chunk, methods=['POST', 'OPTIONS'])
+api_v1_bp.add_url_rule('/upload/chunk', view_func=upload_chunk, methods=['POST', 'OPTIONS'])
+
 # Registriere v1 Blueprint mit dem Hauptblueprint
 api_bp.register_blueprint(api_v1_bp, url_prefix='/v1')
 

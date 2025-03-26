@@ -10,7 +10,7 @@ from core.models import db, User, OAuthToken, UserActivity, Payment
 from functools import wraps
 import logging
 from uuid import uuid4
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, decode_token
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, decode_token, verify_jwt_in_request
 
 # Blueprint erstellen und zentrale CORS-Konfiguration verwenden
 auth_bp = Blueprint('auth', __name__)
@@ -93,7 +93,8 @@ def token_required(f):
             # Verwende flask_jwt_extended für Token-Validierung
             # Der JWT-Secret-Key wird aus der App-Konfiguration gelesen
             # Validiere Token und hole user_id
-            user_id = get_jwt_identity()
+            verify_jwt_in_request()  # Token validieren
+            user_id = get_jwt_identity()  # Dann erst Identität abrufen
             
             # Füge den Benutzer zur Flask-g hinzu, um ihn in anderen Funktionen zu verwenden
             user = User.query.get(user_id)
