@@ -63,7 +63,7 @@ WORKDIR /app
 
 # Erstelle alle benötigten Verzeichnisse für die Anwendung und Logs
 RUN mkdir -p /app/config /app/core /app/api /app/redis_utils /app/resource_manager \
-    /app/tasks /app/health /app/utils /app/bootstrap \
+    /app/tasks /app/health /app/utils /app/bootstrap /app/openaicache \
     /var/run/redis /var/lib/redis /var/log/redis /var/log/app \
     && touch /var/log/supervisord.log /var/log/app-stdout.log /var/log/app-stderr.log \
     && chmod 777 /var/run/redis /var/lib/redis /var/log/redis \
@@ -103,6 +103,7 @@ COPY tasks/ ./tasks/
 COPY utils/ ./utils/
 COPY bootstrap/ ./bootstrap/
 COPY health/ ./health/
+COPY openaicache/ ./openaicache/
 
 # Kopiere die Gunicorn-Konfigurationsdatei
 COPY config/gunicorn.conf.py ./gunicorn.conf.py
