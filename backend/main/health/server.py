@@ -11,6 +11,7 @@ import socket
 from typing import Dict, Any
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
+import time
 
 from .monitor import get_health_status
 
@@ -78,34 +79,66 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Health-Server: {format % args}")
 
-def setup_health_server(port: int = 8080) -> threading.Thread:
+def setup_health_server(port: int = 8080, app=None) -> threading.Thread:
     """
     Startet einen HTTP-Server für Health-Checks im Hintergrund.
     
     Args:
         port: TCP-Port für den Health-Check-Server
+        app: Optional, Flask-App für erweiterte Health-Checks
     
     Returns:
         Thread-Objekt des Health-Servers
     """
     def run_server():
         try:
-            # Spezielle Bind-Adresse, wenn in Docker/Kubernetes
-            if os.environ.get('KUBERNETES_SERVICE_HOST') or os.environ.get('DOCKER_CONTAINER'):
-                server_address = ('0.0.0.0', port)
-            else:
-                server_address = ('localhost', port)
+            # Immer an alle Interfaces binden (0.0.0.0) für Kubernetes/DigitalOcean Health Checks
+            server_address = ('0.0.0.0', port)
             
             httpd = HTTPServer(server_address, HealthCheckHandler)
-            logger.info(f"Health-Check-Server gestartet auf {server_address[0]}:{server_address[1]}")
+            logger.info(f"✅ Health-Check-Server gestartet auf {server_address[0]}:{server_address[1]}")
+            logger.info(f"   - Health-Endpunkt verfügbar unter: http://{server_address[0]}:{server_address[1]}/health")
+            logger.info(f"   - Details verfügbar unter: http://{server_address[0]}:{server_address[1]}/health/details")
+            
+            # Prüfe, ob der Server tatsächlich lauscht
+            sock_name = httpd.socket.getsockname()
+            logger.info(f"✅ Server lauscht auf {sock_name[0]}:{sock_name[1]}")
             
             # Server endlos laufen lassen
             httpd.serve_forever()
         except Exception as e:
-            logger.error(f"Fehler beim Starten des Health-Check-Servers: {str(e)}")
+            logger.error(f"❌ Fehler beim Starten des Health-Check-Servers: {str(e)}")
+            
+            # Versuche es mit einem anderen Port, falls der Hauptport belegt ist
+            if isinstance(e, socket.error) and e.errno == 98:  # Address already in use
+                fallback_port = port + 1
+                logger.warning(f"Versuche Fallback auf Port {fallback_port}")
+                try:
+                    server_address = ('0.0.0.0', fallback_port)
+                    httpd = HTTPServer(server_address, HealthCheckHandler)
+                    logger.info(f"✅ Health-Check-Server gestartet auf Fallback-Port {fallback_port}")
+                    httpd.serve_forever()
+                except Exception as fallback_e:
+                    logger.error(f"❌ Auch Fallback-Port fehlgeschlagen: {str(fallback_e)}")
     
     # Thread starten
     thread = threading.Thread(target=run_server, daemon=True, name="health-server")
     thread.start()
+    
+    # Warte kurz, um sicherzustellen, dass der Server läuft
+    time.sleep(0.5)
+    
+    # Prüfe, ob der Port erreichbar ist
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        result = s.connect_ex(('localhost', port))
+        if result == 0:
+            logger.info(f"✅ Health-Server-Port {port} ist erreichbar")
+        else:
+            logger.warning(f"⚠️ Health-Server-Port {port} scheint NICHT erreichbar zu sein (Code: {result})")
+        s.close()
+    except Exception as e:
+        logger.warning(f"⚠️ Fehler beim Prüfen des Health-Server-Ports: {str(e)}")
     
     return thread 

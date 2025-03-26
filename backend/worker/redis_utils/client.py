@@ -115,11 +115,64 @@ def get_redis_client():
         
         if redis_client is None:
             logger.error("❌ Redis-Client konnte nicht initialisiert werden!")
-            # Rückgabe eines Dummy-Clients, der alle Operationen protokolliert aber ignoriert
-            from fakeredis import FakeStrictRedis
-            return FakeStrictRedis()
+            # Alternative Möglichkeiten versuchen
+            
+            # 1. Versuche bekannte Service-Namen für Redis
+            potential_hosts = ["redis", "redis-master", "master.redis", "redis-service", "hackthestudy-redis", "backend-redis"]
+            for host in potential_hosts:
+                try:
+                    logger.info(f"Versuche Redis-Verbindung zu Service: {host}")
+                    import redis as redis_external
+                    client = redis_external.Redis(host=host, port=6379, db=0, socket_timeout=3)
+                    if client.ping():
+                        logger.info(f"✅ Erfolgreiche Verbindung zu Redis-Service: {host}")
+                        redis_client = client
+                        return client
+                except Exception as e:
+                    logger.warning(f"⚠️ Verbindung zu Redis-Service {host} fehlgeschlagen: {str(e)}")
+            
+            # 2. Als letzten Ausweg, gib einen DummyRedis zurück, der keine Fehler wirft
+            logger.error("❌ Alle Redis-Verbindungsversuche fehlgeschlagen!")
+            logger.error("⚠️ Verwende DummyRedis als Notlösung (keine Funktionalität)")
+            return DummyRedis()
     
     return redis_client
+
+class DummyRedis:
+    """
+    Ein Dummy-Redis-Client, der alle Operationen akzeptiert, aber nichts tut.
+    Wird verwendet, wenn keine Redis-Verbindung hergestellt werden kann.
+    """
+    def __init__(self):
+        self._data = {}
+    
+    def ping(self):
+        logger.warning("DummyRedis.ping() aufgerufen - keine echte Redis-Verbindung!")
+        return True
+    
+    def get(self, key):
+        logger.warning(f"DummyRedis.get({key}) aufgerufen - keine echte Redis-Verbindung!")
+        return self._data.get(key)
+    
+    def set(self, key, value, ex=None, px=None, nx=False, xx=False):
+        logger.warning(f"DummyRedis.set({key}, {value[:20] if isinstance(value, str) else value}, ...) aufgerufen - keine echte Redis-Verbindung!")
+        self._data[key] = value
+        return True
+    
+    def delete(self, *keys):
+        logger.warning(f"DummyRedis.delete({keys}) aufgerufen - keine echte Redis-Verbindung!")
+        count = 0
+        for key in keys:
+            if key in self._data:
+                del self._data[key]
+                count += 1
+        return count
+    
+    def __getattr__(self, name):
+        def dummy_method(*args, **kwargs):
+            logger.warning(f"DummyRedis.{name}({args}, {kwargs}) aufgerufen - keine echte Redis-Verbindung!")
+            return None
+        return dummy_method
 
 def is_redis_connected() -> bool:
     """

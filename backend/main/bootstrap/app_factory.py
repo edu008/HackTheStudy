@@ -69,9 +69,17 @@ def create_app(config_name='default'):
         app.logger.info(f"Versuche Redis-Verbindung zu: {redis_url}")
         redis_client = Redis.from_url(redis_url, decode_responses=True)
         redis_client.ping()  # Teste die Verbindung
-        app.logger.info(f"Redis-Verbindung erfolgreich hergestellt: {redis_url}")
+        app.logger.info(f"✅ Redis-Verbindung erfolgreich hergestellt: {redis_url}")
+        
+        # Speichere Redis-Server-Info für Debugging
+        redis_info = redis_client.info()
+        app.logger.info(f"Redis-Server-Info: Version={redis_info.get('redis_version', 'unbekannt')}, OS={redis_info.get('os', 'unbekannt')}")
+        
+        # Setze einen Test-Schlüssel, um die Verbindung zu validieren
+        redis_client.set('backend_main_test', datetime.now().isoformat())
+        app.logger.info(f"Test-Schlüssel in Redis gesetzt: {redis_client.get('backend_main_test')}")
     except Exception as e:
-        app.logger.error(f"Redis-Verbindungsfehler: {str(e)}")
+        app.logger.error(f"❌ Redis-Verbindungsfehler: {str(e)}")
         app.logger.error(f"Redis-URL: {redis_url}")
         
         # Fallback zu localhost versuchen
@@ -80,9 +88,9 @@ def create_app(config_name='default'):
             app.logger.warning(f"Versuche Fallback zu: {fallback_url}")
             redis_client = Redis.from_url(fallback_url, decode_responses=True)
             redis_client.ping()
-            app.logger.info(f"Redis-Fallback-Verbindung erfolgreich: {fallback_url}")
+            app.logger.info(f"✅ Redis-Fallback-Verbindung erfolgreich: {fallback_url}")
         except Exception as fallback_e:
-            app.logger.error(f"Auch Fallback fehlgeschlagen: {str(fallback_e)}")
+            app.logger.error(f"❌ Auch Fallback fehlgeschlagen: {str(fallback_e)}")
             # Fehler werfen, wenn Redis nicht verfügbar ist
             raise RuntimeError(f"Redis-Verbindung konnte nicht hergestellt werden: {str(e)}")
     
@@ -97,6 +105,16 @@ def create_app(config_name='default'):
     # Health-Monitoring starten
     from health.monitor import start_health_monitor
     start_health_monitor(app)
+    
+    # Explizit Health-Check-Server auf Port 8080 starten für Kubernetes/DigitalOcean Checks
+    try:
+        from health.server import setup_health_server
+        health_port = int(os.environ.get('HEALTH_PORT', 8080))
+        app.logger.info(f"Starte Health-Check-Server auf Port {health_port}")
+        setup_health_server(health_port, app)
+        app.logger.info(f"✅ Health-Check-Server erfolgreich gestartet auf Port {health_port}")
+    except Exception as e:
+        app.logger.error(f"❌ Fehler beim Starten des Health-Check-Servers: {str(e)}")
     
     app.logger.info("App initialisiert im %s-Modus", config_name)
     return app
