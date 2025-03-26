@@ -19,6 +19,8 @@ import json
 import logging
 import signal
 from datetime import datetime
+from flask import Flask
+from flask_cors import CORS
 
 # Stelle sicher, dass Verzeichnis-Struktur zum Pfad hinzugefügt wird
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -68,7 +70,7 @@ logger.info(f"API.PRIVATE_URL oder ähnliche: {os.environ.get('api.PRIVATE_URL',
 from bootstrap.app_factory import create_app
 from bootstrap.extensions import db, cache, migrate, jwt, cors
 
-# Erstelle die Flask-Anwendung
+# Erstelle die Flask-Anwendung mit der Factory
 app = create_app()
 
 # Die ping-Route ist bereits in app_factory.py definiert und muss hier nicht erneut angelegt werden

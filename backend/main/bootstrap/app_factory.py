@@ -149,7 +149,14 @@ def _setup_cors(app: Flask):
     try:
         from flask_cors import CORS
         origins = setup_cors_origins()
-        CORS(app, resources={r"/api/*": {"origins": origins}})
+        CORS(app, resources={
+            r"/*": {
+                "origins": origins,
+                "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization"],
+                "supports_credentials": True
+            }
+        })
         logger.info(f"CORS für Origins {origins} konfiguriert")
     except Exception as e:
         logger.error(f"Fehler beim Einrichten von CORS: {str(e)}")

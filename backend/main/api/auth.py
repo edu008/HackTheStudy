@@ -10,6 +10,7 @@ from . import api_bp
 from core.models import db, User, OAuthToken, UserActivity, Payment
 from functools import wraps
 import logging
+from uuid import uuid4
 
 # Blueprint erstellen und zentrale CORS-Konfiguration verwenden
 auth_bp = Blueprint('auth', __name__)
@@ -55,9 +56,14 @@ def setup_oauth(app):
             client_id=github_client_id.strip(),
             client_secret=github_client_secret.strip(),
             access_token_url='https://github.com/login/oauth/access_token',
+            access_token_params=None,
             authorize_url='https://github.com/login/oauth/authorize',
+            authorize_params=None,
             api_base_url='https://api.github.com/',
-            client_kwargs={'scope': 'user:email'},
+            client_kwargs={
+                'scope': 'user:email',
+                'token_endpoint_auth_method': 'client_secret_post'
+            }
         )
         logger.info("GitHub OAuth konfiguriert.")
     else:
@@ -171,7 +177,6 @@ def callback(provider):
         else:
             user = User(email=user_info['email'], name=user_info['name'], avatar=user_info.get('avatar'), oauth_provider=provider, oauth_id=user_info['id'], credits=0)
             db.session.add(user)
-            db.session.commit()
         
         oauth_token = OAuthToken(user_id=user.id, provider=provider, access_token=token.get('access_token'), refresh_token=token.get('refresh_token'), expires_at=datetime.utcnow() + timedelta(seconds=token.get('expires_in', 3600)))
         db.session.add(oauth_token)
@@ -333,3 +338,124 @@ def get_payments():
             "payments": [{"id": p.id, "amount": p.amount, "credits": p.credits, "payment_method": p.payment_method, "transaction_id": p.transaction_id, "status": p.status, "created_at": p.created_at.isoformat()} for p in payments]
         }
     }), 200
+
+@auth_bp.route('/login/google')
+def google_login():
+    """Google OAuth Login Route"""
+    redirect_uri = url_for('auth.google_callback', _external=True)
+    return oauth.google.authorize_redirect(redirect_uri)
+
+@auth_bp.route('/login/github')
+def github_login():
+    """GitHub OAuth Login Route"""
+    redirect_uri = url_for('auth.github_callback', _external=True)
+    return oauth.github.authorize_redirect(redirect_uri)
+
+@auth_bp.route('/callback/google')
+def google_callback():
+    """Google OAuth Callback Route"""
+    try:
+        token = oauth.google.authorize_access_token()
+        user_info = oauth.google.parse_id_token(token)
+        return handle_oauth_callback('google', user_info)
+    except Exception as e:
+        logger.error(f"Fehler bei Google OAuth Callback: {str(e)}")
+        return jsonify({
+            'error': 'Google authentication failed',
+            'message': str(e)
+        }), 500
+
+@auth_bp.route('/callback/github')
+def github_callback():
+    """GitHub OAuth Callback Route"""
+    try:
+        token = oauth.github.authorize_access_token()
+        resp = oauth.github.get('user')
+        user_info = resp.json()
+        # GitHub liefert keine ID-Token, wir müssen die E-Mail separat abrufen
+        resp = oauth.github.get('user/emails')
+        emails = resp.json()
+        primary_email = next((email['email'] for email in emails if email['primary']), None)
+        if primary_email:
+            user_info['email'] = primary_email
+        return handle_oauth_callback('github', user_info)
+    except Exception as e:
+        logger.error(f"Fehler bei GitHub OAuth Callback: {str(e)}")
+        return jsonify({
+            'error': 'GitHub authentication failed',
+            'message': str(e)
+        }), 500
+
+def handle_oauth_callback(provider: str, user_info: dict):
+    """Zentrale Funktion zur Verarbeitung von OAuth-Callbacks"""
+    try:
+        # Suche nach existierendem Benutzer mit OAuth-Provider und ID
+        user = User.query.filter_by(oauth_provider=provider, oauth_id=user_info['id']).first()
+        
+        # Wenn kein Benutzer gefunden wurde, suche nach E-Mail
+        if not user:
+            existing_user = User.query.filter_by(email=user_info['email']).first()
+            if existing_user:
+                # Aktualisiere existierenden Benutzer mit OAuth-Informationen
+                existing_user.oauth_provider = provider
+                existing_user.oauth_id = user_info['id']
+                existing_user.avatar = user_info.get('avatar')
+                user = existing_user
+            else:
+                # Erstelle neuen Benutzer
+                user = User(
+                    id=str(uuid4()),
+                    email=user_info['email'],
+                    name=user_info['name'],
+                    avatar=user_info.get('avatar'),
+                    oauth_provider=provider,
+                    oauth_id=user_info['id'],
+                    credits=0
+                )
+                db.session.add(user)
+        
+        # Speichere OAuth-Token
+        token = oauth.__getattr__(provider).token
+        oauth_token = OAuthToken(
+            id=str(uuid4()),
+            user_id=user.id,
+            provider=provider,
+            access_token=token.get('access_token'),
+            refresh_token=token.get('refresh_token'),
+            expires_at=datetime.utcnow() + timedelta(seconds=token.get('expires_in', 3600))
+        )
+        db.session.add(oauth_token)
+        
+        # Protokolliere Aktivität
+        activity = UserActivity(
+            id=str(uuid4()),
+            user_id=user.id,
+            activity_type='account',
+            title='Account created' if not existing_user else f'Account linked with {provider}',
+            timestamp=datetime.utcnow()
+        )
+        db.session.add(activity)
+        
+        # Speichere alle Änderungen
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Fehler beim Speichern der OAuth-Daten: {str(e)}")
+            raise
+        
+        # Erstelle JWT-Token
+        token = create_access_token(identity=user.id)
+        
+        # Erstelle Response mit Token und User-Info
+        return jsonify({
+            'access_token': token,
+            'user': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Fehler bei OAuth Callback Verarbeitung: {str(e)}")
+        return jsonify({
+            'error': 'Authentication failed',
+            'message': str(e)
+        }), 500
