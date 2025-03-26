@@ -214,7 +214,7 @@ def _register_base_routes(app: Flask):
         return "pong", 200
     
     # Logging-Test-Endpunkt
-    @app.route('/api/log-test', methods=['GET'])
+    @app.route('/log-test', methods=['GET'])
     def log_test():
         """
         Test-Endpunkt für Logging, der alle Log-Level verwendet.
