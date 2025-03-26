@@ -271,7 +271,8 @@ class Topic(db.Model):
     subtopics = db.relationship(
         'Topic', 
         backref=db.backref('parent', remote_side=[id]),
-        foreign_keys='Topic.parent_id'
+        foreign_keys='Topic.parent_id',
+        primaryjoin='Topic.parent_id == foreign(Topic.id)'
     )
 
     def to_dict(self):
