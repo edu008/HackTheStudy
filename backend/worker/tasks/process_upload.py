@@ -505,7 +505,7 @@ def register_task(celery_app):
                                 "questions_count": Question.query.filter_by(upload_id=upload.id).count()
                             }
                             
-                            redis_client.set(f"processing_result:{session_id}", json.dumps(result_data), ex=86400)
+                            safe_redis_set(f"processing_result:{session_id}", json.dumps(result_data), ex=86400)
                             logger.info("✅ Ergebnisse im Redis-Cache gespeichert")
                             
                             # Abschließenden Status setzen
