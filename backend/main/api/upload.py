@@ -146,21 +146,109 @@ def upload_file():
         if user_id:
             AppLogger.structured_log(
                 "INFO",
-                f"Prüfe und verwalte Benutzer-Sessions für Benutzer {user_id}",
+                f"Direktes Löschen alter Uploads für Benutzer {user_id}",
                 user_id=user_id,
                 component="session_management"
             )
-            # Behalte maximal 4 bestehende Sessions, damit mit der neuen Session genau 5 übrig bleiben
-            # session_to_exclude auf None setzen, da wir die neue Session noch nicht erstellt haben
-            sessions_removed = check_and_manage_user_sessions(user_id, max_sessions=4, session_to_exclude=None)
-            if sessions_removed:
+            
+            try:
+                # Direkte SQL-Abfrage, um alle Uploads des Benutzers zu finden, sortiert nach last_used_at
+                # NULL-Werte werden zuerst angezeigt
+                all_uploads = Upload.query.filter_by(user_id=user_id).order_by(
+                    Upload.last_used_at.is_(None).desc(),  # NULL-Werte zuerst
+                    Upload.last_used_at.asc()              # Dann nach Alter sortiert
+                ).all()
+                
+                # Anzahl der Uploads protokollieren
                 AppLogger.structured_log(
-                    "INFO",
-                    f"Alte Sessions wurden gelöscht, damit nur die 4 neuesten bestehenden Sessions + die neue Session erhalten bleiben",
+                    "INFO", 
+                    f"Benutzer hat {len(all_uploads)} Uploads. Behalte nur die 4 neuesten.",
                     user_id=user_id,
                     component="session_management"
                 )
                 
+                # Bestimme, wie viele Uploads zu löschen sind (alle außer die 4 neuesten)
+                uploads_to_delete = all_uploads[:-4] if len(all_uploads) > 4 else []
+                
+                # Lösche diese Uploads und ihre zugehörigen Daten
+                for upload in uploads_to_delete:
+                    try:
+                        upload_id = upload.id
+                        session_id = upload.session_id
+                        
+                        # Debug-Ausgabe des last_used_at-Werts
+                        last_used_value = "NULL" if upload.last_used_at is None else upload.last_used_at.isoformat()
+                        AppLogger.structured_log(
+                            "INFO",
+                            f"Lösche Upload {upload_id} mit session_id={session_id}, last_used_at={last_used_value}",
+                            user_id=user_id,
+                            component="session_management"
+                        )
+                        
+                        # Lösche alle verknüpften Daten
+                        Flashcard.query.filter_by(upload_id=upload_id).delete()
+                        Topic.query.filter_by(upload_id=upload_id).delete()
+                        Question.query.filter_by(upload_id=upload_id).delete()
+                        Connection.query.filter_by(upload_id=upload_id).delete()
+                        UserActivity.query.filter_by(session_id=session_id).delete()
+                        
+                        # Lösche den Upload selbst
+                        db.session.delete(upload)
+                        
+                        # Committe die Änderungen sofort
+                        db.session.commit()
+                        
+                        # Lösche auch zugehörige Redis-Daten
+                        keys_to_delete = [
+                            f"processing_status:{session_id}",
+                            f"processing_progress:{session_id}",
+                            f"processing_start_time:{session_id}",
+                            f"processing_heartbeat:{session_id}",
+                            f"processing_last_update:{session_id}",
+                            f"processing_details:{session_id}",
+                            f"processing_result:{session_id}",
+                            f"task_id:{session_id}",
+                            f"error_details:{session_id}",
+                            f"openai_error:{session_id}",
+                            f"all_data_stored:{session_id}",
+                            f"finalization_complete:{session_id}"
+                        ]
+                        
+                        for key in keys_to_delete:
+                            redis_client.delete(key)
+                        
+                        AppLogger.structured_log(
+                            "INFO",
+                            f"Upload {upload_id} (session_id={session_id}) erfolgreich gelöscht",
+                            user_id=user_id,
+                            component="session_management"
+                        )
+                    except Exception as e:
+                        db.session.rollback()
+                        AppLogger.structured_log(
+                            "ERROR",
+                            f"Fehler beim Löschen von Upload {upload_id}: {str(e)}",
+                            user_id=user_id,
+                            component="session_management",
+                            exception=traceback.format_exc()
+                        )
+                
+                AppLogger.structured_log(
+                    "INFO",
+                    f"{len(uploads_to_delete)} alte Uploads gelöscht, {min(4, len(all_uploads) - len(uploads_to_delete))} behalten",
+                    user_id=user_id,
+                    component="session_management"
+                )
+                
+            except Exception as e:
+                AppLogger.structured_log(
+                    "ERROR",
+                    f"Fehler bei der Upload-Verwaltung: {str(e)}",
+                    user_id=user_id,
+                    component="session_management",
+                    exception=traceback.format_exc()
+                )
+        
         # SCHRITT 1: Wenn keine Session-ID übergeben wird, erstellen wir eine neue
         if not session_id:
             session_id = str(uuid.uuid4())

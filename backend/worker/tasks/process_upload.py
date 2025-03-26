@@ -608,60 +608,82 @@ def register_task(celery_app):
                             if user_id:
                                 logger.info(f"Prüfe Upload-Limits für Benutzer {user_id}")
                                 
-                                # SQL-Abfrage, die NULL-Werte in last_used_at zuerst sortiert,
-                                # dann nach last_used_at aufsteigend (älteste zuerst)
-                                user_uploads = Upload.query.filter_by(user_id=user_id) \
-                                    .order_by(
-                                        Upload.last_used_at.is_(None).desc(),  # NULL-Werte zuerst
-                                        Upload.last_used_at.asc()  # dann nach Alter sortiert
-                                    ).all()
-                                
-                                if len(user_uploads) > 5:
-                                    # Lösche die ältesten Uploads, wobei NULL-Werte priorisiert werden
-                                    uploads_to_delete = user_uploads[:-5]  # Alle außer den letzten 5
+                                try:
+                                    # Behalte nur die neuesten 5 Uploads für diesen Benutzer
+                                    # Nutze eine direkte SQL-Löschung für bessere Performance
                                     
-                                    for old_upload in uploads_to_delete:
-                                        last_used_value = "NULL" if old_upload.last_used_at is None else old_upload.last_used_at.isoformat()
-                                        logger.info(f"Entferne alten Upload {old_upload.id} mit last_used_at={last_used_value}")
-                                        
-                                        # Lösche zugehörige Daten
-                                        Topic.query.filter_by(upload_id=old_upload.id).delete()
-                                        Flashcard.query.filter_by(upload_id=old_upload.id).delete()
-                                        Question.query.filter_by(upload_id=old_upload.id).delete()
-                                        Connection.query.filter_by(upload_id=old_upload.id).delete()
-                                        
-                                        # Lösche auch Benutzeraktivitäten
-                                        from core.models import UserActivity
-                                        UserActivity.query.filter_by(session_id=old_upload.session_id).delete()
-                                        
-                                        # Lösche den Upload selbst
-                                        db.session.delete(old_upload)
-                                        
-                                        # Lösche auch die Redis-Daten für diese Session
-                                        keys_to_delete = [
-                                            f"processing_status:{old_upload.session_id}",
-                                            f"processing_progress:{old_upload.session_id}",
-                                            f"processing_start_time:{old_upload.session_id}",
-                                            f"processing_heartbeat:{old_upload.session_id}",
-                                            f"processing_last_update:{old_upload.session_id}",
-                                            f"processing_details:{old_upload.session_id}",
-                                            f"processing_result:{old_upload.session_id}",
-                                            f"task_id:{old_upload.session_id}",
-                                            f"error_details:{old_upload.session_id}",
-                                            f"openai_error:{old_upload.session_id}",
-                                            f"all_data_stored:{old_upload.session_id}",
-                                            f"finalization_complete:{old_upload.session_id}"
-                                        ]
-                                        
-                                        # Verwende Redis pipeline für effizientes Löschen
-                                        pipeline = redis_client.pipeline()
-                                        for key in keys_to_delete:
-                                            pipeline.delete(key)
-                                        pipeline.execute()
+                                    # SCHRITT 1: Hole die IDs der 5 neuesten Uploads, die wir behalten wollen
+                                    newest_uploads = db.session.query(Upload.id).filter(Upload.user_id == user_id).order_by(
+                                        Upload.last_used_at.is_(None), # NULL-Werte am Ende
+                                        Upload.last_used_at.desc()     # Neueste zuerst
+                                    ).limit(5).all()
                                     
-                                    # Änderungen speichern
-                                    db.session.commit()
-                                    logger.info(f"{len(uploads_to_delete)} alte Uploads für Benutzer {user_id} entfernt")
+                                    # Extrahiere die IDs
+                                    uploads_to_keep = [upload[0] for upload in newest_uploads]
+                                    logger.info(f"Behalte folgende 5 Uploads: {uploads_to_keep}")
+                                    
+                                    # SCHRITT 2: Zähle die Uploads für diesen Benutzer
+                                    total_uploads = db.session.query(db.func.count(Upload.id)).filter(
+                                        Upload.user_id == user_id
+                                    ).scalar()
+                                    
+                                    # SCHRITT 3: Wenn mehr als 5 vorhanden sind, lösche die überschüssigen
+                                    if total_uploads > 5:
+                                        # Finde alle zu löschenden Uploads
+                                        uploads_to_delete = db.session.query(Upload).filter(
+                                            Upload.user_id == user_id,
+                                            ~Upload.id.in_(uploads_to_keep)  # Nicht in den zu behaltenden
+                                        ).all()
+                                        
+                                        # Lösche die überschüssigen Uploads
+                                        logger.info(f"Lösche {len(uploads_to_delete)} überschüssige Uploads für Benutzer {user_id}")
+                                        for upload_to_delete in uploads_to_delete:
+                                            logger.info(f"Lösche Upload {upload_to_delete.id}, Session {upload_to_delete.session_id}")
+                                            
+                                            try:
+                                                # Lösche zugehörige Daten
+                                                Topic.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                Flashcard.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                Question.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                Connection.query.filter_by(upload_id=upload_to_delete.id).delete()
+                                                UserActivity.query.filter_by(session_id=upload_to_delete.session_id).delete()
+                                                
+                                                # Lösche den Upload selbst
+                                                db.session.delete(upload_to_delete)
+                                                
+                                                # Lösche Redis-Schlüssel
+                                                session_to_delete = upload_to_delete.session_id
+                                                redis_keys = [
+                                                    f"processing_status:{session_to_delete}",
+                                                    f"processing_progress:{session_to_delete}",
+                                                    f"processing_start_time:{session_to_delete}",
+                                                    f"processing_heartbeat:{session_to_delete}",
+                                                    f"processing_last_update:{session_to_delete}",
+                                                    f"processing_details:{session_to_delete}",
+                                                    f"processing_result:{session_to_delete}",
+                                                    f"task_id:{session_to_delete}",
+                                                    f"error_details:{session_to_delete}",
+                                                    f"openai_error:{session_to_delete}",
+                                                    f"all_data_stored:{session_to_delete}",
+                                                    f"finalization_complete:{session_to_delete}"
+                                                ]
+                                                for key in redis_keys:
+                                                    redis_client.delete(key)
+                                            except Exception as delete_error:
+                                                logger.error(f"Fehler beim Löschen von Upload {upload_to_delete.id}: {str(delete_error)}")
+                                                # Fahre mit dem nächsten Upload fort
+                                                continue
+                                        
+                                        # Speichere alle Änderungen
+                                        db.session.commit()
+                                        logger.info(f"Alle überschüssigen Uploads für Benutzer {user_id} wurden gelöscht")
+                                    else:
+                                        logger.info(f"Benutzer {user_id} hat nur {total_uploads} Uploads, kein Löschen nötig")
+                                except Exception as limit_error:
+                                    logger.error(f"Fehler bei der Begrenzung der Uploads: {str(limit_error)}")
+                                    logger.error(traceback.format_exc())
+                                    # Rollback bei Fehler
+                                    db.session.rollback()
                             
                             # Ergebnisse in Redis für schnellen Zugriff speichern
                             logger.info("💾 Speichere Ergebnisse in Redis-Cache...")
