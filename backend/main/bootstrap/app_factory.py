@@ -209,8 +209,30 @@ def _register_base_routes(app: Flask):
         Dieser Endpunkt wird von DigitalOcean für Health Checks verwendet.
         """
         client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-        print(f"PING-ANFRAGE von {client_ip} - ZEIT: {datetime.now().isoformat()}", flush=True)
-        log_step("Ping", "INFO", f"Ping-Anfrage von {client_ip}")
+        test_message = f"PING-TEST von {client_ip} - ZEIT: {datetime.now().isoformat()}"
+        
+        # Direkte Print-Anweisungen für Debugging
+        print("DIREKT-PRINT:", test_message, flush=True)
+        
+        # Standard Python-Logging auf allen Ebenen
+        logging.debug("DEBUG-PYTHON: " + test_message)
+        logging.info("INFO-PYTHON: " + test_message)
+        logging.warning("WARNING-PYTHON: " + test_message)
+        logging.error("ERROR-PYTHON: " + test_message)
+        logging.critical("CRITICAL-PYTHON: " + test_message)
+        
+        # Flask App-Logger
+        app.logger.debug("DEBUG-FLASK: " + test_message)
+        app.logger.info("INFO-FLASK: " + test_message)
+        app.logger.warning("WARNING-FLASK: " + test_message)
+        app.logger.error("ERROR-FLASK: " + test_message)
+        
+        # Eigene Logging-Funktion
+        log_step("Ping-Test", "DEBUG", test_message)
+        log_step("Ping-Test", "INFO", test_message)
+        log_step("Ping-Test", "WARNING", test_message)
+        log_step("Ping-Test", "ERROR", test_message)
+        
         return "pong", 200
     
     # Logging-Test-Endpunkt
