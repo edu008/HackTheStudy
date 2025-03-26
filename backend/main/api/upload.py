@@ -451,6 +451,31 @@ def get_results(session_id):
     update_session_timestamp(session_id)
     
     try:
+        # Suche zuerst nach dem Upload in der Datenbank und prüfe, ob er existiert
+        upload = Upload.query.filter_by(session_id=session_id).first()
+        if not upload:
+            # Wenn kein Upload existiert, prüfe, ob es einen laufenden Task gibt
+            task_id = redis_client.get(f"task_id:{session_id}")
+            if task_id:
+                # Es gibt einen laufenden Task, also gib "processing" zurück
+                return jsonify({
+                    "status": "processing", 
+                    "message": "Verarbeitung läuft...",
+                    "task_id": task_id.decode('utf-8') if isinstance(task_id, bytes) else task_id
+                }), 200
+            
+            return jsonify({"error": "Session nicht gefunden"}), 404
+            
+        # Prüfe explizit den Upload-Status in der Datenbank
+        logger.info(f"Datenbank-Upload Status: {upload.processing_status}")
+        if upload.processing_status != 'completed':
+            return jsonify({
+                "status": "processing", 
+                "message": "Verarbeitung läuft...",
+                "progress": 90,
+                "detail": "Warte auf Abschluss des Uploads"
+            }), 200
+        
         # Prüfe den Redis-Status für die Session
         redis_key = f"processing_status:{session_id}"
         processing_status = redis_client.get(redis_key)
@@ -480,17 +505,6 @@ def get_results(session_id):
                         main_topic_name = "Unknown Topic"
                         if "main_topic" in result_data:
                             main_topic_name = result_data["main_topic"]
-                        
-                        # Prüfe, ob der Upload in der Datenbank existiert und vollständig abgeschlossen ist
-                        upload = Upload.query.filter_by(session_id=session_id).first()
-                        if not upload or upload.processing_status != 'completed':
-                            logger.info(f"Datenbank-Upload noch nicht abgeschlossen für Session {session_id}, Status: {upload.processing_status if upload else 'nicht gefunden'}")
-                            return jsonify({
-                                "status": "processing", 
-                                "message": "Verarbeitung läuft...",
-                                "progress": 95,
-                                "detail": "Ergebnisse werden finalisiert"
-                            }), 200
                         
                         # WICHTIG: Überprüfe zusätzlich, ob die Daten tatsächlich in der Datenbank verfügbar sind
                         topics_count = Topic.query.filter_by(upload_id=upload.id).count()
@@ -527,21 +541,6 @@ def get_results(session_id):
                         }), 200
                     except json.JSONDecodeError:
                         logger.warning(f"Ungültige JSON-Daten in Redis-Ergebnissen für {session_id}")
-        
-        # Suche nach dem Upload in der Datenbank
-        upload = Upload.query.filter_by(session_id=session_id).first()
-        if not upload:
-            # Wenn kein Upload existiert, prüfe, ob es einen laufenden Task gibt
-            task_id = redis_client.get(f"task_id:{session_id}")
-            if task_id:
-                # Es gibt einen laufenden Task, also gib "processing" zurück
-                return jsonify({
-                    "status": "processing", 
-                    "message": "Verarbeitung läuft...",
-                    "task_id": task_id.decode('utf-8') if isinstance(task_id, bytes) else task_id
-                }), 200
-            
-            return jsonify({"error": "Session nicht gefunden"}), 404
         
         logger.info(f"Upload Status: {upload.processing_status}, special_status: {special_status}")
         
