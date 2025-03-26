@@ -4,13 +4,13 @@ import requests
 import uuid
 from authlib.integrations.flask_client import OAuth
 from datetime import datetime, timedelta
-import jwt
 import functools
 from . import api_bp
 from core.models import db, User, OAuthToken, UserActivity, Payment
 from functools import wraps
 import logging
 from uuid import uuid4
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, decode_token
 
 # Blueprint erstellen und zentrale CORS-Konfiguration verwenden
 auth_bp = Blueprint('auth', __name__)
@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 # OAuth-Objekt für die spätere Initialisierung
 oauth = OAuth()
+
+# Unterstützte OAuth-Provider
+SUPPORTED_PROVIDERS = ['google', 'github']
 
 def setup_oauth(app):
     """Initialisiert die OAuth-Konfiguration für die App."""
@@ -56,128 +59,178 @@ def setup_oauth(app):
             name='github',
             client_id=github_client_id.strip(),
             client_secret=github_client_secret.strip(),
-            access_token_url='https://github.com/login/oauth/access_token',
-            access_token_params=None,
             authorize_url='https://github.com/login/oauth/authorize',
             authorize_params=None,
-            api_base_url='https://api.github.com/',
-            client_kwargs={
-                'scope': 'user:email',
-                'token_endpoint_auth_method': 'client_secret_post'
-            }
+            access_token_url='https://github.com/login/oauth/access_token',
+            access_token_params=None,
+            refresh_token_url=None,
+            client_kwargs={'scope': 'user:email'},
         )
         logger.info("GitHub OAuth konfiguriert.")
     else:
         logger.warning("WARNUNG: GitHub OAuth nicht konfiguriert (fehlende Umgebungsvariablen).")
-    
-    return oauth
-
-def get_user_info(provider, token):
-    if provider == 'google':
-        resp = requests.get('https://www.googleapis.com/oauth2/v1/userinfo', headers={'Authorization': f'Bearer {token}'})
-        if resp.status_code == 200:
-            user_info = resp.json()
-            return {'provider': 'google', 'id': user_info['id'], 'email': user_info['email'], 'name': user_info.get('name', user_info['email'].split('@')[0]), 'avatar': user_info.get('picture')}
-    elif provider == 'github':
-        resp = requests.get('https://api.github.com/user', headers={'Authorization': f'token {token}'})
-        if resp.status_code == 200:
-            user_info = resp.json()
-            email_resp = requests.get('https://api.github.com/user/emails', headers={'Authorization': f'token {token}'})
-            email = user_info.get('email')
-            if email_resp.status_code == 200:
-                emails = email_resp.json()
-                primary_email = next((e['email'] for e in emails if e['primary']), None)
-                if primary_email:
-                    email = primary_email
-            name = user_info.get('name') or user_info['login']
-            return {'provider': 'github', 'id': str(user_info['id']), 'email': email or f"{user_info['login']}@github.com", 'name': name, 'avatar': user_info.get('avatar_url')}
-    return None
 
 def token_required(f):
+    """
+    Dekorator, der überprüft, ob ein gültiges JWT-Token in den Anfrage-Headern übergeben wurde.
+    Verwendet flask_jwt_extended für die Token-Validierung.
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
-        # OPTIONS-Anfragen immer erlauben, ohne Token zu überprüfen
+        # Bei OPTIONS-Anfragen sofort eine Antwort zurückgeben
         if request.method == 'OPTIONS':
-            return f(*args, **kwargs)
+            return jsonify({"success": True})
         
-        token = None
+        # Prüfe, ob der Authorization-Header im Request vorhanden ist
         auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({"success": False, "error": {"code": "MISSING_TOKEN", "message": "Missing authorization token"}}), 401
         
-        if auth_header:
-            if auth_header.startswith('Bearer '):
-                token = auth_header.split(' ')[1]
-        else:
-            # Versuche den Token aus dem Cookie zu bekommen, falls vorhanden
-            token = request.cookies.get('token')
+        # Extrahiere das Token aus dem Authorization-Header
+        token = auth_header.replace('Bearer ', '')
         
-        if not token:
-            # Mit CORS-Headern antworten, auch bei Authentifizierungsfehlern
-            response = jsonify({
-                'success': False,
-                'error': {
-                    'code': 'NO_TOKEN',
-                    'message': 'Token is missing'
-                }
-            }), 401
-            
-            return response
-            
         try:
-            # Token dekodieren
-            jwt_secret = os.getenv('JWT_SECRET')
-            data = jwt.decode(token, jwt_secret, algorithms=['HS256'])
-            request.user_id = data['user_id']
-        except:
-            # Mit CORS-Headern antworten, auch bei Token-Dekodierungsfehlern
-            response = jsonify({
-                'success': False,
-                'error': {
-                    'code': 'INVALID_TOKEN',
-                    'message': 'Token is invalid or expired'
-                }
-            }), 401
+            # Verwende flask_jwt_extended für Token-Validierung
+            # Der JWT-Secret-Key wird aus der App-Konfiguration gelesen
+            # Validiere Token und hole user_id
+            user_id = get_jwt_identity()
             
-            return response
-        
-        return f(*args, **kwargs)
+            # Füge den Benutzer zur Flask-g hinzu, um ihn in anderen Funktionen zu verwenden
+            user = User.query.get(user_id)
+            if not user:
+                return jsonify({"success": False, "error": {"code": "INVALID_TOKEN", "message": "Invalid or expired token"}}), 401
+            
+            # Speichere den Benutzer in Flask-g und in request für einfachen Zugriff
+            g.user = user
+            request.user = user
+            request.user_id = user_id
+            
+            return f(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Fehler bei Token-Validierung: {str(e)}")
+            return jsonify({"success": False, "error": {"code": "INVALID_TOKEN", "message": "Invalid or expired token"}}), 401
+    
     return decorated
 
-@auth_bp.route('/login/<provider>', methods=['GET', 'OPTIONS'])
-def login(provider):
-    """Generische Login-Route für alle OAuth-Provider"""
-    if request.method == 'OPTIONS':
-        response = current_app.make_response("")
-        return response
-    
-    if provider not in ['google', 'github']:
-        return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid provider"}}), 400
-    
+def validate_provider(provider):
+    """Validiert, ob der angegebene OAuth-Provider unterstützt wird."""
+    if provider not in SUPPORTED_PROVIDERS:
+        return False
     # Prüfe, ob der Provider konfiguriert ist
     if not hasattr(oauth, provider):
         logger.error(f"OAuth Provider {provider} nicht konfiguriert")
-        return jsonify({"success": False, "error": {"code": "PROVIDER_NOT_CONFIGURED", "message": f"Provider {provider} is not configured"}}), 400
-    
-    # Use the exact redirect URI that matches the OAuth app configuration
-    redirect_uri = url_for('api.auth.callback', provider=provider, _external=True)
-    return oauth.create_client(provider).authorize_redirect(redirect_uri)
+        return False
+    return True
 
-@auth_bp.route('/callback/<provider>', methods=['GET', 'OPTIONS'])
-def callback(provider):
-    """Generische Callback-Route für alle OAuth-Provider"""
+def get_user_info(provider, token):
+    """Ruft Benutzerinformationen vom OAuth-Provider ab."""
+    try:
+        if provider == 'google':
+            resp = requests.get('https://www.googleapis.com/oauth2/v1/userinfo', headers={'Authorization': f'Bearer {token}'})
+            if resp.status_code == 200:
+                user_info = resp.json()
+                return {'provider': 'google', 'id': user_info['id'], 'email': user_info['email'], 'name': user_info.get('name', user_info['email'].split('@')[0]), 'avatar': user_info.get('picture')}
+        elif provider == 'github':
+            resp = requests.get('https://api.github.com/user', headers={'Authorization': f'token {token}'})
+            if resp.status_code == 200:
+                user_info = resp.json()
+                email_resp = requests.get('https://api.github.com/user/emails', headers={'Authorization': f'token {token}'})
+                email = user_info.get('email')
+                if email_resp.status_code == 200:
+                    emails = email_resp.json()
+                    primary_email = next((e['email'] for e in emails if e['primary']), None)
+                    if primary_email:
+                        email = primary_email
+                name = user_info.get('name') or user_info['login']
+                return {'provider': 'github', 'id': str(user_info['id']), 'email': email or f"{user_info['login']}@github.com", 'name': name, 'avatar': user_info.get('avatar_url')}
+    except Exception as e:
+        logger.error(f"Fehler beim Abrufen von Benutzerinformationen von {provider}: {str(e)}")
+    return None
+
+@auth_bp.route('/login', methods=['POST', 'OPTIONS'])
+def login_with_code():
+    """Login mit OAuth-Code vom Frontend."""
+    # Bei OPTIONS-Anfragen sofort eine Antwort zurückgeben
     if request.method == 'OPTIONS':
         response = current_app.make_response("")
         return response
     
-    if provider not in ['google', 'github']:
-        return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid provider"}}), 400
+    # Daten aus dem Request-Body holen
+    data = request.json
+    provider = data.get('provider')
+    code = data.get('code')
+    
+    if not provider or not code:
+        return jsonify({"success": False, "error": {"code": "MISSING_PARAMETERS", "message": "Provider and code are required"}}), 400
+    
+    if not validate_provider(provider):
+        return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid or unconfigured provider"}}), 400
     
     try:
-        token = oauth.create_client(provider).authorize_access_token()
+        # Token über OAuth-Provider abrufen
+        oauth_client = oauth.create_client(provider)
+        if not oauth_client:
+            return jsonify({"success": False, "error": {"code": "PROVIDER_ERROR", "message": f"Error creating OAuth client for {provider}"}}), 500
+        
+        # Hier verwenden wir den vom Frontend gesendeten Code, um ein Token zu erhalten
+        token = oauth_client.authorize_access_token(code=code)
         user_info = get_user_info(provider, token.get('access_token'))
+        
         if not user_info:
             return jsonify({"success": False, "error": {"code": "USER_INFO_FAILED", "message": "Failed to get user info"}}), 400
         
-        return handle_oauth_callback(provider, user_info)
+        return handle_oauth_callback(provider, user_info, token)
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Login mit {provider}: {str(e)}")
+        return jsonify({"success": False, "error": {"code": "LOGIN_FAILED", "message": str(e)}}), 500
+
+@auth_bp.route('/login/<provider>', methods=['GET', 'OPTIONS'])
+def login(provider):
+    """Generische Login-Route für alle OAuth-Provider."""
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
+    if not validate_provider(provider):
+        return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid or unconfigured provider"}}), 400
+    
+    try:
+        # OAuth-Client erstellen und Redirect vorbereiten
+        oauth_client = oauth.create_client(provider)
+        if not oauth_client:
+            return jsonify({"success": False, "error": {"code": "PROVIDER_ERROR", "message": f"Error creating OAuth client for {provider}"}}), 500
+        
+        # Use the exact redirect URI that matches the OAuth app configuration
+        redirect_uri = url_for('api.auth.callback', provider=provider, _external=True)
+        return oauth_client.authorize_redirect(redirect_uri)
+    except Exception as e:
+        logger.error(f"Fehler beim Redirect zu {provider}: {str(e)}")
+        return jsonify({"success": False, "error": {"code": "REDIRECT_FAILED", "message": str(e)}}), 500
+
+@auth_bp.route('/callback/<provider>', methods=['GET', 'OPTIONS'])
+def callback(provider):
+    """Generische Callback-Route für alle OAuth-Provider."""
+    if request.method == 'OPTIONS':
+        response = current_app.make_response("")
+        return response
+    
+    if not validate_provider(provider):
+        return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid or unconfigured provider"}}), 400
+    
+    try:
+        # OAuth-Client erstellen und Token abrufen
+        oauth_client = oauth.create_client(provider)
+        if not oauth_client:
+            return jsonify({"success": False, "error": {"code": "PROVIDER_ERROR", "message": f"Error creating OAuth client for {provider}"}}), 500
+        
+        token = oauth_client.authorize_access_token()
+        user_info = get_user_info(provider, token.get('access_token'))
+        
+        if not user_info:
+            return jsonify({"success": False, "error": {"code": "USER_INFO_FAILED", "message": "Failed to get user info"}}), 400
+        
+        return handle_oauth_callback(provider, user_info, token)
     except Exception as e:
         logger.error(f"Fehler bei {provider} OAuth Callback: {str(e)}")
         return jsonify({
@@ -186,17 +239,21 @@ def callback(provider):
         }), 500
 
 @auth_bp.route('/user', methods=['GET', 'OPTIONS'])
-@token_required
+@jwt_required()
 def get_user():
-    # Bei OPTIONS-Anfragen gib sofort eine Antwort zurück
+    """Gibt Informationen zum aktuellen Benutzer zurück."""
+    # Bei OPTIONS-Anfragen sofort eine Antwort zurückgeben
     if request.method == 'OPTIONS':
         response = current_app.make_response("")
         return response
+    
+    try:    
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
         
-    user = User.query.get(request.user_id)
-    if not user:
-        return jsonify({"success": False, "error": {"code": "USER_NOT_FOUND", "message": "User not found"}}), 404
-    else:
+        if not user:
+            return jsonify({"success": False, "error": {"code": "USER_NOT_FOUND", "message": "User not found"}}), 404
+        
         return jsonify({
             "id": user.id,
             "name": user.name,
@@ -204,6 +261,9 @@ def get_user():
             "avatar": user.avatar,
             "credits": user.credits
         }), 200
+    except Exception as e:
+        logger.error(f"Fehler beim Abrufen des Benutzers: {str(e)}")
+        return jsonify({"success": False, "error": {"code": "USER_FETCH_FAILED", "message": str(e)}}), 500
 
 @auth_bp.route('/activity', methods=['GET', 'OPTIONS'])
 @token_required
@@ -333,14 +393,14 @@ def get_payments():
         }
     }), 200
 
-def handle_oauth_callback(provider: str, user_info: dict):
-    """Zentrale Funktion zur Verarbeitung von OAuth-Callbacks"""
+def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = None):
+    """Zentrale Funktion zur Verarbeitung von OAuth-Callbacks."""
     try:
-        # Suche nach existierendem Benutzer mit OAuth-Provider und ID
-        user = User.query.filter_by(oauth_provider=provider, oauth_id=user_info['id']).first()
-        
         # Initialisiere existing_user mit None
         existing_user = None
+        
+        # Suche nach existierendem Benutzer mit OAuth-Provider und ID
+        user = User.query.filter_by(oauth_provider=provider, oauth_id=user_info['id']).first()
         
         # Wenn kein Benutzer gefunden wurde, suche nach E-Mail
         if not user:
@@ -364,17 +424,36 @@ def handle_oauth_callback(provider: str, user_info: dict):
                 )
                 db.session.add(user)
         
-        # Speichere OAuth-Token
-        token = oauth.__getattr__(provider).token
-        oauth_token = OAuthToken(
-            id=str(uuid4()),
-            user_id=user.id,
-            provider=provider,
-            access_token=token.get('access_token'),
-            refresh_token=token.get('refresh_token'),
-            expires_at=datetime.utcnow() + timedelta(seconds=token.get('expires_in', 3600))
-        )
-        db.session.add(oauth_token)
+        try:
+            # Schneller Commit, um die User-ID zu erhalten
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Fehler beim Speichern des Benutzers: {str(e)}")
+            raise
+        
+        # Speichere OAuth-Token, falls token_data vorhanden ist
+        if token_data:
+            # Prüfe, ob bereits ein Token für diesen Benutzer und Provider existiert
+            existing_token = OAuthToken.query.filter_by(
+                user_id=user.id,
+                provider=provider
+            ).first()
+            
+            # Lösche das alte Token, falls vorhanden
+            if existing_token:
+                db.session.delete(existing_token)
+            
+            # Erstelle neues Token
+            oauth_token = OAuthToken(
+                id=str(uuid4()),
+                user_id=user.id,
+                provider=provider,
+                access_token=token_data.get('access_token'),
+                refresh_token=token_data.get('refresh_token'),
+                expires_at=datetime.utcnow() + timedelta(seconds=token_data.get('expires_in', 3600))
+            )
+            db.session.add(oauth_token)
         
         # Protokolliere Aktivität
         activity = UserActivity(
@@ -394,7 +473,7 @@ def handle_oauth_callback(provider: str, user_info: dict):
             logger.error(f"Fehler beim Speichern der OAuth-Daten: {str(e)}")
             raise
         
-        # Erstelle JWT-Token
+        # Erstelle JWT-Token mit flask_jwt_extended
         token = create_access_token(identity=user.id)
         
         # Erstelle Response mit Token und User-Info
