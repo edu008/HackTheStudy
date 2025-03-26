@@ -42,7 +42,7 @@ from .error_handler import (
 )
 
 # Vorhandene Routen-Imports bleiben gleich
-from .upload import upload_file, get_results
+from .upload import upload_file, get_results, upload_chunk
 from .flashcards import generate_more_flashcards
 from .questions import generate_more_questions
 from .topics import generate_related_topics, get_topics
