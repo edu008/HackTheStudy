@@ -54,6 +54,13 @@ def create_app(config_name='default'):
     redis_url = "redis://localhost:6379/0"
     app.logger.info(f"Main-Backend verwendet IMMER lokalen Redis: {redis_url}")
     
+    # Flask-Erweiterungen initialisieren
+    from bootstrap.extensions import migrate, cache, jwt, cors
+    migrate.init_app(app, db)
+    cache.init_app(app, config={'CACHE_TYPE': 'redis', 'CACHE_REDIS_URL': redis_url})
+    jwt.init_app(app)
+    app.logger.info("✅ JWT-Manager für JWT-Token-Verarbeitung initialisiert")
+    
     # Redis-Client initialisieren
     try:
         app.logger.info(f"Versuche Redis-Verbindung zu: {redis_url}")
