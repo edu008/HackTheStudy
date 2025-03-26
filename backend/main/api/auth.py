@@ -339,6 +339,9 @@ def handle_oauth_callback(provider: str, user_info: dict):
         # Suche nach existierendem Benutzer mit OAuth-Provider und ID
         user = User.query.filter_by(oauth_provider=provider, oauth_id=user_info['id']).first()
         
+        # Initialisiere existing_user mit None
+        existing_user = None
+        
         # Wenn kein Benutzer gefunden wurde, suche nach E-Mail
         if not user:
             existing_user = User.query.filter_by(email=user_info['email']).first()
