@@ -141,27 +141,28 @@ def upload_file():
             file_name=file.filename
         )
         
-        # SCHRITT 1: Wenn keine Session-ID übergeben wird, erstellen wir eine neue und prüfen die Begrenzung
-        if not session_id:
-            # Zuerst einen alten Upload löschen, falls nötig
-            if user_id:
+        # WICHTIG: Überprüfe und lösche alte Uploads VOR dem Erstellen eines neuen Uploads
+        # Dies muss immer geschehen, unabhängig davon, ob eine session_id übergeben wurde
+        if user_id:
+            AppLogger.structured_log(
+                "INFO",
+                f"Prüfe und verwalte Benutzer-Sessions für Benutzer {user_id}",
+                user_id=user_id,
+                component="session_management"
+            )
+            # Behalte maximal 4 bestehende Sessions, damit mit der neuen Session genau 5 übrig bleiben
+            # session_to_exclude auf None setzen, da wir die neue Session noch nicht erstellt haben
+            sessions_removed = check_and_manage_user_sessions(user_id, max_sessions=4, session_to_exclude=None)
+            if sessions_removed:
                 AppLogger.structured_log(
                     "INFO",
-                    f"Prüfe und verwalte Benutzer-Sessions für Benutzer {user_id}",
+                    f"Alte Sessions wurden gelöscht, damit nur die 4 neuesten bestehenden Sessions + die neue Session erhalten bleiben",
                     user_id=user_id,
                     component="session_management"
                 )
-                # Setze max_sessions=5 und session_to_exclude=None für die Überprüfung
-                sessions_removed = check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=None)
-                if sessions_removed:
-                    AppLogger.structured_log(
-                        "INFO",
-                        f"Alte Sessions wurden gelöscht, da der Benutzer das Limit erreicht hat",
-                        user_id=user_id,
-                        component="session_management"
-                    )
-            
-            # Dann eine neue Session-ID erstellen
+                
+        # SCHRITT 1: Wenn keine Session-ID übergeben wird, erstellen wir eine neue
+        if not session_id:
             session_id = str(uuid.uuid4())
             AppLogger.structured_log(
                 "INFO",

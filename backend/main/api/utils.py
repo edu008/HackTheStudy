@@ -1531,15 +1531,14 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
     
     Args:
         user_id (str): Die ID des Benutzers
-        max_sessions (int): Maximale Anzahl erlaubter Sessions (Standard: 5)
+        max_sessions (int): Maximale Anzahl an Sessions, die behalten werden sollen (Standard: 5)
         session_to_exclude (str): Eine Session-ID, die von der Zählung ausgeschlossen werden soll
     
     Returns:
-        bool: True, wenn die maximale Anzahl der Sessions nicht überschritten wurde, 
-              False, wenn eine oder mehrere Sessions gelöscht wurden
+        bool: True, wenn Sessions gelöscht wurden, False wenn keine Sessions gelöscht wurden
     """
     if not user_id:
-        return True
+        return False
     
     sessions_removed = False
     
@@ -1557,17 +1556,23 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
     if session_to_exclude:
         user_sessions = [s for s in user_sessions if s.session_id != session_to_exclude]
     
+    # Anzahl der zu löschenden Sessions berechnen
+    total_sessions = len(user_sessions)
+    
     # Wenn die Anzahl der Sessions das Maximum überschreitet, lösche die ältesten
-    excess_count = len(user_sessions) - max_sessions
-    if excess_count > 0:
+    if total_sessions > max_sessions:
+        # Berechne, wie viele Sessions gelöscht werden müssen
+        sessions_to_delete = total_sessions - max_sessions
+        
         AppLogger.structured_log(
             "INFO",
-            f"Benutzer {user_id} hat {len(user_sessions)} Sessions, Maximum ist {max_sessions}. Lösche {excess_count} älteste(n).",
+            f"Benutzer {user_id} hat {total_sessions} Sessions, Maximum ist {max_sessions}. Lösche {sessions_to_delete} älteste Session(s).",
             user_id=user_id,
             component="check_and_manage_user_sessions"
         )
         
-        for i in range(excess_count):
+        # Lösche die ältesten Sessions (die ersten in der Liste)
+        for i in range(sessions_to_delete):
             if i < len(user_sessions):
                 session_to_remove = user_sessions[i]
                 
@@ -1606,7 +1611,7 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
                     sessions_removed = True
                     AppLogger.structured_log(
                         "INFO",
-                        f"Upload {session_to_remove.session_id} gelöscht, da Benutzer Limit erreicht hat",
+                        f"Upload {session_to_remove.session_id} gelöscht, damit nur die {max_sessions} neuesten Sessions erhalten bleiben",
                         user_id=user_id,
                         session_id=session_to_remove.session_id,
                         component="check_and_manage_user_sessions"
@@ -1626,7 +1631,8 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
                             f"task_id:{session_to_remove.session_id}",
                             f"error_details:{session_to_remove.session_id}",
                             f"openai_error:{session_to_remove.session_id}",
-                            f"all_data_stored:{session_to_remove.session_id}"
+                            f"all_data_stored:{session_to_remove.session_id}",
+                            f"finalization_complete:{session_to_remove.session_id}"
                         ]
                         
                         # Verwende Redis pipeline für effizientes Löschen
@@ -1662,7 +1668,8 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
                         exception=traceback.format_exc()
                     )
     
-    return not sessions_removed
+    # Gibt TRUE zurück, wenn Sessions gelöscht wurden
+    return sessions_removed
 
 def update_session_timestamp(session_id):
     """

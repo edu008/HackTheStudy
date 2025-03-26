@@ -535,63 +535,129 @@ def register_task(celery_app):
                         # SCHRITT 9: Finalisierung
                         logger.info("🔄 SCHRITT 9: Finalisierung des Uploads")
                         try:
-                            # Upload-Status aktualisieren - nur den Dokumenttyp im Content-Feld speichern
                             # Dokumenttyp erkennen (z.B. Lecture, Test, Notes, etc.)
                             doc_type = "Unbekannter Typ"
                             
-                            # Versuche den Dokumenttyp aus dem Dateinamen oder Inhalt zu ermitteln
+                            # Versuche den Dokumenttyp aus dem Dateinamen zu ermitteln
                             for file_name, _ in file_contents:
-                                if "lecture" in file_name.lower():
+                                file_name_lower = file_name.lower()
+                                if "lecture" in file_name_lower or "vorlesung" in file_name_lower:
                                     doc_type = "Lecture"
                                     break
-                                elif "test" in file_name.lower():
+                                elif "test" in file_name_lower or "prüfung" in file_name_lower or "exam" in file_name_lower or "klausur" in file_name_lower:
                                     doc_type = "Test"
                                     break
-                                elif "exam" in file_name.lower():
-                                    doc_type = "Exam"
-                                    break
-                                elif "assignment" in file_name.lower():
-                                    doc_type = "Assignment"
-                                    break
-                                elif "notes" in file_name.lower():
+                                elif "notes" in file_name_lower or "notizen" in file_name_lower:
                                     doc_type = "Notes"
                                     break
+                                elif "lab" in file_name_lower or "labor" in file_name_lower or "praktikum" in file_name_lower:
+                                    doc_type = "Lab"
+                                    break
+                                elif "exercise" in file_name_lower or "übung" in file_name_lower:
+                                    doc_type = "Exercise"
+                                    break
+                                elif "summary" in file_name_lower or "zusammenfassung" in file_name_lower:
+                                    doc_type = "Summary"
+                                    break
+                                elif "book" in file_name_lower or "buch" in file_name_lower:
+                                    doc_type = "Book"
+                                    break
+                                elif "paper" in file_name_lower or "artikel" in file_name_lower:
+                                    doc_type = "Paper"
+                                    break
+                                elif "cheat" in file_name_lower or "sheet" in file_name_lower or "spickzettel" in file_name_lower:
+                                    doc_type = "Cheat Sheet"
+                                    break
                             
-                            # Wenn kein Typ im Dateinamen gefunden wurde, versuche es mit dem Text
-                            if doc_type == "Unbekannter Typ" and len(extracted_texts) > 0:
-                                if "lecture" in combined_text.lower()[:500]:
-                                    doc_type = "Lecture"
-                                elif "test" in combined_text.lower()[:500]:
-                                    doc_type = "Test"
-                                elif "exam" in combined_text.lower()[:500]:
-                                    doc_type = "Exam"
+                            # Falls kein spezifischer Typ erkannt wurde, analysiere den Inhalt
+                            if doc_type == "Unbekannter Typ" and analysis_result:
+                                if "content_type" in analysis_result:
+                                    content_type = analysis_result["content_type"].lower()
+                                    if "lecture" in content_type or "vorlesung" in content_type:
+                                        doc_type = "Lecture"
+                                    elif "test" in content_type or "exam" in content_type or "prüfung" in content_type:
+                                        doc_type = "Test"
+                                    elif "note" in content_type or "notiz" in content_type:
+                                        doc_type = "Notes"
+                                    elif "book" in content_type or "buch" in content_type or "textbook" in content_type:
+                                        doc_type = "Book"
+                                    elif "paper" in content_type or "article" in content_type or "artikel" in content_type:
+                                        doc_type = "Paper"
                             
-                            # Aktualisiere Upload-Eintrag
-                            upload.content = doc_type  # Nur den Dokumenttyp speichern, nicht den gesamten Inhalt
-                            upload.token_count = token_count
-                            upload.processing_status = "completed"
-                            upload.last_used_at = datetime.utcnow()
-                            db.session.commit()
+                            # Upload-Datensatz aktualisieren
+                            upload = Upload.query.filter_by(session_id=session_id).first()
+                            if upload:
+                                upload.content = doc_type  # Nur den Dokumenttyp im Content-Feld speichern
+                                upload.processing_status = "completed"
+                                upload.last_used_at = db.func.current_timestamp()
+                                db.session.commit()
+                                
+                                logger.info(f"💾 Upload-Status in der Datenbank auf 'completed' gesetzt, Dokumenttyp: {doc_type}")
+                            else:
+                                logger.error(f"❌ Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank!")
+                                error_message = f"Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank."
+                                redis_client.set(f"processing_status:{session_id}", f"failed: {error_message}", ex=3600)
+                                redis_client.set(f"error_details:{session_id}", json.dumps({
+                                    "message": error_message,
+                                    "type": "database_error",
+                                    "time": time.time()
+                                }), ex=3600)
+                                return
                             
                             # Begrenze die Anzahl der Uploads pro Benutzer auf maximal 5
                             if user_id:
                                 logger.info(f"Prüfe Upload-Limits für Benutzer {user_id}")
-                                user_uploads = Upload.query.filter_by(user_id=user_id).order_by(Upload.last_used_at.asc()).all()
+                                
+                                # SQL-Abfrage, die NULL-Werte in last_used_at zuerst sortiert,
+                                # dann nach last_used_at aufsteigend (älteste zuerst)
+                                user_uploads = Upload.query.filter_by(user_id=user_id) \
+                                    .order_by(
+                                        Upload.last_used_at.is_(None).desc(),  # NULL-Werte zuerst
+                                        Upload.last_used_at.asc()  # dann nach Alter sortiert
+                                    ).all()
                                 
                                 if len(user_uploads) > 5:
-                                    # Behalte die 5 neuesten Uploads basierend auf last_used_at
+                                    # Lösche die ältesten Uploads, wobei NULL-Werte priorisiert werden
                                     uploads_to_delete = user_uploads[:-5]  # Alle außer den letzten 5
                                     
                                     for old_upload in uploads_to_delete:
-                                        logger.info(f"Entferne alten Upload {old_upload.id} vom {old_upload.upload_date}")
+                                        last_used_value = "NULL" if old_upload.last_used_at is None else old_upload.last_used_at.isoformat()
+                                        logger.info(f"Entferne alten Upload {old_upload.id} mit last_used_at={last_used_value}")
+                                        
                                         # Lösche zugehörige Daten
                                         Topic.query.filter_by(upload_id=old_upload.id).delete()
                                         Flashcard.query.filter_by(upload_id=old_upload.id).delete()
                                         Question.query.filter_by(upload_id=old_upload.id).delete()
                                         Connection.query.filter_by(upload_id=old_upload.id).delete()
                                         
+                                        # Lösche auch Benutzeraktivitäten
+                                        from core.models import UserActivity
+                                        UserActivity.query.filter_by(session_id=old_upload.session_id).delete()
+                                        
                                         # Lösche den Upload selbst
                                         db.session.delete(old_upload)
+                                        
+                                        # Lösche auch die Redis-Daten für diese Session
+                                        keys_to_delete = [
+                                            f"processing_status:{old_upload.session_id}",
+                                            f"processing_progress:{old_upload.session_id}",
+                                            f"processing_start_time:{old_upload.session_id}",
+                                            f"processing_heartbeat:{old_upload.session_id}",
+                                            f"processing_last_update:{old_upload.session_id}",
+                                            f"processing_details:{old_upload.session_id}",
+                                            f"processing_result:{old_upload.session_id}",
+                                            f"task_id:{old_upload.session_id}",
+                                            f"error_details:{old_upload.session_id}",
+                                            f"openai_error:{old_upload.session_id}",
+                                            f"all_data_stored:{old_upload.session_id}",
+                                            f"finalization_complete:{old_upload.session_id}"
+                                        ]
+                                        
+                                        # Verwende Redis pipeline für effizientes Löschen
+                                        pipeline = redis_client.pipeline()
+                                        for key in keys_to_delete:
+                                            pipeline.delete(key)
+                                        pipeline.execute()
                                     
                                     # Änderungen speichern
                                     db.session.commit()
