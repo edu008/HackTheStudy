@@ -342,13 +342,13 @@ def get_payments():
 @auth_bp.route('/login/google')
 def google_login():
     """Google OAuth Login Route"""
-    redirect_uri = url_for('auth.google_callback', _external=True)
+    redirect_uri = url_for('api.auth.google_callback', _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
 
 @auth_bp.route('/login/github')
 def github_login():
     """GitHub OAuth Login Route"""
-    redirect_uri = url_for('auth.github_callback', _external=True)
+    redirect_uri = url_for('api.auth.github_callback', _external=True)
     return oauth.github.authorize_redirect(redirect_uri)
 
 @auth_bp.route('/callback/google')
