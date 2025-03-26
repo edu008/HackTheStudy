@@ -46,26 +46,26 @@ class Upload(db.Model):
     __tablename__ = 'upload'
     
     id = db.Column(db.String(36), primary_key=True)
-    session_id = db.Column(db.String(36), nullable=False, unique=True)
-    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=True)
+    session_id = db.Column(db.String(36), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id', ondelete='SET NULL'), nullable=True, index=True)
     file_name_1 = db.Column(db.String(200), nullable=True)
     file_name_2 = db.Column(db.String(200), nullable=True)
     file_name_3 = db.Column(db.String(200), nullable=True)
     file_name_4 = db.Column(db.String(200), nullable=True)
     file_name_5 = db.Column(db.String(200), nullable=True)
-    upload_date = db.Column(db.DateTime, nullable=True)
+    upload_date = db.Column(db.DateTime, nullable=True, index=True)
     content = db.Column(db.Text, nullable=True)
     token_count = db.Column(db.Integer, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_used_at = db.Column(db.DateTime, nullable=True)
-    processing_status = db.Column(db.String(50), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+    last_used_at = db.Column(db.DateTime, nullable=True, index=True)
+    processing_status = db.Column(db.String(50), nullable=True, index=True)
     
     # Beziehungen
-    topics = db.relationship('Topic', backref='upload', lazy=True)
-    questions = db.relationship('Question', backref='upload', lazy=True)
-    flashcards = db.relationship('Flashcard', backref='upload', lazy=True)
-    connections = db.relationship('Connection', backref='upload', lazy=True, foreign_keys='Connection.upload_id')
+    topics = db.relationship('Topic', backref='upload', lazy=True, cascade="all, delete-orphan")
+    questions = db.relationship('Question', backref='upload', lazy=True, cascade="all, delete-orphan")
+    flashcards = db.relationship('Flashcard', backref='upload', lazy=True, cascade="all, delete-orphan")
+    connections = db.relationship('Connection', backref='upload', lazy=True, foreign_keys='Connection.upload_id', cascade="all, delete-orphan")
 
     def to_dict(self):
         """Konvertiert das Model in ein Dictionary."""
@@ -121,9 +121,13 @@ class Connection(db.Model):
     
     id = db.Column(db.String(36), primary_key=True)
     upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
-    source_id = db.Column(db.String(36), nullable=False)
-    target_id = db.Column(db.String(36), nullable=False)
+    source_id = db.Column(db.String(36), db.ForeignKey('topic.id'), nullable=False, index=True)
+    target_id = db.Column(db.String(36), db.ForeignKey('topic.id'), nullable=False, index=True)
     label = db.Column(db.String(500), nullable=False)
+    
+    # Beziehungen zu Topics
+    source = db.relationship('Topic', foreign_keys=[source_id])
+    target = db.relationship('Topic', foreign_keys=[target_id])
 
     def to_dict(self):
         """Konvertiert das Model in ein Dictionary."""
@@ -260,20 +264,26 @@ class Topic(db.Model):
     __tablename__ = 'topic'
     
     id = db.Column(db.String(36), primary_key=True)
-    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
-    name = db.Column(db.String(200), nullable=False)
-    is_main_topic = db.Column(db.Boolean, nullable=True)
-    parent_id = db.Column(db.String(36), nullable=True)
+    upload_id = db.Column(db.String(36), db.ForeignKey('upload.id', ondelete='CASCADE'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False, index=True)
+    is_main_topic = db.Column(db.Boolean, nullable=True, index=True)
+    parent_id = db.Column(db.String(36), db.ForeignKey('topic.id', ondelete='CASCADE'), nullable=True, index=True)
     description = db.Column(db.Text, nullable=True)
-    is_key_term = db.Column(db.Boolean, nullable=True)
+    is_key_term = db.Column(db.Boolean, nullable=True, index=True)
     
     # Rekursive Beziehung für Hierarchie
     subtopics = db.relationship(
         'Topic', 
         backref=db.backref('parent', remote_side=[id]),
-        foreign_keys='Topic.parent_id',
-        primaryjoin='Topic.parent_id == foreign(Topic.id)'
+        cascade="all, delete-orphan",
+        single_parent=True
     )
+    
+    # Beziehungen zu Verbindungen
+    outgoing_connections = db.relationship('Connection', foreign_keys='Connection.source_id', 
+                                         backref='source_topic', lazy='dynamic')
+    incoming_connections = db.relationship('Connection', foreign_keys='Connection.target_id', 
+                                         backref='target_topic', lazy='dynamic')
 
     def to_dict(self):
         """Konvertiert das Model in ein Dictionary."""
