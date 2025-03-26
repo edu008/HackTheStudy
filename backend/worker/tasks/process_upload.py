@@ -232,10 +232,11 @@ def register_task(celery_app):
                                 id=str(uuid.uuid4()),
                                 user_id=user_id,
                                 session_id=session_id,
-                                title=f"Upload vom {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}",
+                                file_name_1=f"Upload vom {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}",
                                 processing_status="processing",
-                                started_at=datetime.utcnow(),
-                                file_count=len(files_data)
+                                upload_date=datetime.utcnow(),
+                                created_at=datetime.utcnow(),
+                                updated_at=datetime.utcnow()
                             )
                             db.session.add(upload)
                             logger.info(f"✅ Neuer Upload-Eintrag erstellt: ID={upload.id}")
@@ -248,7 +249,7 @@ def register_task(celery_app):
                         logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
                         
                         # Speichere den Fehler in Redis für das Frontend
-                        redis_client.set(f"processing_error:{session_id}", json.dumps({
+                        safe_redis_set(f"processing_error:{session_id}", json.dumps({
                             "error": "database_error",
                             "message": str(db_error),
                             "timestamp": datetime.now().isoformat()
