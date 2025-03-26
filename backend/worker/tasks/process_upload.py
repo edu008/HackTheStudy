@@ -4,7 +4,7 @@ Task zur Verarbeitung von hochgeladenen Dateien
 import os
 import logging
 import time
-import json
+import json as json_module  # Umbenennen, um Namenskonflikte zu vermeiden
 import traceback
 import base64
 import threading
@@ -65,12 +65,12 @@ def register_task(celery_app):
             # Setze relevante Fehlermeldung
             error_msg = f"Worker-Timeout nach {execution_time:.1f}s (Limit: 3600s)"
             # Speichere Diagnose in Redis für Frontend-Zugriff
-            safe_redis_set(f"error_details:{session_id}", {
+            safe_redis_set(f"error_details:{session_id}", json_module.dumps({
                 "error_type": "worker_timeout",
                 "message": error_msg,
                 "diagnostics": diagnostics,
                 "timestamp": time.time()
-            }, ex=14400)
+            }), ex=14400)
             # Session-Status aktualisieren
             safe_redis_set(f"processing_status:{session_id}", "error", ex=14400)
             # Originales Signal weiterleiten, um Task zu beenden
@@ -164,7 +164,7 @@ def register_task(celery_app):
                     logger.info("Initialisiere Redis-Status")
                     safe_redis_set(f"processing_status:{session_id}", "initializing", ex=14400)
                     safe_redis_set(f"processing_start_time:{session_id}", str(start_time), ex=14400)
-                    safe_redis_set(f"processing_details:{session_id}", {
+                    safe_redis_set(f"processing_details:{session_id}", json_module.dumps({
                         "start_time": datetime.now().isoformat(),
                         "files_count": len(files_data) if files_data else 0,
                         "user_id": user_id,
@@ -172,7 +172,7 @@ def register_task(celery_app):
                         "worker_id": self.request.id,
                         "hostname": os.environ.get("HOSTNAME", "unknown"),
                         "task_id": self.request.id
-                    }, ex=14400)
+                    }), ex=14400)
                     logger.info("Redis-Status erfolgreich initialisiert")
                     
                     logger.info(f"Session {session_id} - Initializing with {len(files_data) if files_data else 0} files for user {user_id}")
@@ -184,10 +184,10 @@ def register_task(celery_app):
                         if stored_data:
                             logger.info(f"Daten aus Redis gefunden: {len(stored_data)} Bytes")
                             try:
-                                files_data = json.loads(stored_data)
+                                files_data = json_module.loads(stored_data)
                                 logger.info(f"Wiederhergestellte Dateidaten aus Redis für Session {session_id}: {len(files_data)} Dateien")
                                 log_debug_info(session_id, f"Dateidaten aus Redis wiederhergestellt", files_count=len(files_data))
-                            except json.JSONDecodeError as json_err:
+                            except json_module.JSONDecodeError as json_err:
                                 logger.error(f"Fehler beim Dekodieren der Redis-Daten: {str(json_err)}")
                                 raise ValueError(f"Ungültige JSON-Daten in Redis: {str(json_err)}")
                         else:
@@ -195,11 +195,11 @@ def register_task(celery_app):
                             logger.error(error_msg)
                             from api.cleanup import cleanup_processing_for_session
                             cleanup_processing_for_session(session_id, "no_files_found")
-                            safe_redis_set(f"error_details:{session_id}", {
+                            safe_redis_set(f"error_details:{session_id}", json_module.dumps({
                                 "message": error_msg,
                                 "error_type": "no_files_data",
                                 "timestamp": time.time()
-                            }, ex=14400)
+                            }), ex=14400)
                             return {"error": "no_files_found", "message": error_msg}
                     
                     # Versuche, einen Lock für diese Session zu erhalten
@@ -231,7 +231,7 @@ def register_task(celery_app):
                                     logger.info(f"Bestehende Daten gefunden: {topics_count} Themen, {flashcards_count} Flashcards, {questions_count} Fragen")
                                     # Setze fortgeschrittene Status
                                     safe_redis_set(f"processing_status:{session_id}", "completed", ex=14400)
-                                    safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                                    safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                         "progress": 100,
                                         "message": "Verarbeitung bereits abgeschlossen",
                                         "stage": "completed"
@@ -253,7 +253,7 @@ def register_task(celery_app):
                                             "questions_count": questions_count
                                         }
                                         
-                                        safe_redis_set(f"processing_result:{session_id}", json.dumps(result_data), ex=86400)
+                                        safe_redis_set(f"processing_result:{session_id}", json_module.dumps(result_data), ex=86400)
                                         safe_redis_set(f"finalization_complete:{session_id}", "true", ex=14400)
                                         
                                     logger.info(f"Existierende Upload-Daten zurückgegeben, Vorgang abgeschlossen")
@@ -295,7 +295,7 @@ def register_task(celery_app):
                         logger.error(f"❌ Stacktrace: {traceback.format_exc()}")
                         
                         # Speichere den Fehler in Redis für das Frontend
-                        safe_redis_set(f"processing_error:{session_id}", json.dumps({
+                        safe_redis_set(f"processing_error:{session_id}", json_module.dumps({
                             "error": "database_error",
                             "message": str(db_error),
                             "timestamp": datetime.now().isoformat()
@@ -330,7 +330,7 @@ def register_task(celery_app):
                                 file_contents.append((file_name, file_content))
                                 logger.info(f"✅ Datei {file_name} erfolgreich entpackt, Größe: {len(file_content)} Bytes")
                                 # Status aktualisieren
-                                safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                                safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                     "progress": 10,
                                     "message": f"Datei {file_name} entpackt",
                                     "stage": "unpacking"
@@ -351,7 +351,7 @@ def register_task(celery_app):
                                 extracted_texts.append(text)
                                 logger.info(f"✅ Text aus {file_name} extrahiert: {len(text)} Zeichen")
                                 # Status aktualisieren
-                                safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                                safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                     "progress": 20,
                                     "message": f"Text aus {file_name} extrahiert",
                                     "stage": "text_extraction"
@@ -368,7 +368,7 @@ def register_task(celery_app):
                             document_language = detect_language(combined_text)
                             logger.info(f"🌐 Erkannte Sprache: {document_language}")
                             # Status aktualisieren
-                            safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                            safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                 "progress": 30,
                                 "message": f"Sprache erkannt: {document_language}",
                                 "stage": "language_detection"
@@ -404,7 +404,7 @@ def register_task(celery_app):
                             logger.info(f"💾 Dateiname '{original_filename}' in file_name_1 gespeichert, PDF-Datei ({len(file_binary)} Bytes) als base64 im content-Feld gespeichert")
                             
                             # Status aktualisieren
-                            safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                            safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                 "progress": 40,
                                 "message": "Text bereinigt und tokenisiert",
                                 "stage": "text_cleaning"
@@ -421,7 +421,7 @@ def register_task(celery_app):
                             analysis_result = analyze_content(cleaned_text, document_language)
                             logger.info(f"✅ OpenAI-Analyse abgeschlossen, Ergebnisgröße: {len(str(analysis_result))} Zeichen")
                             # Status aktualisieren
-                            safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                            safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                 "progress": 60,
                                 "message": "Inhaltsanalyse abgeschlossen",
                                 "stage": "content_analysis"
@@ -437,7 +437,7 @@ def register_task(celery_app):
                             topics, main_topic = extract_topics_from_analysis(analysis_result)
                             logger.info(f"📚 Hauptthema: {main_topic}, Unterthemen: {len(topics)}")
                             # Status aktualisieren
-                            safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                            safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                 "progress": 70,
                                 "message": "Themen extrahiert",
                                 "stage": "topic_extraction"
@@ -493,7 +493,7 @@ def register_task(celery_app):
                             logger.info(f"🔗 {connections_count} Verbindungen erstellt")
                             db.session.commit()
                             # Status aktualisieren
-                            safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                            safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                 "progress": 80,
                                 "message": "Themenstruktur in Datenbank gespeichert",
                                 "stage": "database_topics"
@@ -539,7 +539,7 @@ def register_task(celery_app):
                             
                             db.session.commit()
                             # Status aktualisieren
-                            safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                            safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                 "progress": 90,
                                 "message": "Lernmaterialien generiert",
                                 "stage": "learning_materials"
@@ -606,7 +606,6 @@ def register_task(celery_app):
                             if upload:
                                 # Der extrahierte Text ist bereits im content-Feld gespeichert
                                 # Speichere den Dokumenttyp in einem zusätzlichen Feld (z.B. über einen JSON-Eintrag)
-                                import json
                                 
                                 # Erstelle oder aktualisiere die Metadaten
                                 try:
@@ -633,7 +632,7 @@ def register_task(celery_app):
                                 logger.error(f"❌ Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank!")
                                 error_message = f"Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank."
                                 redis_client.set(f"processing_status:{session_id}", f"failed: {error_message}", ex=3600)
-                                redis_client.set(f"error_details:{session_id}", json.dumps({
+                                redis_client.set(f"error_details:{session_id}", json_module.dumps({
                                     "message": error_message,
                                     "type": "database_error",
                                     "time": time.time()
@@ -763,12 +762,12 @@ def register_task(celery_app):
                                 "questions_count": Question.query.filter_by(upload_id=upload.id).count()
                             }
                             
-                            safe_redis_set(f"processing_result:{session_id}", json.dumps(result_data), ex=86400)
+                            safe_redis_set(f"processing_result:{session_id}", json_module.dumps(result_data), ex=86400)
                             logger.info("✅ Ergebnisse im Redis-Cache gespeichert")
                             
                             # Abschließenden Status setzen
                             safe_redis_set(f"processing_status:{session_id}", "completed", ex=14400)
-                            safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                            safe_redis_set(f"processing_progress:{session_id}", json_module.dumps({
                                 "progress": 100,
                                 "message": "Verarbeitung abgeschlossen",
                                 "stage": "completed"
