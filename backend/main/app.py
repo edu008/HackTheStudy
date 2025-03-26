@@ -27,13 +27,7 @@ from bootstrap.extensions import db, cache, migrate, jwt, cors
 # Erstelle die Flask-Anwendung
 app = create_app()
 
-# Füge einen speziellen Debug-Endpunkt hinzu
-@app.route('/ping', methods=['GET'])
-def ping():
-    """Einfacher Debug-Endpunkt für Healthchecks"""
-    logger.info(f"PING-Anfrage empfangen von {os.environ.get('API_DOMAIN', 'lokal')}")
-    logger.debug(f"Umgebungsvariablen: {dict(os.environ)}")
-    return "pong"
+# Die ping-Route ist bereits in app_factory.py definiert und muss hier nicht erneut angelegt werden
 
 @app.route('/', methods=['GET'])
 def root():
