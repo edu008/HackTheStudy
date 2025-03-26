@@ -15,11 +15,16 @@ LOG_LEVEL = getattr(logging, LOG_LEVEL_STR.upper(), logging.INFO)
 LOG_API_REQUESTS = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
 
 # Redis-Konfiguration
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
-REDIS_HOST = os.getenv('REDIS_HOST', 'localhost').strip()
+REDIS_URL = os.getenv('REDIS_URL', 'redis://10.244.15.188:6379/0').strip()
+REDIS_HOST = os.getenv('REDIS_HOST', '10.244.15.188').strip()
 REDIS_TTL_DEFAULT = 14400  # 4 Stunden Standard-TTL für Redis-Einträge
 REDIS_TTL_SHORT = 3600    # 1 Stunde für kurzlebige Einträge
 REDIS_FALLBACK_URLS = os.getenv('REDIS_FALLBACK_URLS', '').strip()
+
+# Sicherstellen, dass REDIS_URL konsistent ist
+if 'localhost' in REDIS_URL and REDIS_HOST != 'localhost':
+    REDIS_URL = f"redis://{REDIS_HOST}:6379/0"
+    os.environ['REDIS_URL'] = REDIS_URL
 
 # API-Konfiguration
 USE_API_URL = os.getenv('USE_API_URL', '').strip()

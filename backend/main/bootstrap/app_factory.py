@@ -13,7 +13,6 @@ import time
 from flask import g
 from flask_cors import CORS
 from redis import Redis
-from fakeredis import FakeRedis
 
 from core.models import db
 from config.env_handler import load_env, setup_cors_origins
@@ -42,7 +41,7 @@ def create_app(config_name='default'):
     db.init_app(app)
     
     # Redis-URL korrigieren
-    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    redis_url = os.getenv('REDIS_URL', 'redis://10.244.15.188:6379/0')
     if redis_url.startswith('redis://http://'):
         redis_url = redis_url.replace('redis://http://', 'redis://')
     if redis_url.startswith('redis://https://'):
@@ -56,9 +55,8 @@ def create_app(config_name='default'):
     except Exception as e:
         app.logger.error(f"Redis-Verbindungsfehler: {str(e)}")
         app.logger.error(f"Redis-URL: {redis_url}")
-        # Verwende FakeRedis als Fallback
-        redis_client = FakeRedis(decode_responses=True)
-        app.logger.warning("Verwende FakeRedis als Fallback")
+        # Fehler werfen, wenn Redis nicht verfügbar ist
+        raise RuntimeError(f"Redis-Verbindung konnte nicht hergestellt werden: {str(e)}")
     
     # Redis-Client im App-Kontext speichern
     app.redis = redis_client
