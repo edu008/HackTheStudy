@@ -73,9 +73,11 @@ from bootstrap.extensions import db, cache, migrate, jwt, cors
 # Erstelle die Flask-Anwendung mit der Factory
 app = create_app()
 
+# Definiere die Health-Check-Endpunkte direkt in der app.py, um sicherzustellen, dass sie verfügbar sind
 @app.route('/api/v1/simple-health', methods=['GET'])
 def simple_health():
-    """Einfacher Health-Check-Endpunkt für Docker/DigitalOcean Healthchecks"""
+    """Einfacher Health-Check-Endpunkt für Docker/DigitalOcean Healthchecks.
+    Dieser Endpunkt wird im Dockerfile für den Health-Check verwendet."""
     logger.info(f"Simple-Health-Anfrage empfangen")
     return "ok", 200
 
@@ -106,11 +108,16 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Führe die Anwendung aus, wenn diese Datei direkt aufgerufen wird
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))  # Stelle sicher, dass Port 8080 verwendet wird
-    host = '0.0.0.0'  # Binde an alle Interfaces
+    # Verwende IMMER Port 8080 für DigitalOcean
+    port = int(os.environ.get('PORT', 8080))
+    # Binde an ALLE Netzwerk-Interfaces (0.0.0.0)
+    host = '0.0.0.0'
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     
     logger.info(f"Starte API auf {host}:{port}, Debug-Modus: {debug}")
+    logger.info(f"Health-Check-Endpunkte verfügbar unter:")
+    logger.info(f"  - http://{host}:{port}/api/v1/simple-health")
+    logger.info(f"  - http://{host}:{port}/ping")
     
     try:
         # Starte den Health-Monitor in einem separaten Thread
@@ -121,40 +128,8 @@ if __name__ == '__main__':
         except (ImportError, AttributeError) as e:
             logger.warning(f"Health-Monitor konnte nicht gestartet werden: {e}")
         
-        # Verwende Gunicorn für Produktionsumgebungen wenn möglich
-        if os.environ.get('USE_GUNICORN', 'true').lower() == 'true':
-            try:
-                from gunicorn.app.wsgiapp import WSGIApplication
-                
-                # Gunicorn-Konfiguration als String
-                gunicorn_conf = f"""
-                bind = '{host}:{port}'
-                workers = {os.environ.get('GUNICORN_WORKERS', '2')}
-                worker_class = 'gevent'
-                timeout = {os.environ.get('GUNICORN_TIMEOUT', '120')}
-                keepalive = {os.environ.get('GUNICORN_KEEPALIVE', '5')}
-                accesslog = '-'
-                errorlog = '-'
-                loglevel = 'info'
-                """
-                
-                # Schreibe die Gunicorn-Konfiguration in eine temporäre Datei
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.py') as f:
-                    f.write(gunicorn_conf)
-                    conf_path = f.name
-                
-                logger.info(f"Starte Gunicorn mit Konfiguration: {conf_path}")
-                
-                # Starte Gunicorn mit der Konfiguration
-                sys.argv = ['gunicorn', 'app:app', '-c', conf_path]
-                WSGIApplication().run()
-            except ImportError:
-                logger.warning("Gunicorn nicht verfügbar, verwende Flask-Entwicklungsserver")
-                app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
-        else:
-            # Starte die Flask-Anwendung mit dem Entwicklungsserver
-            app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
+        # Starte die Flask-Anwendung
+        app.run(debug=debug, host=host, port=port, threaded=True, use_reloader=False)
     except Exception as e:
         logger.error(f"Fehler beim Starten der Anwendung: {e}")
         sys.exit(1)
