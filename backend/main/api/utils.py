@@ -1525,7 +1525,8 @@ def unified_content_processing(text, client, file_names=None, user_id=None, lang
 
 def check_and_manage_user_sessions(user_id):
     """
-    Überprüft, ob ein Benutzer bereits 5 Sessions hat und löscht gegebenenfalls die älteste.
+    Überprüft, ob ein Benutzer bereits 5 Sessions hat und löscht gegebenenfalls die älteste,
+    BEVOR ein neuer Upload eingefügt wird.
     
     Args:
         user_id (str): Die ID des Benutzers
@@ -1576,6 +1577,42 @@ def check_and_manage_user_sessions(user_id):
             
             # Commit der Änderungen
             db.session.commit()
+            
+            # Lösche auch alle in Redis gespeicherten Daten für diese Session
+            try:
+                keys_to_delete = [
+                    f"processing_status:{oldest_session_id}",
+                    f"processing_progress:{oldest_session_id}",
+                    f"processing_start_time:{oldest_session_id}",
+                    f"processing_heartbeat:{oldest_session_id}",
+                    f"processing_last_update:{oldest_session_id}",
+                    f"processing_details:{oldest_session_id}",
+                    f"processing_result:{oldest_session_id}",
+                    f"task_id:{oldest_session_id}",
+                    f"error_details:{oldest_session_id}",
+                    f"openai_error:{oldest_session_id}"
+                ]
+                
+                # Verwende Redis pipeline für effizientes Löschen
+                pipeline = redis_client.pipeline()
+                for key in keys_to_delete:
+                    pipeline.delete(key)
+                pipeline.execute()
+                
+                AppLogger.structured_log(
+                    "INFO",
+                    f"Redis-Daten für Session {oldest_session_id} gelöscht",
+                    component="session_management",
+                    user_id=user_id,
+                    session_id=oldest_session_id
+                )
+            except Exception as redis_error:
+                AppLogger.track_error(
+                    oldest_session_id,
+                    "redis_cleanup_error",
+                    f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
+                    trace=traceback.format_exc()
+                )
             
             return True
     except Exception as e:

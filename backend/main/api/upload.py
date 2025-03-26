@@ -16,6 +16,7 @@ import json
 # Redis-Client direkt erstellen
 import redis
 from celery import Celery
+from datetime import datetime
 
 # Verwende die korrekte Redis-URL, die auch der Worker nutzt
 redis_url = os.environ.get('REDIS_URL', 'redis://hackthestudy-backend-main:6379/0')
@@ -131,13 +132,45 @@ def upload_file():
         session_id = request.form.get('session_id')
         user_id = getattr(request, 'user_id', None)
         
-        # Wenn keine Session-ID übergeben wird, erstellen wir eine neue und prüfen die Begrenzung
-        if not session_id:
-            if user_id:
-                check_and_manage_user_sessions(user_id)
-            session_id = str(uuid.uuid4())
-        
         # Verwende AppLogger für strukturierte Logs
+        AppLogger.structured_log(
+            "INFO",
+            f"Datei-Upload-Anfrage empfangen: {file.filename}",
+            user_id=user_id,
+            component="upload_file",
+            file_name=file.filename
+        )
+        
+        # SCHRITT 1: Wenn keine Session-ID übergeben wird, erstellen wir eine neue und prüfen die Begrenzung
+        if not session_id:
+            # Zuerst einen alten Upload löschen, falls nötig
+            if user_id:
+                AppLogger.structured_log(
+                    "INFO",
+                    f"Prüfe und verwalte Benutzer-Sessions für Benutzer {user_id}",
+                    user_id=user_id,
+                    component="session_management"
+                )
+                old_deleted = check_and_manage_user_sessions(user_id)
+                if old_deleted:
+                    AppLogger.structured_log(
+                        "INFO",
+                        f"Eine alte Session wurde gelöscht, da der Benutzer das Limit erreicht hat",
+                        user_id=user_id,
+                        component="session_management"
+                    )
+            
+            # Dann eine neue Session-ID erstellen
+            session_id = str(uuid.uuid4())
+            AppLogger.structured_log(
+                "INFO",
+                f"Neue Session-ID generiert: {session_id}",
+                session_id=session_id,
+                user_id=user_id,
+                component="upload_file"
+            )
+        
+        # Setze Metadaten für Nachverfolgung
         AppLogger.structured_log(
             "INFO",
             f"Datei-Upload gestartet: {file.filename}",
@@ -155,7 +188,7 @@ def upload_file():
             stage="initializing"
         )
         
-        # Lese die Datei mit Fehlerbehandlung
+        # SCHRITT 2: Lese die Datei mit Fehlerbehandlung
         try:
             file_content = file.read()
             
@@ -163,7 +196,7 @@ def upload_file():
             redis_client.set(f"processing_status:{session_id}", "initializing", ex=3600)
             redis_client.set(f"processing_start_time:{session_id}", str(time.time()), ex=3600)
             
-            # Speichere Upload in separatem Try-Block
+            # SCHRITT 3: Speichere Upload in der Datenbank
             try:
                 # Erzeuge eine neue Upload-Instanz oder aktualisiere eine bestehende
                 upload_session = Upload.query.filter_by(session_id=session_id).first()
@@ -177,15 +210,21 @@ def upload_file():
                     if user_id and not upload.user_id:
                         upload.user_id = user_id
                 else:
-                    # Erzeuge eine neue Upload-Instanz
+                    # Erzeuge eine neue Upload-Instanz mit einer eindeutigen ID
+                    new_id = str(uuid.uuid4())
                     upload = Upload(
+                        id=new_id,
                         session_id=session_id,
                         user_id=user_id,
                         file_name_1=file.filename,
-                        processing_status="pending"
+                        processing_status="pending",
+                        created_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow(),
+                        last_used_at=datetime.utcnow()
                     )
                     db.session.add(upload)
                 
+                # Commit der Datenbankänderungen
                 db.session.commit()
                 AppLogger.structured_log(
                     "INFO",
@@ -196,7 +235,7 @@ def upload_file():
                     upload_id=upload.id
                 )
                 
-                # Starte den Hintergrund-Task zur Verarbeitung asynchron
+                # SCHRITT 4: Starte den Worker-Task
                 task_files_data = [(file.filename, file_content.hex())]
                 task = delegate_to_worker('process_upload', session_id, task_files_data, user_id)
                 
