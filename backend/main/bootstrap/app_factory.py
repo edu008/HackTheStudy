@@ -270,42 +270,50 @@ def _setup_request_handlers(app: Flask):
     @app.before_request
     def log_request_info():
         """Loggt Details zu eingehenden Anfragen."""
-        if request.endpoint and not request.endpoint.startswith('static'):
-            # Detailliertes Logging für alle eingehenden API-Requests, auch für /ping
-            request_id = str(uuid.uuid4())
-            g.request_id = request_id
-            
-            client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-            user_agent = request.headers.get('User-Agent', 'Unbekannt')
-            
-            log_message = f"➡️ EINGEHEND [{request_id}]: {request.method} {request.path} von {client_ip}"
-            logger.info(log_message)
-            
-            # Zusätzliches Logging für Debugging
-            detail_message = (f"Request-Details [{request_id}]: "
-                             f"UA={user_agent}, "
-                             f"Referer={request.headers.get('Referer', 'None')}, "
-                             f"Accept={request.headers.get('Accept', 'None')}")
-            logger.debug(detail_message)
+        # Log ALLE Anfragen, auch statische Inhalte und /ping
+        request_id = str(uuid.uuid4())
+        g.request_id = request_id
+        
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        user_agent = request.headers.get('User-Agent', 'Unbekannt')
+        
+        log_message = f"➡️ EINGEHEND [{request_id}]: {request.method} {request.path} von {client_ip}"
+        logger.info(log_message)
+        
+        # Ausführlicheres Logging aller Anfragen
+        params = dict(request.args)
+        headers = {k: v for k, v in request.headers.items()}
+        
+        detail_message = (f"Request-Details [{request_id}]: "
+                         f"Path={request.path}, "
+                         f"Method={request.method}, "
+                         f"Client={client_ip}, "
+                         f"UA={user_agent}, "
+                         f"Params={params}, "
+                         f"Headers={headers}")
+        logger.debug(detail_message)
     
     @app.after_request
     def log_response_info(response):
         """Loggt Details zu ausgehenden Antworten."""
-        if request.endpoint and not request.endpoint.startswith('static'):
-            request_id = getattr(g, 'request_id', 'keine-id')
-            duration = getattr(g, 'request_duration', 0)
-            
-            # Alle Antworten loggen, unabhängig vom Status-Code
-            status_emoji = "✅" if response.status_code < 400 else "❌"
-            log_message = f"{status_emoji} AUSGEHEND [{request_id}]: {response.status_code} für {request.method} {request.path} in {duration:.2f}ms"
-            
-            # Je nach Status-Code das richtige Log-Level verwenden
-            if response.status_code >= 500:
-                logger.error(log_message)
-            elif response.status_code >= 400:
-                logger.warning(log_message)
-            else:
-                logger.info(log_message)
+        # Alle Antworten loggen, unabhängig vom Endpunkt
+        request_id = getattr(g, 'request_id', 'keine-id')
+        duration = getattr(g, 'request_duration', 0)
+        
+        # Alle Antworten loggen, unabhängig vom Status-Code
+        status_emoji = "✅" if response.status_code < 400 else "❌"
+        log_message = f"{status_emoji} AUSGEHEND [{request_id}]: {response.status_code} für {request.method} {request.path} in {duration:.2f}ms"
+        
+        # Antwort-Größe berechnen
+        response_size = len(response.get_data())
+        
+        # Je nach Status-Code das richtige Log-Level verwenden
+        if response.status_code >= 500:
+            logger.error(log_message + f" (Size: {response_size} bytes)")
+        elif response.status_code >= 400:
+            logger.warning(log_message + f" (Size: {response_size} bytes)")
+        else:
+            logger.info(log_message + f" (Size: {response_size} bytes)")
         
         return response
     
