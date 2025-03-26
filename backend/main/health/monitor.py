@@ -51,7 +51,7 @@ def get_health_status():
     Returns:
         dict: Gesundheitsstatus mit verschiedenen Metriken
     """
-    current_time = datetime.datetime.now().isoformat()
+    current_time = datetime.now().isoformat()
     
     # Standard-Status, immer erfolgreich zurückgeben für Health-Checks
     return {
