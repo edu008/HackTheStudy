@@ -16,6 +16,7 @@ from redis import Redis
 
 from core.models import db
 from config.env_handler import load_env, setup_cors_origins
+from config.app_config import config
 from health.monitor import start_health_monitoring
 from health.server import setup_health_server
 from resource_manager.fd_monitor import check_and_set_fd_limits, monitor_file_descriptors
