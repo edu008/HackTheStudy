@@ -516,6 +516,9 @@ def register_task(celery_app):
                                 "stage": "completed"
                             }), ex=14400)
                             
+                            # Zusätzliche Markierung, dass alle Daten vollständig in der Datenbank gespeichert wurden
+                            safe_redis_set(f"finalization_complete:{session_id}", "true", ex=14400)
+                            
                             logger.info("===== DATEIVERARBEITUNG ERFOLGREICH ABGESCHLOSSEN =====")
                         except Exception as err:
                             logger.error(f"❌ Fehler bei der Finalisierung: {str(err)}")
