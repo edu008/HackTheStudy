@@ -11,6 +11,9 @@ from datetime import datetime
 import uuid
 import time
 from flask import g
+from flask_cors import CORS
+from redis import Redis
+from fakeredis import FakeRedis
 
 from core.models import db
 from config.env_handler import load_env, setup_cors_origins
@@ -23,68 +26,53 @@ from utils.logging_utils import log_step
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
 
-def create_app(environment: Optional[str] = None) -> Flask:
-    """
-    Erstellt und konfiguriert die Flask-App.
-    
-    Args:
-        environment: Umgebung (development, production, testing)
-        
-    Returns:
-        Konfigurierte Flask-App
-    """
-    # Umgebungsvariable direkt setzen, falls angegeben
-    if environment:
-        os.environ['ENVIRONMENT'] = environment
-    else:
-        os.environ['ENVIRONMENT'] = os.environ.get('ENVIRONMENT', 'production')
-    
-    # App-Objekt erstellen
+def create_app(config_name='default'):
+    """Erstellt und konfiguriert die Flask-Anwendung."""
     app = Flask(__name__)
     
-    # Wenn wir hinter einem Proxy laufen (z.B. nginx), die richtigen Header einstellen
-    from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-    
     # Konfiguration laden
-    load_env(app)
+    app.config.from_object(config[config_name])
     
-    # Flask-Konfiguration für SQLAlchemy setzen
-    if 'DATABASE_URL' in os.environ and os.environ['DATABASE_URL']:
-        app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
-        app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-        logger.info("Datenbank-Konfiguration aus DATABASE_URL übernommen")
-    else:
-        logger.error("DATABASE_URL nicht gefunden in Umgebungsvariablen")
+    # CORS konfigurieren
+    origins = os.getenv('CORS_ORIGINS', '').split(',')
+    origins = [origin.strip() for origin in origins if origin.strip()]
+    CORS(app, resources={r"/api/*": {"origins": origins}})
     
-    # Ressourcen konfigurieren
-    _configure_resources(app)
+    # Datenbank initialisieren
+    db.init_app(app)
     
-    # Datenbankverbindung initialisieren
-    _init_database(app)
+    # Redis-URL korrigieren
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    if redis_url.startswith('redis://http://'):
+        redis_url = redis_url.replace('redis://http://', 'redis://')
+    if redis_url.startswith('redis://https://'):
+        redis_url = redis_url.replace('redis://https://', 'redis://')
     
-    # Redis-Verbindung prüfen
-    _check_redis_connection()
+    # Redis-Client initialisieren
+    try:
+        redis_client = Redis.from_url(redis_url, decode_responses=True)
+        redis_client.ping()  # Teste die Verbindung
+        app.logger.info(f"Redis-Verbindung erfolgreich hergestellt: {redis_url}")
+    except Exception as e:
+        app.logger.error(f"Redis-Verbindungsfehler: {str(e)}")
+        app.logger.error(f"Redis-URL: {redis_url}")
+        # Verwende FakeRedis als Fallback
+        redis_client = FakeRedis(decode_responses=True)
+        app.logger.warning("Verwende FakeRedis als Fallback")
     
-    # Blueprints registrieren
-    _register_blueprints(app)
+    # Redis-Client im App-Kontext speichern
+    app.redis = redis_client
     
-    # CORS einrichten
-    _setup_cors(app)
+    # API-Blueprints registrieren
+    from api import api_bp, api_v1_bp
+    app.register_blueprint(api_bp, url_prefix='/api')
+    app.register_blueprint(api_v1_bp, url_prefix='/api/v1')
     
     # Health-Monitoring starten
-    _setup_health_monitoring(app)
+    from health.monitor import start_health_monitor
+    start_health_monitor(app)
     
-    # Metrics einrichten (falls aktiviert)
-    _setup_metrics(app)
-    
-    # Basis-Routen registrieren
-    _register_base_routes(app)
-    
-    # Globale Request-Handler einrichten
-    _setup_request_handlers(app)
-    
-    logger.info(f"App initialisiert im {os.environ['ENVIRONMENT']}-Modus")
+    app.logger.info("App initialisiert im %s-Modus", config_name)
     return app
 
 def _configure_resources(app: Flask):
