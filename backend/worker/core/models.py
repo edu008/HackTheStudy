@@ -53,7 +53,6 @@ class Upload(db.Model):
     updated_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
     last_used_at = db.Column(db.DateTime, nullable=True, index=True)
     processing_status = db.Column(db.String(50), nullable=True, index=True)
-    started_at = db.Column(db.DateTime, nullable=True)
     
     # Beziehungen
     topics = db.relationship('Topic', backref='upload', lazy=True, cascade="all, delete-orphan")

@@ -59,14 +59,19 @@ def get_flask_app():
                     # Prüfe die Datenbankverbindung
                     from core.models import Upload
                     logger.info("Prüfe Datenbankverbindung mit einer Testabfrage...")
-                    test_query = Upload.query.limit(1).all()
-                    logger.info(f"Datenbankverbindung erfolgreich hergestellt, {len(test_query)} Ergebnisse gefunden")
+                    try:
+                        test_query = Upload.query.limit(1).all()
+                        logger.info(f"Datenbankverbindung erfolgreich hergestellt, {len(test_query)} Ergebnisse gefunden")
+                    except Exception as query_error:
+                        logger.error(f"DB-Abfrage fehlgeschlagen, verwende eingeschränkten Modus: {str(query_error)}")
+                        logger.error(f"Die Anwendung wird im eingeschränkten Modus fortgesetzt - einige DB-Operationen könnten fehlschlagen")
             except Exception as db_error:
                 logger.error(f"Fehler bei DB-Initialisierung: {str(db_error)}")
                 logger.error(f"Stacktrace: {traceback.format_exc()}")
+                logger.warning("Anwendung wird ohne Datenbankverbindung fortgesetzt")
             
             timer.cancel()  # Breche den Timer ab
-            logger.info("Einfache Flask-App mit echter Datenbankverbindung erstellt")
+            logger.info("Einfache Flask-App mit Datenbankverbindung (oder Fallback) erstellt")
             return flask_app
         else:
             # Bei Timeout erstelle eine sehr einfache App ohne Datenbank
