@@ -73,7 +73,33 @@ from bootstrap.extensions import db, cache, migrate, jwt, cors
 # Erstelle die Flask-Anwendung mit der Factory
 app = create_app()
 
-# Die ping-Route ist bereits in app_factory.py definiert und muss hier nicht erneut angelegt werden
+# Explizit Health-Check-Server auf Port 8080 starten
+try:
+    from health.server import setup_health_server
+    health_port = int(os.environ.get('HEALTH_PORT', 8080))
+    logger.info(f"Starte expliziten Health-Check-Server auf Port {health_port}")
+    health_server_thread = setup_health_server(health_port, app)
+    logger.info(f"✅ Health-Check-Server erfolgreich gestartet auf Port {health_port}")
+    
+    # Verifiziere, dass der Server läuft
+    import socket
+    import time
+    time.sleep(1)  # Kurz warten, damit der Server starten kann
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex(('localhost', health_port))
+    if result == 0:
+        logger.info(f"✅ Health-Check-Server auf Port {health_port} ist erreichbar!")
+    else:
+        logger.error(f"❌ Health-Check-Server auf Port {health_port} ist NICHT erreichbar (Fehlercode: {result})")
+    sock.close()
+except Exception as e:
+    logger.error(f"❌ Fehler beim Starten des Health-Check-Servers: {str(e)}")
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    """Einfacher Ping-Endpunkt für Health-Checks."""
+    logger.info(f"Ping-Anfrage empfangen")
+    return "pong", 200
 
 @app.route('/', methods=['GET'])
 def root():
