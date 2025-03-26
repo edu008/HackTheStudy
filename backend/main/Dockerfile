@@ -128,10 +128,10 @@ CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && \
     echo "Redis bereit, starte Flask-App..." && \
     export FLASK_APP=app.py && \
     export FLASK_RUN_HOST=0.0.0.0 && \
-    export FLASK_RUN_PORT=8081 && \
-    export APP_PORT=8081 && \
-    export HEALTH_PORT=8080 && \
-    export PORT=8081 && \
+    export FLASK_RUN_PORT=8080 && \
+    export APP_PORT=8080 && \
+    export HEALTH_PORT=8081 && \
+    export PORT=8080 && \
     export REDIS_URL=redis://localhost:6379/0 && \
     export REDIS_HOST=localhost && \
     python app.py 
