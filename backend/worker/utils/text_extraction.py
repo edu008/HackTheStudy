@@ -1,15 +1,16 @@
 """
-Hilfsfunktionen zur Textextraktion aus verschiedenen Dokumenttypen.
+Optimierte Textextraktion aus verschiedenen Dokumenttypen.
 """
 import io
 import logging
 import traceback
+import fitz  # PyMuPDF direkt importieren für bessere Performance
 
 logger = logging.getLogger(__name__)
 
 def extract_text_from_file(file_name, file_content):
     """
-    Extrahiert Text aus verschiedenen Dateiformaten.
+    Extrahiert Text aus verschiedenen Dateiformaten mit optimierter PDF-Verarbeitung.
     
     Args:
         file_name: Der Name der Datei zur Bestimmung des Typs
@@ -19,31 +20,26 @@ def extract_text_from_file(file_name, file_content):
         str: Der extrahierte Text
     """
     try:
-        # Prüfe auf leere Datei
-        if len(file_content) == 0:
+        # Schnelle Überprüfung auf leere Datei
+        if not file_content or len(file_content) == 0:
             logger.warning(f"Leere Datei: {file_name}")
             return "ERROR: Die Datei ist leer"
             
-        # Begrenze die Größe
-        max_file_size = 20 * 1024 * 1024  # 20 MB
+        # Größenbegrenzung für die Verarbeitung
+        max_file_size = 30 * 1024 * 1024  # 30 MB erhöhtes Limit für größere PDFs
         if len(file_content) > max_file_size:
             logger.warning(f"Datei zu groß: {file_name} ({len(file_content) // (1024*1024)} MB)")
             return f"ERROR: Die Datei ist zu groß ({len(file_content) // (1024*1024)} MB)"
         
+        # Dateiendung bestimmen
         file_ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
-        
-        # Ausführliche Protokollierung für alle Operationen
         logger.info(f"Verarbeite Datei: {file_name} (Typ: {file_ext}, Größe: {len(file_content)} Bytes)")
         
+        # PDF-Verarbeitung mit direktem PyMuPDF
         if file_ext == 'pdf':
-            # Verwende PyMuPDF für PDF-Extraktion
-            try:
-                import fitz  # PyMuPDF
-                return extract_text_from_pdf(file_content)
-            except Exception as e:
-                logger.error(f"Fehler bei der PDF-Extraktion: {str(e)}")
-                return f"ERROR: Fehler bei der PDF-Extraktion: {str(e)}"
+            return extract_text_from_pdf_optimized(file_content)
                 
+        # Textdateien
         elif file_ext == 'txt':
             try:
                 return file_content.decode('utf-8', errors='replace')
@@ -51,6 +47,7 @@ def extract_text_from_file(file_name, file_content):
                 logger.error(f"Fehler beim Dekodieren der TXT-Datei: {str(e)}")
                 return f"ERROR: Textdatei konnte nicht dekodiert werden: {str(e)}"
                 
+        # Word-Dokumente
         elif file_ext in ['docx', 'doc']:
             from io import BytesIO
             try:
@@ -72,61 +69,66 @@ def extract_text_from_file(file_name, file_content):
             logger.warning(f"Nicht unterstützter Dateityp: {file_ext}")
             return f"ERROR: Dateityp .{file_ext} wird nicht unterstützt."
     
-    except RuntimeError as rt_err:
-        # Detaillierte Protokollierung für RuntimeErrors
-        stack_trace = traceback.format_exc()
-        logger.critical(f"Kritischer RuntimeError bei der Textextraktion: {str(rt_err)}\n{stack_trace}")
-        return f"CRITICAL_ERROR: RuntimeError bei der Textextraktion: {str(rt_err)}"
-        
     except Exception as e:
-        # Allgemeine Fehlerbehandlung mit Stacktrace
+        # Allgemeine Fehlerbehandlung mit detailliertem Logging
         stack_trace = traceback.format_exc()
         logger.error(f"Fehler beim Extrahieren von Text aus {file_name}: {str(e)}\n{stack_trace}")
         return f"ERROR: Fehler beim Lesen der Datei: {str(e)}"
 
-def extract_text_from_pdf(file_data):
-    """Extrahiert Text aus einer PDF-Datei mit PyMuPDF."""
+def extract_text_from_pdf_optimized(file_data):
+    """
+    Optimierte Version der PDF-Textextraktion mit PyMuPDF.
+    
+    Args:
+        file_data: Der Inhalt der PDF-Datei als Bytes
+        
+    Returns:
+        str: Der extrahierte Text
+    """
     try:
-        import fitz  # PyMuPDF
-        
-        # Sammle extrahierten Text
-        all_text = []
-        
-        # Öffne das PDF als Speicherobjekt
-        with io.BytesIO(file_data) as data:
-            try:
-                # Öffne das PDF-Dokument
-                pdf_document = fitz.open(stream=data, filetype="pdf")
+        # Öffne das PDF direkt im Speicher ohne temporäre Datei
+        with io.BytesIO(file_data) as pdf_stream:
+            # Öffne PDF mit PyMuPDF (fitz)
+            pdf_document = fitz.open(stream=pdf_stream, filetype="pdf")
+            
+            # Parameter für verbesserte Textextraktion
+            extracted_pages = []
+            page_count = len(pdf_document)
+            
+            logger.info(f"PDF hat {page_count} Seiten - starte Extraktion")
+            
+            # Extrahiere Text von jeder Seite mit optimierten Einstellungen
+            for page_num in range(page_count):
+                try:
+                    # Lade Seite
+                    page = pdf_document[page_num]
+                    
+                    # Verwende get_text mit Optionen für bessere Extraktion
+                    # "text" gibt nur den Text zurück, "blocks" würde Textblöcke mit Koordinaten zurückgeben
+                    page_text = page.get_text("text")
+                    
+                    # Füge Text zur Liste hinzu, wenn nicht leer
+                    if page_text.strip():
+                        extracted_pages.append(page_text)
+                        
+                except Exception as page_error:
+                    logger.warning(f"Fehler bei der Extraktion der Seite {page_num+1}: {str(page_error)}")
+                    continue
+            
+            # Schließe das Dokument
+            pdf_document.close()
+            
+            # Kombiniere den gesamten Text mit Seitenumbrüchen
+            if extracted_pages:
+                combined_text = "\n\n".join(extracted_pages)
+                # Entferne problematische Zeichen (NUL-Bytes etc.)
+                combined_text = combined_text.replace('\x00', '')
+                logger.info(f"PDF-Extraktion erfolgreich: {len(combined_text)} Zeichen extrahiert")
+                return combined_text
+            else:
+                logger.warning("Keine Textdaten in der PDF gefunden")
+                return "Keine Textdaten konnten aus dieser PDF extrahiert werden. Es könnte sich um ein Scan-Dokument ohne OCR handeln."
                 
-                # Extrahiere Text von jeder Seite
-                for page_num in range(len(pdf_document)):
-                    try:
-                        page = pdf_document.load_page(page_num)
-                        # Verwende einfache Textextraktion
-                        text = page.get_text("text")
-                        if text:
-                            all_text.append(text)
-                    except Exception as page_error:
-                        logger.warning(f"Fehler bei der Extraktion der Seite {page_num+1}: {str(page_error)}")
-                        continue
-                
-                # Schliesse das Dokument
-                pdf_document.close()
-            except Exception as e:
-                logger.warning(f"Fehler bei der Extraktion mit PyMuPDF: {str(e)}")
-                return f"CORRUPTED_PDF: {str(e)}"
-        
-        # Kombiniere den gesamten Text
-        final_text = "\n\n".join([text for text in all_text if text.strip()])
-        
-        # Wenn noch immer kein Text, gib einen klaren Hinweis zurück
-        if not final_text.strip():
-            return "Der Text konnte aus dieser PDF nicht extrahiert werden. Es könnte sich um eine gescannte PDF ohne OCR handeln."
-        
-        # Minimale Bereinigung - nur NUL-Bytes entfernen
-        final_text = final_text.replace('\x00', '')
-        
-        return final_text
     except Exception as e:
-        logger.error(f"Kritischer Fehler bei PDF-Extraktion: {str(e)}")
-        return f"CORRUPTED_PDF: {str(e)}" 
+        logger.error(f"Kritischer Fehler bei der PDF-Extraktion: {str(e)}")
+        return f"FEHLER: PDF konnte nicht verarbeitet werden: {str(e)}" 

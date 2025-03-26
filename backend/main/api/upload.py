@@ -305,6 +305,7 @@ def get_results(session_id):
     Verbessert: Stellt sicher, dass die Verarbeitung abgeschlossen ist, bevor Ergebnisse zurückgegeben werden.
     """
     from api.log_utils import AppLogger
+    from .utils import update_session_timestamp
     
     # Logge Anfrage
     AppLogger.structured_log(
@@ -313,6 +314,10 @@ def get_results(session_id):
         session_id=session_id,
         component="get_results"
     )
+    
+    # Aktualisiere den Zeitstempel, um diese Session als zuletzt verwendet zu markieren
+    # Dies hilft bei der Entscheidung, welche Sessions beibehalten werden sollen
+    update_session_timestamp(session_id)
     
     try:
         # Prüfe den Redis-Status für die Session

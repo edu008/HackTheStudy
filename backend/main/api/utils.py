@@ -1647,7 +1647,21 @@ def update_session_timestamp(session_id):
         
         # Setze den Zeitstempel auf die aktuelle Zeit
         upload.last_used_at = db.func.current_timestamp()
+        
+        # Aktualisiere auch den processing_status, falls nötig
+        if upload.processing_status in ['pending', 'error', 'failed']:
+            upload.processing_status = 'completed'
+        
         db.session.commit()
+        
+        # Protokolliere die Aktualisierung
+        AppLogger.structured_log(
+            "INFO",
+            f"Zeitstempel für Session {session_id} aktualisiert",
+            component="session_management",
+            user_id=upload.user_id,
+            session_id=session_id
+        )
         
         return True
     except Exception as e:

@@ -219,8 +219,55 @@ def register_task(celery_app):
                         upload = Upload.query.filter_by(session_id=session_id).first()
                         if upload:
                             logger.info(f"Upload-Eintrag gefunden: ID={upload.id}")
+                            # Prüfe, ob dieser Upload bereits verarbeitet wurde
+                            if upload.processing_status == 'completed':
+                                logger.info(f"Upload wurde bereits verarbeitet, prüfe auf bestehende Daten...")
+                                # Prüfe, ob bereits Daten vorhanden sind
+                                from core.models import Topic, Flashcard, Question
+                                topics_count = Topic.query.filter_by(upload_id=upload.id).count()
+                                flashcards_count = Flashcard.query.filter_by(upload_id=upload.id).count()
+                                questions_count = Question.query.filter_by(upload_id=upload.id).count()
+                                
+                                if topics_count > 0 and flashcards_count > 0:
+                                    logger.info(f"Bestehende Daten gefunden: {topics_count} Themen, {flashcards_count} Flashcards, {questions_count} Fragen")
+                                    # Setze fortgeschrittene Status
+                                    safe_redis_set(f"processing_status:{session_id}", "completed", ex=14400)
+                                    safe_redis_set(f"processing_progress:{session_id}", json.dumps({
+                                        "progress": 100,
+                                        "message": "Verarbeitung bereits abgeschlossen",
+                                        "stage": "completed"
+                                    }), ex=14400)
+                                    
+                                    # Aktualisiere last_used_at
+                                    upload.last_used_at = db.func.current_timestamp()
+                                    db.session.commit()
+                                    
+                                    # Setze Ergebnisse in Redis
+                                    main_topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
+                                    if main_topic:
+                                        result_data = {
+                                            "main_topic": main_topic.name,
+                                            "topics": [t.name for t in Topic.query.filter_by(upload_id=upload.id).all()],
+                                            "language": "auto",
+                                            "token_count": upload.token_count or 0,
+                                            "flashcards_count": flashcards_count,
+                                            "questions_count": questions_count
+                                        }
+                                        
+                                        safe_redis_set(f"processing_result:{session_id}", json.dumps(result_data), ex=86400)
+                                        safe_redis_set(f"finalization_complete:{session_id}", "true", ex=14400)
+                                        
+                                    logger.info(f"Existierende Upload-Daten zurückgegeben, Vorgang abgeschlossen")
+                                    release_session_lock(session_id)
+                                    return {
+                                        "status": "completed",
+                                        "message": "Bestehende Verarbeitung gefunden und verwendet",
+                                        "reused_existing": True
+                                    }
+                            
+                            # Ansonsten setze Status auf "processing"
                             upload.processing_status = "processing"
-                            upload.started_at = datetime.utcnow()
+                            upload.updated_at = datetime.utcnow()
                             logger.info(f"💾 Upload-Eintrag gefunden und aktualisiert: ID={upload.id}")
                             log_debug_info(session_id, "Datenbankstatus aktualisiert: processing", progress=5, stage="database_update")
                         else:
@@ -488,11 +535,67 @@ def register_task(celery_app):
                         # SCHRITT 9: Finalisierung
                         logger.info("🔄 SCHRITT 9: Finalisierung des Uploads")
                         try:
-                            # Upload-Status aktualisieren
-                            upload.content = cleaned_text
+                            # Upload-Status aktualisieren - nur den Dokumenttyp im Content-Feld speichern
+                            # Dokumenttyp erkennen (z.B. Lecture, Test, Notes, etc.)
+                            doc_type = "Unbekannter Typ"
+                            
+                            # Versuche den Dokumenttyp aus dem Dateinamen oder Inhalt zu ermitteln
+                            for file_name, _ in file_contents:
+                                if "lecture" in file_name.lower():
+                                    doc_type = "Lecture"
+                                    break
+                                elif "test" in file_name.lower():
+                                    doc_type = "Test"
+                                    break
+                                elif "exam" in file_name.lower():
+                                    doc_type = "Exam"
+                                    break
+                                elif "assignment" in file_name.lower():
+                                    doc_type = "Assignment"
+                                    break
+                                elif "notes" in file_name.lower():
+                                    doc_type = "Notes"
+                                    break
+                            
+                            # Wenn kein Typ im Dateinamen gefunden wurde, versuche es mit dem Text
+                            if doc_type == "Unbekannter Typ" and len(extracted_texts) > 0:
+                                if "lecture" in combined_text.lower()[:500]:
+                                    doc_type = "Lecture"
+                                elif "test" in combined_text.lower()[:500]:
+                                    doc_type = "Test"
+                                elif "exam" in combined_text.lower()[:500]:
+                                    doc_type = "Exam"
+                            
+                            # Aktualisiere Upload-Eintrag
+                            upload.content = doc_type  # Nur den Dokumenttyp speichern, nicht den gesamten Inhalt
                             upload.token_count = token_count
                             upload.processing_status = "completed"
+                            upload.last_used_at = datetime.utcnow()
                             db.session.commit()
+                            
+                            # Begrenze die Anzahl der Uploads pro Benutzer auf maximal 5
+                            if user_id:
+                                logger.info(f"Prüfe Upload-Limits für Benutzer {user_id}")
+                                user_uploads = Upload.query.filter_by(user_id=user_id).order_by(Upload.last_used_at.asc()).all()
+                                
+                                if len(user_uploads) > 5:
+                                    # Behalte die 5 neuesten Uploads basierend auf last_used_at
+                                    uploads_to_delete = user_uploads[:-5]  # Alle außer den letzten 5
+                                    
+                                    for old_upload in uploads_to_delete:
+                                        logger.info(f"Entferne alten Upload {old_upload.id} vom {old_upload.upload_date}")
+                                        # Lösche zugehörige Daten
+                                        Topic.query.filter_by(upload_id=old_upload.id).delete()
+                                        Flashcard.query.filter_by(upload_id=old_upload.id).delete()
+                                        Question.query.filter_by(upload_id=old_upload.id).delete()
+                                        Connection.query.filter_by(upload_id=old_upload.id).delete()
+                                        
+                                        # Lösche den Upload selbst
+                                        db.session.delete(old_upload)
+                                    
+                                    # Änderungen speichern
+                                    db.session.commit()
+                                    logger.info(f"{len(uploads_to_delete)} alte Uploads für Benutzer {user_id} entfernt")
                             
                             # Ergebnisse in Redis für schnellen Zugriff speichern
                             logger.info("💾 Speichere Ergebnisse in Redis-Cache...")
@@ -501,6 +604,7 @@ def register_task(celery_app):
                                 "topics": [t.name for t in Topic.query.filter_by(upload_id=upload.id).all()],
                                 "language": document_language,
                                 "token_count": token_count,
+                                "document_type": doc_type,
                                 "flashcards_count": Flashcard.query.filter_by(upload_id=upload.id).count(),
                                 "questions_count": Question.query.filter_by(upload_id=upload.id).count()
                             }
