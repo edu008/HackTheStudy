@@ -28,14 +28,29 @@ def initialize_redis_connection() -> bool:
     logger.info("🔄 Redis-Verbindungsinitialisierung wird gestartet")
     
     # Konfigurierte Redis-Verbindungsdetails aus Umgebungsvariablen verwenden
-    redis_host = os.environ.get('REDIS_HOST', '10.244.15.188')
+    redis_host_raw = os.environ.get('REDIS_HOST', '10.244.15.188')
     redis_port = int(os.environ.get('REDIS_PORT', '6379'))
-    redis_url = os.environ.get('REDIS_URL', f'redis://{redis_host}:{redis_port}/0')
+    
+    # URL-Bereinigung: Entferne "http://" oder "https://" Präfixe
+    # z.B. "http://hackthestudy-backend-main:8080" -> "hackthestudy-backend-main"
+    redis_host = redis_host_raw
+    if redis_host.startswith('http://'):
+        redis_host = redis_host.replace('http://', '')
+    if redis_host.startswith('https://'):
+        redis_host = redis_host.replace('https://', '')
+    
+    # Entferne Port-Informationen, falls vorhanden
+    if ':' in redis_host:
+        redis_host = redis_host.split(':')[0]
+    
+    # Baue bereinigte Redis-URL
+    redis_url = f"redis://{redis_host}:{redis_port}/0"
     
     logger.info(f"✅ Verwende folgende Redis-Konfiguration:")
-    logger.info(f"   - REDIS_HOST: {redis_host}")
+    logger.info(f"   - REDIS_HOST (Original): {redis_host_raw}")
+    logger.info(f"   - REDIS_HOST (Bereinigt): {redis_host}")
     logger.info(f"   - REDIS_PORT: {redis_port}")
-    logger.info(f"   - REDIS_URL: {redis_url}")
+    logger.info(f"   - REDIS_URL (Neu): {redis_url}")
     
     # Direkte Verbindung zum Redis-Server herstellen
     try:
@@ -45,6 +60,9 @@ def initialize_redis_connection() -> bool:
         
         if ping_result:
             logger.info(f"✅ Erfolgreiche Redis-Verbindung zu {redis_host}:{redis_port}")
+            # Globale Umgebungsvariablen aktualisieren für andere Komponenten
+            os.environ['REDIS_URL'] = redis_url
+            os.environ['REDIS_HOST'] = redis_host
             # Client-Instanz speichern
             redis_client = client
             return True
@@ -54,6 +72,23 @@ def initialize_redis_connection() -> bool:
     except Exception as e:
         logger.error(f"❌ Redis-Verbindung zu {redis_host}:{redis_port} fehlgeschlagen: {str(e)}")
         logger.error("📝 Bitte überprüfe die REDIS_HOST und REDIS_URL Umgebungsvariablen")
+        
+        # Versuche alternative Hostnamen, falls der primäre fehlschlägt
+        fallback_hosts = ["hackthestudy-backend-main", "localhost", "127.0.0.1", "redis"]
+        for fallback_host in fallback_hosts:
+            if fallback_host != redis_host:
+                try:
+                    logger.info(f"🔄 Versuche Fallback-Host: {fallback_host}")
+                    client = redis_external.Redis(host=fallback_host, port=redis_port, db=0, socket_timeout=3)
+                    if client.ping():
+                        logger.info(f"✅ Erfolgreiche Redis-Verbindung zu Fallback {fallback_host}:{redis_port}")
+                        os.environ['REDIS_URL'] = f"redis://{fallback_host}:{redis_port}/0"
+                        os.environ['REDIS_HOST'] = fallback_host
+                        redis_client = client
+                        return True
+                except Exception as fallback_err:
+                    logger.warning(f"⚠️ Fallback zu {fallback_host} fehlgeschlagen: {str(fallback_err)}")
+        
         return False
 
 def get_redis_client():

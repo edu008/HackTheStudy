@@ -3,6 +3,7 @@ Zentrale Konfigurationsdatei für den Worker-Microservice
 """
 import os
 import logging
+import re
 from dotenv import load_dotenv
 
 # Lade Umgebungsvariablen
@@ -15,16 +16,35 @@ LOG_LEVEL = getattr(logging, LOG_LEVEL_STR.upper(), logging.INFO)
 LOG_API_REQUESTS = os.environ.get('LOG_API_REQUESTS', 'false').lower() == 'true'
 
 # Redis-Konfiguration
-REDIS_URL = os.getenv('REDIS_URL', 'redis://10.244.15.188:6379/0').strip()
-REDIS_HOST = os.getenv('REDIS_HOST', '10.244.15.188').strip()
+REDIS_URL_RAW = os.getenv('REDIS_URL', 'redis://localhost:6379/0').strip()
+REDIS_HOST_RAW = os.getenv('REDIS_HOST', 'localhost').strip()
+
+# Bereinige Redis-Host - kann durch DigitalOcean falsch gesetzt sein
+REDIS_HOST = REDIS_HOST_RAW
+if REDIS_HOST.startswith('http://'):
+    REDIS_HOST = REDIS_HOST.replace('http://', '')
+if REDIS_HOST.startswith('https://'):
+    REDIS_HOST = REDIS_HOST.replace('https://', '')
+# Entferne Port-Informationen
+if ':' in REDIS_HOST:
+    REDIS_HOST = REDIS_HOST.split(':')[0]
+
+# Bereinige Redis-URL
+REDIS_URL = REDIS_URL_RAW
+if 'redis://http://' in REDIS_URL:
+    # Extrahiere Hostnamen
+    host_match = re.search(r'redis://http://([^:/]+)(:\d+)?', REDIS_URL)
+    if host_match:
+        hostname = host_match.group(1)
+        REDIS_URL = f"redis://{hostname}:6379/0"
+
+# Setze das bereinigte Ergebnis in die Umgebungsvariablen zurück
+os.environ['REDIS_HOST'] = REDIS_HOST
+os.environ['REDIS_URL'] = REDIS_URL
+
 REDIS_TTL_DEFAULT = 14400  # 4 Stunden Standard-TTL für Redis-Einträge
 REDIS_TTL_SHORT = 3600    # 1 Stunde für kurzlebige Einträge
 REDIS_FALLBACK_URLS = os.getenv('REDIS_FALLBACK_URLS', '').strip()
-
-# Sicherstellen, dass REDIS_URL konsistent ist
-if 'localhost' in REDIS_URL and REDIS_HOST != 'localhost':
-    REDIS_URL = f"redis://{REDIS_HOST}:6379/0"
-    os.environ['REDIS_URL'] = REDIS_URL
 
 # API-Konfiguration
 USE_API_URL = os.getenv('USE_API_URL', '').strip()
@@ -52,12 +72,14 @@ if DO_APP_PLATFORM or DIGITAL_OCEAN_DEPLOYMENT:
     import sys
     logger = logging.getLogger("worker")
     logger.info("=== DigitalOcean App Platform erkannt ===")
-    logger.info(f"REDIS_HOST: {REDIS_HOST}")
+    logger.info(f"REDIS_HOST (Original): {REDIS_HOST_RAW}")
+    logger.info(f"REDIS_HOST (Bereinigt): {REDIS_HOST}")
+    logger.info(f"REDIS_URL (Original): {REDIS_URL_RAW}")
+    logger.info(f"REDIS_URL (Bereinigt): {REDIS_URL}")
     logger.info(f"API_HOST: {API_HOST}")
     logger.info(f"REDIS_FALLBACK_URLS: {REDIS_FALLBACK_URLS}")
     
     # Wenn API_HOST nicht gesetzt ist, versuche ${api.PRIVATE_URL} zu lesen
     # (wird von DigitalOcean ersetzt)
     if not API_HOST or API_HOST.startswith("${api."):
-        logger.warning("API_HOST nicht oder als Template gesetzt, verwende Fallback-Strategie")
-        # Versuche, die API-Adresse anders zu ermitteln 
+        logger.warning("API_HOST nicht oder als Template gesetzt, verwende Fallback-Strategie") 

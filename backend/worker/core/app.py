@@ -93,6 +93,19 @@ def create_celery_app(redis_url=None):
         from config import REDIS_URL
         redis_url = REDIS_URL
     
+    # URL-Bereinigung für den Fall, dass DigitalOcean falsch formatierte URLs liefert
+    if redis_url.startswith('redis://http://'):
+        logger.warning(f"Korrigiere fehlerhafte Redis-URL: {redis_url}")
+        # Extrahiere den Host aus der URL (z.B. "redis://http://example.com:8080:6379/0")
+        import re
+        host_match = re.search(r'redis://http://([^:/]+)(:\d+)?', redis_url)
+        if host_match:
+            host = host_match.group(1)
+            redis_url = f"redis://{host}:6379/0"
+            logger.info(f"Bereinigte Redis-URL: {redis_url}")
+    
+    logger.info(f"Verwende Redis-URL für Celery: {redis_url}")
+    
     celery_app = Celery(
         'backend.worker',
         broker=redis_url,

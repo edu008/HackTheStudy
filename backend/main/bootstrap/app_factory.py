@@ -13,6 +13,7 @@ import time
 from flask import g
 from flask_cors import CORS
 from redis import Redis
+import re
 
 from core.models import db
 from config.env_handler import load_env, setup_cors_origins
@@ -43,21 +44,47 @@ def create_app(config_name='default'):
     
     # Redis-URL korrigieren
     redis_url = os.getenv('REDIS_URL', 'redis://10.244.15.188:6379/0')
+    
+    # URL-Bereinigung für den Fall, dass DigitalOcean falsch formatierte URLs liefert
+    if 'redis://http://' in redis_url:
+        redis_url = redis_url.replace('redis://http://', 'redis://')
+    if 'redis://https://' in redis_url:
+        redis_url = redis_url.replace('redis://https://', 'redis://')
     if redis_url.startswith('redis://http://'):
         redis_url = redis_url.replace('redis://http://', 'redis://')
     if redis_url.startswith('redis://https://'):
         redis_url = redis_url.replace('redis://https://', 'redis://')
     
+    # Extrahiere Hostname aus der URL
+    # z.B. "redis://hackthestudy-backend-main:8080:6379/0" -> "hackthestudy-backend-main"
+    host_match = re.search(r'redis://([^:/]+)(:\d+)?:', redis_url)
+    if host_match:
+        redis_host = host_match.group(1)
+        # Baue saubere URL
+        redis_url = f"redis://{redis_host}:6379/0"
+        app.logger.info(f"Redis-URL bereinigt zu: {redis_url}")
+    
     # Redis-Client initialisieren
     try:
+        app.logger.info(f"Versuche Redis-Verbindung zu: {redis_url}")
         redis_client = Redis.from_url(redis_url, decode_responses=True)
         redis_client.ping()  # Teste die Verbindung
         app.logger.info(f"Redis-Verbindung erfolgreich hergestellt: {redis_url}")
     except Exception as e:
         app.logger.error(f"Redis-Verbindungsfehler: {str(e)}")
         app.logger.error(f"Redis-URL: {redis_url}")
-        # Fehler werfen, wenn Redis nicht verfügbar ist
-        raise RuntimeError(f"Redis-Verbindung konnte nicht hergestellt werden: {str(e)}")
+        
+        # Fallback zu localhost versuchen
+        try:
+            fallback_url = "redis://localhost:6379/0"
+            app.logger.warning(f"Versuche Fallback zu: {fallback_url}")
+            redis_client = Redis.from_url(fallback_url, decode_responses=True)
+            redis_client.ping()
+            app.logger.info(f"Redis-Fallback-Verbindung erfolgreich: {fallback_url}")
+        except Exception as fallback_e:
+            app.logger.error(f"Auch Fallback fehlgeschlagen: {str(fallback_e)}")
+            # Fehler werfen, wenn Redis nicht verfügbar ist
+            raise RuntimeError(f"Redis-Verbindung konnte nicht hergestellt werden: {str(e)}")
     
     # Redis-Client im App-Kontext speichern
     app.redis = redis_client
