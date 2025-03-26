@@ -1604,6 +1604,7 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
         for i in range(sessions_to_delete):
             if i < len(user_sessions):
                 session_to_remove = user_sessions[i]
+                session_deleted_successfully = False
                 
                 # Debug-Ausgabe für last_used_at-Wert
                 last_used_value = "NULL" if session_to_remove.last_used_at is None else session_to_remove.last_used_at.isoformat()
@@ -1637,6 +1638,7 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
                     # Commit nach jedem gelöschten Upload
                     db.session.commit()
                     
+                    session_deleted_successfully = True
                     sessions_removed = True
                     AppLogger.structured_log(
                         "INFO",
@@ -1647,68 +1649,81 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
                     )
                     
                     # Lösche auch alle in Redis gespeicherten Daten für diese Session
-                    try:
-                        from redis_connection import redis_client
-                        keys_to_delete = [
-                            f"processing_status:{session_to_remove.session_id}",
-                            f"processing_progress:{session_to_remove.session_id}",
-                            f"processing_start_time:{session_to_remove.session_id}",
-                            f"processing_heartbeat:{session_to_remove.session_id}",
-                            f"processing_last_update:{session_to_remove.session_id}",
-                            f"processing_details:{session_to_remove.session_id}",
-                            f"processing_result:{session_to_remove.session_id}",
-                            f"task_id:{session_to_remove.session_id}",
-                            f"error_details:{session_to_remove.session_id}",
-                            f"openai_error:{session_to_remove.session_id}",
-                            f"all_data_stored:{session_to_remove.session_id}",
-                            f"finalization_complete:{session_to_remove.session_id}"
-                        ]
-                        
-                        # Überprüfe, ob redis_client existiert und initialisiert ist
-                        if redis_client:
-                            try:
-                                # Verwende Redis pipeline für effizientes Löschen
-                                pipeline = redis_client.pipeline()
-                                for key in keys_to_delete:
-                                    pipeline.delete(key)
-                                pipeline.execute()
-                                
+                    if session_deleted_successfully:
+                        try:
+                            from redis_connection import redis_client
+                            keys_to_delete = [
+                                f"processing_status:{session_to_remove.session_id}",
+                                f"processing_progress:{session_to_remove.session_id}",
+                                f"processing_start_time:{session_to_remove.session_id}",
+                                f"processing_heartbeat:{session_to_remove.session_id}",
+                                f"processing_last_update:{session_to_remove.session_id}",
+                                f"processing_details:{session_to_remove.session_id}",
+                                f"processing_result:{session_to_remove.session_id}",
+                                f"task_id:{session_to_remove.session_id}",
+                                f"error_details:{session_to_remove.session_id}",
+                                f"openai_error:{session_to_remove.session_id}",
+                                f"all_data_stored:{session_to_remove.session_id}",
+                                f"finalization_complete:{session_to_remove.session_id}"
+                            ]
+                            
+                            # Überprüfe, ob redis_client existiert und initialisiert ist
+                            if redis_client:
+                                try:
+                                    # Verwende Redis pipeline für effizientes Löschen
+                                    pipeline = redis_client.pipeline()
+                                    for key in keys_to_delete:
+                                        pipeline.delete(key)
+                                    pipeline.execute()
+                                    
+                                    AppLogger.structured_log(
+                                        "INFO",
+                                        f"Redis-Daten für Session {session_to_remove.session_id} gelöscht",
+                                        user_id=user_id,
+                                        session_id=session_to_remove.session_id,
+                                        component="check_and_manage_user_sessions"
+                                    )
+                                except Exception as redis_error:
+                                    AppLogger.structured_log(
+                                        "ERROR",
+                                        f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
+                                        user_id=user_id,
+                                        session_id=session_to_remove.session_id,
+                                        component="check_and_manage_user_sessions",
+                                        exception=traceback.format_exc()
+                                    )
+                                    # Redis-Fehler beeinträchtigen nicht den Erfolg der Session-Löschung
+                            else:
                                 AppLogger.structured_log(
-                                    "INFO",
-                                    f"Redis-Daten für Session {session_to_remove.session_id} gelöscht",
+                                    "WARNING",
+                                    f"Redis-Client nicht verfügbar, Redis-Daten für Session {session_to_remove.session_id} konnten nicht gelöscht werden",
                                     user_id=user_id,
                                     session_id=session_to_remove.session_id,
                                     component="check_and_manage_user_sessions"
                                 )
-                            except Exception as redis_error:
-                                AppLogger.structured_log(
-                                    "ERROR",
-                                    f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
-                                    user_id=user_id,
-                                    session_id=session_to_remove.session_id,
-                                    component="check_and_manage_user_sessions",
-                                    exception=traceback.format_exc()
-                                )
-                        else:
+                        except Exception as e:
                             AppLogger.structured_log(
-                                "WARNING",
-                                f"Redis-Client nicht verfügbar, Redis-Daten für Session {session_to_remove.session_id} konnten nicht gelöscht werden",
+                                "ERROR",
+                                f"Fehler beim Löschen der Redis-Daten: {str(e)}",
                                 user_id=user_id,
                                 session_id=session_to_remove.session_id,
-                                component="check_and_manage_user_sessions"
+                                component="check_and_manage_user_sessions",
+                                exception=traceback.format_exc()
                             )
-                    except Exception as e:
-                        db.session.rollback()
-                        AppLogger.structured_log(
-                            "ERROR",
-                            f"Fehler beim Löschen des Uploads: {str(e)}",
-                            user_id=user_id,
-                            session_id=session_to_remove.session_id,
-                            component="check_and_manage_user_sessions",
-                            exception=traceback.format_exc()
-                        )
+                            # Redis-Fehler beeinträchtigen nicht den Erfolg der Session-Löschung
+                except Exception as e:
+                    db.session.rollback()
+                    AppLogger.structured_log(
+                        "ERROR",
+                        f"Fehler beim Löschen des Uploads: {str(e)}",
+                        user_id=user_id,
+                        session_id=session_to_remove.session_id,
+                        component="check_and_manage_user_sessions",
+                        exception=traceback.format_exc()
+                    )
+                    # Ein Fehler während der Session-Löschung wird protokolliert, aber wir fahren mit der nächsten Session fort
     
-    # Gibt TRUE zurück, wenn Sessions gelöscht wurden
+    # Gibt TRUE zurück, wenn mindestens eine Session erfolgreich gelöscht wurde
     return sessions_removed
 
 def update_session_timestamp(session_id):
