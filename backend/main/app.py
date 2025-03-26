@@ -28,6 +28,42 @@ from bootstrap.logging_setup import setup_logging
 # Konfiguriere Logging sofort
 logger = setup_logging()
 
+# Logge alle Umgebungsvariablen für Debugging-Zwecke
+logger.info("=== UMGEBUNGSVARIABLEN FÜR MAIN-PROZESS (DigitalOcean) ===")
+redis_vars = {}
+digitalocean_vars = {}
+app_vars = {}
+celery_vars = {}
+
+for key, value in os.environ.items():
+    # Maskiere sensible Werte
+    masked_value = value
+    if any(sensitive in key.lower() for sensitive in ['key', 'secret', 'password', 'token']):
+        masked_value = value[:4] + "****" if len(value) > 8 else "****"
+    
+    # Gruppiere nach Variablentyp
+    if key.startswith("REDIS_") or "REDIS" in key:
+        redis_vars[key] = masked_value
+    elif "DIGITAL_OCEAN" in key or "DO_" in key or "PRIVATE_URL" in key:
+        digitalocean_vars[key] = masked_value
+    elif key.startswith("CELERY_"):
+        celery_vars[key] = masked_value
+    else:
+        app_vars[key] = masked_value
+
+# Logge die gruppierten Variablen
+logger.info(f"REDIS-KONFIGURATION: {json.dumps(redis_vars, indent=2)}")
+logger.info(f"DIGITALOCEAN-KONFIGURATION: {json.dumps(digitalocean_vars, indent=2)}")
+logger.info(f"CELERY-KONFIGURATION: {json.dumps(celery_vars, indent=2)}")
+logger.info(f"APP-KONFIGURATION: (Anzahl Variablen: {len(app_vars)})")
+logger.info("=== ENDE UMGEBUNGSVARIABLEN ===")
+
+# Prüfe explizit Redis-Verbindungsdetails
+logger.info(f"REDIS_URL: {os.environ.get('REDIS_URL', 'nicht gesetzt')}")
+logger.info(f"REDIS_HOST: {os.environ.get('REDIS_HOST', 'nicht gesetzt')}")
+logger.info(f"API_HOST: {os.environ.get('API_HOST', 'nicht gesetzt')}")
+logger.info(f"API.PRIVATE_URL oder ähnliche: {os.environ.get('api.PRIVATE_URL', os.environ.get('API_PRIVATE_URL', os.environ.get('PRIVATE_URL', 'nicht gesetzt')))}")
+
 # Dann die App-Factory und Erweiterungen
 from bootstrap.app_factory import create_app
 from bootstrap.extensions import db, cache, migrate, jwt, cors
