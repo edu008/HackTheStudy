@@ -26,7 +26,28 @@ celery_app = Celery('api', broker=redis_url, backend=redis_url)
 # Hilfsfunktion, um Tasks an den Worker zu delegieren
 def delegate_to_worker(task_name, *args, **kwargs):
     """Delegiert eine Aufgabe an den Worker über Celery."""
-    return celery_app.send_task(f'tasks.{task_name}', args=args, kwargs=kwargs)
+    try:
+        logger.info(f"📤 WORKER-DELEGATION: Sende Task '{task_name}' an Worker mit args={args[:30]} und kwargs={kwargs}")
+        task = celery_app.send_task(f'tasks.{task_name}', args=args, kwargs=kwargs)
+        logger.info(f"✅ WORKER-DELEGATION: Task erfolgreich gesendet - Task-ID: {task.id}")
+        
+        # Zusätzliche Diagnoseinformationen
+        celery_broker = celery_app.conf.broker_url
+        logger.info(f"📊 WORKER-DIAGNOSE: Broker-URL={celery_broker}, Worker-Task-ID={task.id}")
+        
+        # Versuche Verbindungsstatus zu prüfen
+        try:
+            broker_reachable = celery_app.connection().ensure_connection(max_retries=1)
+            logger.info(f"🔌 WORKER-VERBINDUNG: Broker erreichbar = {broker_reachable}")
+        except Exception as conn_err:
+            logger.error(f"❌ WORKER-VERBINDUNG: Broker-Verbindungsfehler: {str(conn_err)}")
+        
+        return task
+    except Exception as e:
+        error_message = f"❌ WORKER-DELEGATION: Fehler beim Senden der Task '{task_name}' an Worker: {str(e)}"
+        logger.error(error_message)
+        logger.error(f"Stacktrace: {traceback.format_exc()}")
+        raise Exception(error_message)
 
 logger = logging.getLogger(__name__)
 
@@ -792,6 +813,8 @@ def upload_chunk():
     Verarbeitet einzelne Chunks eines Datei-Uploads mit Fortschrittsverfolgung.
     """
     try:
+        logger.info("💾 CHUNK-UPLOAD: Chunk-Upload-Anfrage empfangen")
+        
         if request.method == 'OPTIONS':
             return jsonify({"success": True})
             
@@ -803,6 +826,7 @@ def upload_chunk():
         
         # Überprüfe die erforderlichen Parameter
         if 'chunk' not in request.files or 'chunk_index' not in request.form or 'total_chunks' not in request.form:
+            logger.error("❌ CHUNK-UPLOAD: Fehlende erforderliche Parameter")
             return create_error_response(
                 "Fehlende Parameter", 
                 ERROR_INVALID_INPUT, 
@@ -814,19 +838,28 @@ def upload_chunk():
         total_chunks = int(request.form['total_chunks'])
         session_id = request.form.get('session_id')
         file_name = request.form.get('file_name')
+        user_id = getattr(request, 'user_id', None)
+        
+        logger.info(f"📁 CHUNK-UPLOAD: Parameter - chunk_index={chunk_index}, total_chunks={total_chunks}, session_id={session_id}, file_name={file_name}, user_id={user_id}")
         
         if not session_id:
             session_id = str(uuid.uuid4())
+            logger.info(f"🔑 CHUNK-UPLOAD: Neue Session-ID generiert: {session_id}")
         
         # Initialisiere die Upload-Session beim ersten Chunk
         if chunk_index == 0:
+            logger.info(f"🏁 CHUNK-UPLOAD: Erster Chunk empfangen, initialisiere Session {session_id}")
             redis_client.set(f"total_chunks:{session_id}", total_chunks, ex=3600)
             redis_client.set(f"upload_start_time:{session_id}", str(time.time()), ex=3600)
             redis_client.set(f"file_name:{session_id}", file_name, ex=3600)
         
         # Speichere den Chunk
+        logger.info(f"📥 CHUNK-UPLOAD: Lese Chunk {chunk_index} von {total_chunks} für Session {session_id}")
         chunk_data = chunk.read()
+        logger.info(f"📦 CHUNK-UPLOAD: Chunk {chunk_index} Größe = {len(chunk_data)} Bytes")
+        
         if not save_chunk(session_id, chunk_index, chunk_data):
+            logger.error(f"❌ CHUNK-UPLOAD: Fehler beim Speichern von Chunk {chunk_index}")
             return create_error_response(
                 "Fehler beim Speichern des Chunks", 
                 ERROR_FILE_PROCESSING
@@ -835,28 +868,42 @@ def upload_chunk():
         # Berechne Fortschritt und verbleibende Zeit
         progress = calculate_upload_progress(session_id)
         remaining_time = estimate_remaining_time(session_id)
+        logger.info(f"📊 CHUNK-UPLOAD: Progress={progress}%, Remaining Time={remaining_time}s")
         
         # Aktualisiere den Fortschritt in Redis
         redis_client.set(f"upload_progress:{session_id}", progress, ex=3600)
         
         # Wenn alle Chunks hochgeladen wurden, starte die Verarbeitung
         if chunk_index == total_chunks - 1:
+            logger.info(f"🏆 CHUNK-UPLOAD: Letzter Chunk empfangen, beginne Verarbeitung für Session {session_id}")
+            
             # Kombiniere alle Chunks
+            logger.info(f"🔄 CHUNK-UPLOAD: Kombiniere alle Chunks für Session {session_id}")
             file_content = combine_chunks(session_id)
             if not file_content:
+                logger.error(f"❌ CHUNK-UPLOAD: Fehler beim Kombinieren der Chunks für Session {session_id}")
                 return create_error_response(
                     "Fehler beim Kombinieren der Chunks", 
                     ERROR_FILE_PROCESSING
                 )
             
+            logger.info(f"📋 CHUNK-UPLOAD: Kombinierte Datei Größe = {len(file_content)} Bytes")
+            
             # Starte die Verarbeitung
+            logger.info(f"🚀 CHUNK-UPLOAD: Sende Verarbeitungsauftrag an Worker für Session {session_id}")
             task_files_data = [(file_name, file_content.hex())]
-            task = delegate_to_worker('process_upload', session_id, task_files_data, getattr(request, 'user_id', None))
+            
+            # Ausführliche Protokollierung bei der Erstellung der Worker-Task
+            logger.info(f"📤 CHUNK-UPLOAD: Delegiere 'process_upload' Aufgabe für Session {session_id}")
+            task = delegate_to_worker('process_upload', session_id, task_files_data, user_id)
+            logger.info(f"✅ CHUNK-UPLOAD: Worker-Task erstellt mit ID {task.id}")
             
             # Speichere die Task-ID
             redis_client.set(f"task_id:{session_id}", task.id, ex=3600)
+            logger.info(f"💾 CHUNK-UPLOAD: Task-ID in Redis gespeichert: {task.id}")
             
             # Lösche die Chunks
+            logger.info(f"🧹 CHUNK-UPLOAD: Bereinige temporäre Chunks für Session {session_id}")
             cleanup_chunks(session_id)
         
         return jsonify({
@@ -871,12 +918,17 @@ def upload_chunk():
         
     except Exception as e:
         session_id = request.form.get('session_id', 'unknown')
+        error_message = f"❌ CHUNK-UPLOAD: Kritischer Fehler: {str(e)}"
+        logger.error(error_message)
+        logger.error(f"Stacktrace: {traceback.format_exc()}")
+        
         AppLogger.track_error(
             session_id,
             "chunk_upload_error",
-            f"Fehler beim Chunk-Upload: {str(e)}",
+            error_message,
             trace=traceback.format_exc()
         )
+        
         return create_error_response(
             f"Fehler beim Chunk-Upload: {str(e)}", 
             ERROR_FILE_PROCESSING
