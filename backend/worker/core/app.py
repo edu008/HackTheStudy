@@ -4,6 +4,7 @@ Flask-App-Integration für den Worker-Microservice
 import os
 import logging
 import threading
+import traceback
 from flask import Flask
 from celery import Celery
 
@@ -48,23 +49,24 @@ def get_flask_app():
         if not timeout_occurred[0]:
             flask_app = Flask(__name__)
             
-            # Minimale Konfiguration
-            database_url = os.getenv('DATABASE_URL')
-            flask_app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-            flask_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+            # Konfiguriere die Datenbank
+            from core.models import init_db
+            db = init_db(flask_app)
             
             # Initialisiere Datenbank - hier auf Fehler vorbereitet sein
             try:
-                # Entferne den Import von core.models, da wir keine vollständige DB-Integration benötigen
-                # Das Worker-Modul verwendet eine vereinfachte DB-Integration ohne vollständige Modelle
-                # from core.models import db
-                # db.init_app(flask_app)
-                pass
+                with flask_app.app_context():
+                    # Prüfe die Datenbankverbindung
+                    from core.models import Upload
+                    logger.info("Prüfe Datenbankverbindung mit einer Testabfrage...")
+                    test_query = Upload.query.limit(1).all()
+                    logger.info(f"Datenbankverbindung erfolgreich hergestellt, {len(test_query)} Ergebnisse gefunden")
             except Exception as db_error:
                 logger.error(f"Fehler bei DB-Initialisierung: {str(db_error)}")
+                logger.error(f"Stacktrace: {traceback.format_exc()}")
             
             timer.cancel()  # Breche den Timer ab
-            logger.info("Einfache Flask-App erstellt")
+            logger.info("Einfache Flask-App mit echter Datenbankverbindung erstellt")
             return flask_app
         else:
             # Bei Timeout erstelle eine sehr einfache App ohne Datenbank
@@ -75,6 +77,7 @@ def get_flask_app():
     except Exception as e:
         # Bei anderen Fehlern erstelle ebenfalls eine sehr einfache App
         logger.error(f"Fehler beim Erstellen der Flask-App: {str(e)}")
+        logger.error(f"Stacktrace: {traceback.format_exc()}")
         flask_app = Flask(__name__)
         logger.warning("Sehr einfache Fallback-Flask-App erstellt nach Fehler")
         return flask_app
