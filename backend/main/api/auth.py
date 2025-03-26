@@ -476,11 +476,19 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
         # Erstelle JWT-Token mit flask_jwt_extended
         token = create_access_token(identity=user.id)
         
-        # Erstelle Response mit Token und User-Info
-        return jsonify({
-            'access_token': token,
-            'user': user.to_dict()
-        }), 200
+        # Prüfe ob es ein API-Request ist (Accept: application/json)
+        if request.headers.get('Accept') == 'application/json':
+            # Bei API-Anfragen JSON zurückgeben
+            return jsonify({
+                'access_token': token,
+                'user': user.to_dict()
+            }), 200
+        else:
+            # Bei normalen Anfragen zum Frontend weiterleiten
+            frontend_url = current_app.config.get('FRONTEND_URL', 'https://www.hackthestudy.ch')
+            redirect_url = f"{frontend_url}/auth-callback?token={token}"
+            logger.info(f"Weiterleitung nach erfolgreicher Authentifizierung zu: {redirect_url}")
+            return redirect(redirect_url)
         
     except Exception as e:
         logger.error(f"Fehler bei OAuth Callback Verarbeitung: {str(e)}")
