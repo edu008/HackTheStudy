@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 oauth = OAuth()
 
 def setup_oauth(app):
+    """Initialisiert die OAuth-Konfiguration für die App."""
     # Prüfe zuerst, ob die OAuth-Konfiguration vorhanden ist
     google_client_id = os.getenv('GOOGLE_CLIENT_ID')
     google_client_secret = os.getenv('GOOGLE_CLIENT_SECRET')
@@ -143,53 +144,46 @@ def token_required(f):
 
 @auth_bp.route('/login/<provider>', methods=['GET', 'OPTIONS'])
 def login(provider):
+    """Generische Login-Route für alle OAuth-Provider"""
     if request.method == 'OPTIONS':
         response = current_app.make_response("")
         return response
     
     if provider not in ['google', 'github']:
         return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid provider"}}), 400
-    # Use the exact redirect URI that matches the GitHub OAuth app configuration
+    
+    # Prüfe, ob der Provider konfiguriert ist
+    if not hasattr(oauth, provider):
+        logger.error(f"OAuth Provider {provider} nicht konfiguriert")
+        return jsonify({"success": False, "error": {"code": "PROVIDER_NOT_CONFIGURED", "message": f"Provider {provider} is not configured"}}), 400
+    
+    # Use the exact redirect URI that matches the OAuth app configuration
     redirect_uri = url_for('api.auth.callback', provider=provider, _external=True)
     return oauth.create_client(provider).authorize_redirect(redirect_uri)
 
 @auth_bp.route('/callback/<provider>', methods=['GET', 'OPTIONS'])
 def callback(provider):
+    """Generische Callback-Route für alle OAuth-Provider"""
     if request.method == 'OPTIONS':
         response = current_app.make_response("")
         return response
     
     if provider not in ['google', 'github']:
         return jsonify({"success": False, "error": {"code": "INVALID_PROVIDER", "message": "Invalid provider"}}), 400
-    token = oauth.create_client(provider).authorize_access_token()
-    user_info = get_user_info(provider, token.get('access_token'))
-    if not user_info:
-        return jsonify({"success": False, "error": {"code": "USER_INFO_FAILED", "message": "Failed to get user info"}}), 400
     
-    user = User.query.filter_by(oauth_provider=provider, oauth_id=user_info['id']).first()
-    if not user:
-        existing_user = User.query.filter_by(email=user_info['email']).first()
-        if existing_user:
-            existing_user.oauth_provider = provider
-            existing_user.oauth_id = user_info['id']
-            existing_user.avatar = user_info.get('avatar')
-            user = existing_user
-        else:
-            user = User(email=user_info['email'], name=user_info['name'], avatar=user_info.get('avatar'), oauth_provider=provider, oauth_id=user_info['id'], credits=0)
-            db.session.add(user)
+    try:
+        token = oauth.create_client(provider).authorize_access_token()
+        user_info = get_user_info(provider, token.get('access_token'))
+        if not user_info:
+            return jsonify({"success": False, "error": {"code": "USER_INFO_FAILED", "message": "Failed to get user info"}}), 400
         
-        oauth_token = OAuthToken(user_id=user.id, provider=provider, access_token=token.get('access_token'), refresh_token=token.get('refresh_token'), expires_at=datetime.utcnow() + timedelta(seconds=token.get('expires_in', 3600)))
-        db.session.add(oauth_token)
-        activity = UserActivity(user_id=user.id, activity_type='account', title='Account created' if not existing_user else f'Account linked with {provider}')
-        db.session.add(activity)
-        db.session.commit()
-    
-    jwt_token = jwt.encode({'user_id': user.id, 'exp': datetime.utcnow() + timedelta(hours=24)}, current_app.config['SECRET_KEY'], algorithm='HS256')
-    frontend_url = os.getenv('FRONTEND_URL').strip()
-    if isinstance(jwt_token, bytes):
-        jwt_token = jwt_token.decode('utf-8')
-    jwt_token = jwt_token.strip()
-    return redirect(f"{frontend_url}/auth-callback?token={jwt_token}")
+        return handle_oauth_callback(provider, user_info)
+    except Exception as e:
+        logger.error(f"Fehler bei {provider} OAuth Callback: {str(e)}")
+        return jsonify({
+            'error': f'{provider.capitalize()} authentication failed',
+            'message': str(e)
+        }), 500
 
 @auth_bp.route('/user', methods=['GET', 'OPTIONS'])
 @token_required
@@ -338,53 +332,6 @@ def get_payments():
             "payments": [{"id": p.id, "amount": p.amount, "credits": p.credits, "payment_method": p.payment_method, "transaction_id": p.transaction_id, "status": p.status, "created_at": p.created_at.isoformat()} for p in payments]
         }
     }), 200
-
-@auth_bp.route('/login/google')
-def google_login():
-    """Google OAuth Login Route"""
-    redirect_uri = url_for('api.auth.google_callback', _external=True)
-    return oauth.google.authorize_redirect(redirect_uri)
-
-@auth_bp.route('/login/github')
-def github_login():
-    """GitHub OAuth Login Route"""
-    redirect_uri = url_for('api.auth.github_callback', _external=True)
-    return oauth.github.authorize_redirect(redirect_uri)
-
-@auth_bp.route('/callback/google')
-def google_callback():
-    """Google OAuth Callback Route"""
-    try:
-        token = oauth.google.authorize_access_token()
-        user_info = oauth.google.parse_id_token(token)
-        return handle_oauth_callback('google', user_info)
-    except Exception as e:
-        logger.error(f"Fehler bei Google OAuth Callback: {str(e)}")
-        return jsonify({
-            'error': 'Google authentication failed',
-            'message': str(e)
-        }), 500
-
-@auth_bp.route('/callback/github')
-def github_callback():
-    """GitHub OAuth Callback Route"""
-    try:
-        token = oauth.github.authorize_access_token()
-        resp = oauth.github.get('user')
-        user_info = resp.json()
-        # GitHub liefert keine ID-Token, wir müssen die E-Mail separat abrufen
-        resp = oauth.github.get('user/emails')
-        emails = resp.json()
-        primary_email = next((email['email'] for email in emails if email['primary']), None)
-        if primary_email:
-            user_info['email'] = primary_email
-        return handle_oauth_callback('github', user_info)
-    except Exception as e:
-        logger.error(f"Fehler bei GitHub OAuth Callback: {str(e)}")
-        return jsonify({
-            'error': 'GitHub authentication failed',
-            'message': str(e)
-        }), 500
 
 def handle_oauth_callback(provider: str, user_info: dict):
     """Zentrale Funktion zur Verarbeitung von OAuth-Callbacks"""
