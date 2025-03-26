@@ -54,9 +54,41 @@ if ':' in REDIS_URL and not REDIS_URL.startswith('redis://'):
 # Schreibe Debug-Logs
 print(f"REDIS_URL nach Bereinigung: {REDIS_URL}")
 
-# Setze das bereinigte Ergebnis in die Umgebungsvariablen zurück
+# Bereinige auch die Celery-spezifischen Umgebungsvariablen
+CELERY_BROKER_URL_RAW = os.getenv('CELERY_BROKER_URL', REDIS_URL).strip()
+CELERY_RESULT_BACKEND_RAW = os.getenv('CELERY_RESULT_BACKEND', REDIS_URL).strip()
+
+# Wende die gleiche Reinigungslogik auf Celery-URLs an
+def clean_redis_url(url):
+    if 'redis://http://' in url:
+        host_match = re.search(r'redis://http://([^:/]+)(:\d+)?', url)
+        if host_match:
+            hostname = host_match.group(1)
+            return f"redis://{hostname}:6379/0"
+    
+    if ':' in url and not url.startswith('redis://'):
+        parts = url.split(':')
+        if len(parts) >= 3:
+            hostname = parts[0]
+            redis_port = parts[-1].split('/')[0] if '/' in parts[-1] else parts[-1]
+            redis_port = parts[-2] if parts[-2] == '6379' else redis_port
+            db = parts[-1].split('/')[1] if '/' in parts[-1] else '0'
+            return f"redis://{hostname}:{redis_port}/{db}"
+    
+    return url
+
+CELERY_BROKER_URL = clean_redis_url(CELERY_BROKER_URL_RAW)
+CELERY_RESULT_BACKEND = clean_redis_url(CELERY_RESULT_BACKEND_RAW)
+
+# Setze die bereinigten Werte in die Umgebungsvariablen zurück
 os.environ['REDIS_HOST'] = REDIS_HOST
 os.environ['REDIS_URL'] = REDIS_URL
+os.environ['CELERY_BROKER_URL'] = CELERY_BROKER_URL
+os.environ['CELERY_RESULT_BACKEND'] = CELERY_RESULT_BACKEND
+
+# Schreibe weitere Debug-Logs
+print(f"CELERY_BROKER_URL nach Bereinigung: {CELERY_BROKER_URL}")
+print(f"CELERY_RESULT_BACKEND nach Bereinigung: {CELERY_RESULT_BACKEND}")
 
 REDIS_TTL_DEFAULT = 14400  # 4 Stunden Standard-TTL für Redis-Einträge
 REDIS_TTL_SHORT = 3600    # 1 Stunde für kurzlebige Einträge
@@ -65,10 +97,6 @@ REDIS_FALLBACK_URLS = os.getenv('REDIS_FALLBACK_URLS', '').strip()
 # API-Konfiguration
 USE_API_URL = os.getenv('USE_API_URL', '').strip()
 API_HOST = os.getenv('API_HOST', '').strip()
-
-# Celery-Konfiguration
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', REDIS_URL)
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', REDIS_URL)
 
 # Health-Check-Konfiguration
 HEALTH_PORT = int(os.environ.get('HEALTH_PORT', 8080))

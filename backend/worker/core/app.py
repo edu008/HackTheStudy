@@ -90,26 +90,23 @@ def create_celery_app(redis_url=None):
         Eine konfigurierte Celery-Instanz
     """
     if not redis_url:
-        from config import REDIS_URL
-        redis_url = REDIS_URL
+        from config import REDIS_URL, CELERY_BROKER_URL, CELERY_RESULT_BACKEND
+        # Verwende bevorzugt die bereits bereinigte URL aus der config
+        broker_url = CELERY_BROKER_URL
+        backend_url = CELERY_RESULT_BACKEND
+        
+        # Log-Ausgabe für Debugging
+        logger.info(f"Verwende Redis-URL für Celery: Broker={broker_url}, Backend={backend_url}")
+    else:
+        # Falls eine URL direkt übergeben wurde
+        broker_url = redis_url
+        backend_url = redis_url
     
-    # URL-Bereinigung für den Fall, dass DigitalOcean falsch formatierte URLs liefert
-    if redis_url.startswith('redis://http://'):
-        logger.warning(f"Korrigiere fehlerhafte Redis-URL: {redis_url}")
-        # Extrahiere den Host aus der URL (z.B. "redis://http://example.com:8080:6379/0")
-        import re
-        host_match = re.search(r'redis://http://([^:/]+)(:\d+)?', redis_url)
-        if host_match:
-            host = host_match.group(1)
-            redis_url = f"redis://{host}:6379/0"
-            logger.info(f"Bereinigte Redis-URL: {redis_url}")
-    
-    logger.info(f"Verwende Redis-URL für Celery: {redis_url}")
-    
+    # Erstelle die Celery-App mit den bereinigten URLs
     celery_app = Celery(
         'backend.worker',
-        broker=redis_url,
-        backend=redis_url
+        broker=broker_url,
+        backend=backend_url
     )
     
     # Standard-Konfiguration
