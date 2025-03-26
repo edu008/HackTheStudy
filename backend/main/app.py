@@ -73,6 +73,8 @@ from bootstrap.extensions import db, cache, migrate, jwt, cors
 # Erstelle die Flask-Anwendung mit der Factory
 app = create_app()
 
+# Die CORS-Konfiguration findet jetzt nur in app_factory.py statt
+
 # Definiere die Health-Check-Endpunkte direkt in der app.py, um sicherzustellen, dass sie verfügbar sind
 @app.route('/api/v1/simple-health', methods=['GET'])
 def simple_health():

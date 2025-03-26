@@ -33,10 +33,19 @@ def create_app(config_name='default'):
     # Konfiguration laden
     app.config.from_object(config[config_name])
     
-    # CORS konfigurieren
-    origins = os.getenv('CORS_ORIGINS', '').split(',')
-    origins = [origin.strip() for origin in origins if origin.strip()]
-    CORS(app, resources={r"/api/*": {"origins": origins}})
+    # CORS zentral und vollständig konfigurieren
+    # Erlaube alle Origins und füge wichtige Header für Preflight-Requests hinzu
+    CORS(app, 
+         supports_credentials=True, 
+         resources={r"/*": {
+             "origins": "*",
+             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+             "expose_headers": ["Content-Type", "Authorization"],
+             "max_age": 86400  # 24 Stunden Cache für Preflight-Requests
+         }}
+    )
+    app.logger.info("✅ CORS für alle Origins (*) konfiguriert mit Preflight-Support")
     
     # Datenbank initialisieren
     db.init_app(app)
@@ -168,23 +177,6 @@ def _register_blueprints(app: Flask):
         logger.info("API-Blueprints erfolgreich registriert")
     except Exception as e:
         logger.error(f"Fehler beim Registrieren der Blueprints: {str(e)}")
-
-def _setup_cors(app: Flask):
-    """Richtet CORS für die App ein."""
-    try:
-        from flask_cors import CORS
-        origins = setup_cors_origins()
-        CORS(app, resources={
-            r"/*": {
-                "origins": origins,
-                "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-                "allow_headers": ["Content-Type", "Authorization"],
-                "supports_credentials": True
-            }
-        })
-        logger.info(f"CORS für Origins {origins} konfiguriert")
-    except Exception as e:
-        logger.error(f"Fehler beim Einrichten von CORS: {str(e)}")
 
 def _setup_health_monitoring(app: Flask):
     """Startet das Health-Monitoring."""

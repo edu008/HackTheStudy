@@ -16,64 +16,17 @@ logger = logging.getLogger('HackTheStudy.config.env_handler')
 
 def setup_cors_origins():
     """
-    Ermittelt CORS-Origins aus verschiedenen Umgebungsvariablen und fasst sie zusammen.
-    Gibt eine normalisierte Liste von Ursprüngen zurück.
-    Optimiert für DigitalOcean App Platform.
+    Ermittelt CORS-Origins aus verschiedenen Umgebungsvariablen.
+    Diese Funktion wird beibehalten für API-Logging und Umgebungsvariablen-Setzung,
+    aber die eigentliche CORS-Konfiguration erfolgt in app_factory.py.
     """
-    cors_origins = []
-    sources = []
+    # Hinweis: Wir geben immer '*' zurück, aber behalten die Funktion für Logging-Zwecke bei
+    logger.info("CORS verwendet jetzt Wildcard-Origin (*) für alle API-Aufrufe")
     
-    # 1. Prüfe die primäre CORS_ORIGINS Variable
-    if 'CORS_ORIGINS' in os.environ:
-        raw_origins = os.environ['CORS_ORIGINS']
-        # Trenne die Ursprünge anhand von Kommas und entferne führende/nachfolgende Leerzeichen
-        origins = [origin.strip() for origin in raw_origins.split(',') if origin.strip()]
-        if origins:
-            cors_origins.extend(origins)
-            sources.append('CORS_ORIGINS')
-            logger.info(f"CORS-Origins aus CORS_ORIGINS-Umgebungsvariable: {', '.join(origins)}")
+    # Setze die CORS_ORIGINS Umgebungsvariable für andere Komponenten
+    os.environ['CORS_ORIGINS'] = '*'
     
-    # 2. Prüfe API_URL, falls vorhanden (für lokale Entwicklung nützlich)
-    if 'API_URL' in os.environ and os.environ['API_URL']:
-        api_url = os.environ['API_URL'].strip()
-        if api_url and api_url not in cors_origins:
-            cors_origins.append(api_url)
-            sources.append('API_URL')
-            logger.info(f"CORS-Origin aus API_URL-Umgebungsvariable: {api_url}")
-    
-    # 3. Füge localhost hinzu für Entwicklungszwecke
-    is_development = os.environ.get('ENVIRONMENT', '').lower() == 'development' or \
-                     os.environ.get('FLASK_DEBUG', '').lower() == 'true'
-    
-    if is_development:
-        dev_origins = [
-            'http://localhost:5000',
-            'http://127.0.0.1:5000'
-        ]
-        
-        for dev_origin in dev_origins:
-            if dev_origin not in cors_origins:
-                cors_origins.append(dev_origin)
-                logger.info(f"Entwicklungs-CORS-Origin hinzugefügt: {dev_origin}")
-    
-    # 4. Wenn keine Origins gefunden wurden, füge den Wildcard-Ursprung hinzu (nur für Entwicklung)
-    if not cors_origins:
-        if is_development:
-            cors_origins.append('*')
-            sources.append('Entwicklungsmodus-Wildcard')
-            logger.info("CORS-Wildcard (*) wird im Entwicklungsmodus verwendet")
-        else:
-            # In Produktion fügen wir eine sichere Standard-Domain hinzu
-            cors_origins.append('https://www.hackthestudy.ch')
-            sources.append('Produktions-Standard')
-            logger.info("Standard-CORS-Origin für Produktion verwendet: https://www.hackthestudy.ch")
-    
-    # Setze die zusammengeführten Origins zurück in die Umgebungsvariable
-    os.environ['CORS_ORIGINS'] = ', '.join(cors_origins)
-    
-    logger.info(f"CORS-Konfiguration abgeschlossen. Quellen: {', '.join(sources)}")
-    
-    return cors_origins
+    return ['*']
 
 def load_env(env_file=None):
     """
