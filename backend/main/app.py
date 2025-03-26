@@ -6,6 +6,13 @@ HackTheStudy Backend API.
 Hauptanwendungsdatei, definiert die Flask-App und Basis-Routen.
 """
 
+# Importiere zuerst die Gevent-Konfiguration für Monkey-Patching
+try:
+    from bootstrap.gevent_config import logger as gevent_logger
+    gevent_logger.info("Gevent-Konfiguration in app.py importiert")
+except ImportError:
+    pass
+
 import os
 import sys
 import json

@@ -290,6 +290,24 @@ def _register_base_routes(app: Flask):
             "environment": os.environ.get('ENVIRONMENT', 'production')
         }), 200
     
+    # Dupliziere den Health-Check unter standardisiertem Pfad
+    @app.route('/health', methods=['GET'])
+    def root_health_check():
+        """
+        Haupt-Health-Check-Endpunkt unter einheitlichem Pfad.
+        Sollte in allen Umgebungen gleich sein.
+        """
+        log_step("Root-Health", "SUCCESS", f"Anfrage von {request.remote_addr}")
+        
+        return jsonify({
+            "status": "healthy",
+            "message": "API-Service ist aktiv",
+            "timestamp": datetime.now().isoformat(),
+            "container_type": os.environ.get('CONTAINER_TYPE', 'unknown'),
+            "version": "1.0.0",
+            "environment": os.environ.get('ENVIRONMENT', 'production')
+        }), 200
+    
     # Error Handler für häufige HTTP-Fehler
     @app.errorhandler(404)
     def not_found(e):

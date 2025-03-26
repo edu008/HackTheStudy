@@ -4,8 +4,9 @@ from functools import wraps
 import os
 from flask_cors import CORS
 
-# API Blueprint erstellen
+# API Blueprints erstellen
 api_bp = Blueprint('api', __name__)
+api_v1_bp = Blueprint('api_v1', __name__)
 
 # Wir verwenden jetzt nur das OAuth-Objekt aus auth.py
 logger = logging.getLogger(__name__)
@@ -28,8 +29,9 @@ def setup_cors_for_blueprint(blueprint):
     logger.info(f"CORS für Blueprint {blueprint.name} konfiguriert")
     return blueprint
 
-# Konfiguriere CORS für den API-Blueprint
+# Konfiguriere CORS für die API-Blueprints
 setup_cors_for_blueprint(api_bp)
+setup_cors_for_blueprint(api_v1_bp)
 
 # Exportiere die Fehlerbehandlungskomponenten für einfachen Import in anderen Modulen
 from .error_handler import (
@@ -49,16 +51,17 @@ from .auth import auth_bp, setup_oauth
 from .payment import payment_bp
 from .admin import admin_bp
 
-# Registriere den auth Blueprint mit CORS
-api_bp.register_blueprint(auth_bp, url_prefix='/auth')
+# Registriere die Sub-Blueprints mit CORS für beide API-Versionen
+for bp in [api_bp, api_v1_bp]:
+    bp.register_blueprint(auth_bp, url_prefix='/auth')
+    bp.register_blueprint(payment_bp, url_prefix='/payment')
+    bp.register_blueprint(admin_bp, url_prefix='/admin')
 
-# Registriere den payment Blueprint mit CORS
-api_bp.register_blueprint(payment_bp, url_prefix='/payment')
+# Registriere v1 Blueprint mit dem Hauptblueprint
+api_bp.register_blueprint(api_v1_bp, url_prefix='/v1')
 
-# Registriere die Admin-Blueprint mit CORS
-api_bp.register_blueprint(admin_bp, url_prefix='/admin')
-
-# Füge eine Umleitung für /api/v1/ hinzu
+# Behalte die Umleitung für Abwärtskompatibilität bei
 @api_bp.route('/v1/<path:path>')
 def redirect_v1(path):
+    logger.info(f"Umleitung von /api/v1/{path} zu /api/{path}")
     return redirect(f'/api/{path}', code=301)
