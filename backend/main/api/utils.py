@@ -1635,38 +1635,49 @@ def check_and_manage_user_sessions(user_id, max_sessions=5, session_to_exclude=N
                             f"finalization_complete:{session_to_remove.session_id}"
                         ]
                         
-                        # Verwende Redis pipeline für effizientes Löschen
-                        pipeline = redis_client.pipeline()
-                        for key in keys_to_delete:
-                            pipeline.delete(key)
-                        pipeline.execute()
-                        
-                        AppLogger.structured_log(
-                            "INFO",
-                            f"Redis-Daten für Session {session_to_remove.session_id} gelöscht",
-                            user_id=user_id,
-                            session_id=session_to_remove.session_id,
-                            component="check_and_manage_user_sessions"
-                        )
-                    except Exception as redis_error:
+                        # Überprüfe, ob redis_client existiert und initialisiert ist
+                        if redis_client:
+                            try:
+                                # Verwende Redis pipeline für effizientes Löschen
+                                pipeline = redis_client.pipeline()
+                                for key in keys_to_delete:
+                                    pipeline.delete(key)
+                                pipeline.execute()
+                                
+                                AppLogger.structured_log(
+                                    "INFO",
+                                    f"Redis-Daten für Session {session_to_remove.session_id} gelöscht",
+                                    user_id=user_id,
+                                    session_id=session_to_remove.session_id,
+                                    component="check_and_manage_user_sessions"
+                                )
+                            except Exception as redis_error:
+                                AppLogger.structured_log(
+                                    "ERROR",
+                                    f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
+                                    user_id=user_id,
+                                    session_id=session_to_remove.session_id,
+                                    component="check_and_manage_user_sessions",
+                                    exception=traceback.format_exc()
+                                )
+                        else:
+                            AppLogger.structured_log(
+                                "WARNING",
+                                f"Redis-Client nicht verfügbar, Redis-Daten für Session {session_to_remove.session_id} konnten nicht gelöscht werden",
+                                user_id=user_id,
+                                session_id=session_to_remove.session_id,
+                                component="check_and_manage_user_sessions"
+                            )
+                    except Exception as e:
+                        db.session.rollback()
                         AppLogger.structured_log(
                             "ERROR",
-                            f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
+                            f"Fehler beim Löschen des Uploads: {str(e)}",
                             user_id=user_id,
                             session_id=session_to_remove.session_id,
                             component="check_and_manage_user_sessions",
                             exception=traceback.format_exc()
                         )
-                except Exception as e:
-                    db.session.rollback()
-                    AppLogger.structured_log(
-                        "ERROR",
-                        f"Fehler beim Löschen des Uploads: {str(e)}",
-                        user_id=user_id,
-                        session_id=session_to_remove.session_id,
-                        component="check_and_manage_user_sessions",
-                        exception=traceback.format_exc()
-                    )
     
     # Gibt TRUE zurück, wenn Sessions gelöscht wurden
     return sessions_removed

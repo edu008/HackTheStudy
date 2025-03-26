@@ -278,7 +278,7 @@ def register_task(celery_app):
                                 id=str(uuid.uuid4()),
                                 user_id=user_id,
                                 session_id=session_id,
-                                file_name_1=f"Upload vom {datetime.utcnow().strftime('%d.%m.%Y %H:%M')}",
+                                file_name_1="", # Wird später mit extrahiertem Text gefüllt
                                 processing_status="processing",
                                 upload_date=datetime.utcnow(),
                                 created_at=datetime.utcnow(),
@@ -385,6 +385,13 @@ def register_task(celery_app):
                             cleaned_text = clean_text_for_database(combined_text)
                             token_count = count_tokens(cleaned_text)
                             logger.info(f"🧹 Text bereinigt, Token-Anzahl: {token_count}")
+                            
+                            # Speichere den gereinigten Text im file_name_1-Feld
+                            upload.file_name_1 = cleaned_text  # Der extrahierte Text wird direkt in file_name_1 gespeichert
+                            upload.token_count = token_count
+                            db.session.commit()
+                            logger.info(f"💾 Extrahierter Text ({len(cleaned_text)} Zeichen) in file_name_1 gespeichert")
+                            
                             # Status aktualisieren
                             safe_redis_set(f"processing_progress:{session_id}", json.dumps({
                                 "progress": 40,
@@ -586,12 +593,14 @@ def register_task(celery_app):
                             # Upload-Datensatz aktualisieren
                             upload = Upload.query.filter_by(session_id=session_id).first()
                             if upload:
-                                upload.content = doc_type  # Nur den Dokumenttyp im Content-Feld speichern
+                                # Der extrahierte Text ist bereits in file_name_1 gespeichert
+                                # Speichere den Dokumenttyp im content-Feld
+                                upload.content = doc_type  # Dokumenttyp im content-Feld speichern
                                 upload.processing_status = "completed"
                                 upload.last_used_at = db.func.current_timestamp()
                                 db.session.commit()
                                 
-                                logger.info(f"💾 Upload-Status in der Datenbank auf 'completed' gesetzt, Dokumenttyp: {doc_type}")
+                                logger.info(f"💾 Upload-Status in der Datenbank auf 'completed' gesetzt, Dokumenttyp: {doc_type} in content-Feld gespeichert")
                             else:
                                 logger.error(f"❌ Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank!")
                                 error_message = f"Upload-Eintrag für Session {session_id} nicht gefunden in der Datenbank."
@@ -679,8 +688,21 @@ def register_task(celery_app):
                                                     f"all_data_stored:{session_to_delete}",
                                                     f"finalization_complete:{session_to_delete}"
                                                 ]
-                                                for key in redis_keys:
-                                                    redis_client.delete(key)
+                                                
+                                                # Überprüfe, ob redis_client existiert/initialisiert ist
+                                                if redis_client:
+                                                    try:
+                                                        # Verwende Redis pipeline für effizientes Löschen
+                                                        pipeline = redis_client.pipeline()
+                                                        for key in redis_keys:
+                                                            pipeline.delete(key)
+                                                        pipeline.execute()
+                                                        logger.info(f"Redis-Daten für Session {session_to_delete} gelöscht")
+                                                    except Exception as redis_error:
+                                                        logger.error(f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}")
+                                                        logger.error(traceback.format_exc())
+                                                else:
+                                                    logger.warning(f"Redis-Client nicht verfügbar, konnte Redis-Daten für Session {session_to_delete} nicht löschen")
                                                     
                                             except Exception as delete_error:
                                                 # Bei einem Fehler: Rollback nur für diesen Upload und mit dem nächsten fortfahren
@@ -706,7 +728,7 @@ def register_task(celery_app):
                                 "topics": [t.name for t in Topic.query.filter_by(upload_id=upload.id).all()],
                                 "language": document_language,
                                 "token_count": token_count,
-                                "document_type": doc_type,
+                                "document_type": doc_type,  # Der erkannte Dokumenttyp wird in Redis gespeichert
                                 "flashcards_count": Flashcard.query.filter_by(upload_id=upload.id).count(),
                                 "questions_count": Question.query.filter_by(upload_id=upload.id).count()
                             }

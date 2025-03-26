@@ -211,6 +211,13 @@ def upload_file():
                         # Commit der Änderungen sofort für jeden Upload
                         db.session.commit()
                         
+                        AppLogger.structured_log(
+                            "INFO",
+                            f"Upload {upload_id} (session_id={session_id}) erfolgreich gelöscht",
+                            user_id=user_id,
+                            component="session_management"
+                        )
+                        
                         # Lösche auch zugehörige Redis-Daten
                         keys_to_delete = [
                             f"processing_status:{session_id}",
@@ -227,15 +234,36 @@ def upload_file():
                             f"finalization_complete:{session_id}"
                         ]
                         
-                        for key in keys_to_delete:
-                            redis_client.delete(key)
-                        
-                        AppLogger.structured_log(
-                            "INFO",
-                            f"Upload {upload_id} (session_id={session_id}) erfolgreich gelöscht",
-                            user_id=user_id,
-                            component="session_management"
-                        )
+                        # Überprüfe, ob redis_client existiert und initialisiert ist
+                        if redis_client:
+                            try:
+                                # Verwende Redis pipeline für effizientes Löschen
+                                pipeline = redis_client.pipeline()
+                                for key in keys_to_delete:
+                                    pipeline.delete(key)
+                                pipeline.execute()
+                                
+                                AppLogger.structured_log(
+                                    "INFO",
+                                    f"Redis-Daten für Session {session_id} gelöscht",
+                                    user_id=user_id,
+                                    component="session_management"
+                                )
+                            except Exception as redis_error:
+                                AppLogger.structured_log(
+                                    "ERROR",
+                                    f"Fehler beim Löschen der Redis-Daten: {str(redis_error)}",
+                                    user_id=user_id,
+                                    component="session_management",
+                                    exception=traceback.format_exc()
+                                )
+                        else:
+                            AppLogger.structured_log(
+                                "WARNING",
+                                f"Redis-Client nicht verfügbar, Redis-Daten für Session {session_id} konnten nicht gelöscht werden",
+                                user_id=user_id,
+                                component="session_management"
+                            )
                     except Exception as e:
                         db.session.rollback()
                         AppLogger.structured_log(
@@ -453,8 +481,7 @@ def get_results(session_id):
                         if "main_topic" in result_data:
                             main_topic_name = result_data["main_topic"]
                         
-                        # Prüfe, ob der Upload in der Datenbank existiert, um sicherzustellen,
-                        # dass die Daten vollständig gespeichert wurden
+                        # Prüfe, ob der Upload in der Datenbank existiert und vollständig abgeschlossen ist
                         upload = Upload.query.filter_by(session_id=session_id).first()
                         if not upload or upload.processing_status != 'completed':
                             logger.info(f"Datenbank-Upload noch nicht abgeschlossen für Session {session_id}, Status: {upload.processing_status if upload else 'nicht gefunden'}")
@@ -465,6 +492,30 @@ def get_results(session_id):
                                 "detail": "Ergebnisse werden finalisiert"
                             }), 200
                         
+                        # WICHTIG: Überprüfe zusätzlich, ob die Daten tatsächlich in der Datenbank verfügbar sind
+                        topics_count = Topic.query.filter_by(upload_id=upload.id).count()
+                        flashcards_count = Flashcard.query.filter_by(upload_id=upload.id).count()
+                        
+                        if topics_count == 0:
+                            logger.info(f"Keine Topics in der Datenbank für Session {session_id} gefunden, obwohl Status 'completed' ist")
+                            return jsonify({
+                                "status": "processing",
+                                "message": "Daten werden in Datenbank gespeichert...",
+                                "progress": 98,
+                                "detail": "Fast fertig"
+                            }), 200
+                            
+                        # Zusätzliche Prüfung: Ist der Finalisierungs-Flag gesetzt?
+                        finalization_complete = redis_client.get(f"finalization_complete:{session_id}")
+                        if not finalization_complete:
+                            logger.info(f"Finalisierung noch nicht abgeschlossen für Session {session_id}")
+                            return jsonify({
+                                "status": "processing",
+                                "message": "Finalisierung läuft...",
+                                "progress": 99,
+                                "detail": "Letzte Schritte"
+                            }), 200
+                            
                         # Aktualisiere den last_used_at-Zeitstempel
                         upload.last_used_at = db.func.current_timestamp()
                         db.session.commit()
@@ -589,14 +640,27 @@ def get_results(session_id):
                         "detail": "Ergebnisse werden in Datenbank gespeichert"
                     }), 200
                 
+                # Warte auf das Finalisierungs-Flag, bevor Daten zurückgegeben werden
+                finalization_key = f"finalization_complete:{session_id}"
+                finalization_complete = redis_client.get(finalization_key)
+                
+                if not finalization_complete:
+                    # Wenn kein Finalisierungs-Flag existiert, warte weiter
+                    logger.info(f"Finalisierungsprozess noch nicht abgeschlossen für Session {session_id}")
+                    return jsonify({
+                        "status": "processing", 
+                        "message": "Daten werden finalisiert...",
+                        "progress": 98
+                    }), 200
+                
                 # Einführung einer kurzen Verzögerung, um sicherzustellen, dass alle Daten
-                # vollständig in der Datenbank gespeichert wurden (z.B. Verbindungen)
-                finalization_key = f"finalization_timestamp:{session_id}"
-                finalization_timestamp = redis_client.get(finalization_key)
+                # vollständig in der Datenbank gespeichert wurden
+                finalization_timestamp_key = f"finalization_timestamp:{session_id}"
+                finalization_timestamp = redis_client.get(finalization_timestamp_key)
                 
                 if not finalization_timestamp:
                     # Wenn kein Zeitstempel existiert, setze ihn jetzt
-                    redis_client.set(finalization_key, str(time.time()), ex=3600)  # 1 Stunde Gültigkeit
+                    redis_client.set(finalization_timestamp_key, str(time.time()), ex=3600)  # 1 Stunde Gültigkeit
                     logger.info(f"Erster Abruf nach Abschluss für Session {session_id}, setze Finalisierungs-Zeitstempel")
                     return jsonify({
                         "status": "processing", 
@@ -608,9 +672,9 @@ def get_results(session_id):
                     finalization_time = float(finalization_timestamp.decode('utf-8'))
                     elapsed_time = time.time() - finalization_time
                     
-                    # Füge eine kleine Verzögerung hinzu (z.B. 1-2 Sekunden), um sicherzustellen,
+                    # Füge eine kleine Verzögerung hinzu (z.B. 2-3 Sekunden), um sicherzustellen,
                     # dass alle Transaktionen abgeschlossen sind
-                    FINALIZATION_DELAY = 2  # Sekunden
+                    FINALIZATION_DELAY = 3  # Sekunden
                     if elapsed_time < FINALIZATION_DELAY:
                         logger.info(f"Warte auf Finalisierung: {elapsed_time:.2f}/{FINALIZATION_DELAY} Sekunden vergangen")
                         return jsonify({
@@ -621,16 +685,30 @@ def get_results(session_id):
                     else:
                         logger.info(f"Finalisierungsverzögerung abgeschlossen ({elapsed_time:.2f} s), liefere Ergebnisse")
                         # Lösche den Finalisierungs-Zeitstempel, da er nicht mehr benötigt wird
-                        redis_client.delete(finalization_key)
+                        redis_client.delete(finalization_timestamp_key)
             except Exception as e:
                 logger.error(f"Fehler bei der Datenprüfung: {str(e)}")
-                # Bei einem Fehler geben wir trotzdem die Daten zurück, sofern vorhanden
+                # Bei einem Fehler geben wir weiterhin "processing" zurück
+                return jsonify({
+                    "status": "processing",
+                    "message": "Fehler bei der Datenprüfung, versuche es erneut...",
+                    "progress": 95
+                }), 200
             
             # Frage die verarbeiteten Daten ab
             flashcards = Flashcard.query.filter_by(upload_id=upload.id).all()
             questions = Question.query.filter_by(upload_id=upload.id).all()
             topics = Topic.query.filter_by(upload_id=upload.id).all()
             connections = Connection.query.filter_by(upload_id=upload.id).all()
+            
+            # Grundlegende Konsistenzprüfung
+            if len(topics) == 0:
+                logger.warning(f"Keine Topics gefunden für Session {session_id}, obwohl Status 'completed' ist")
+                return jsonify({
+                    "status": "processing",
+                    "message": "Daten werden noch vorbereitet...",
+                    "progress": 96
+                }), 200
             
             # Aktualisiere den last_used_at-Zeitstempel
             upload.last_used_at = db.func.current_timestamp()
