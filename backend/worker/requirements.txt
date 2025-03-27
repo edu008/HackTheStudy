@@ -71,8 +71,6 @@ colorama==0.4.6          # Farbiges Terminal-Logging
 # Zahlungs-Integration
 stripe==2.65.0           # Stripe-Zahlungen
 
-# Dateiformatunterstützung
-pdfminer.six==20231228   # PDF-Textextraktion
 
 # Textverarbeitungsbibliotheken
 bleach==6.1.0            # HTML-Bereinigung
