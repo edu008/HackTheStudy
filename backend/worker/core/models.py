@@ -3,7 +3,9 @@ Datenbank-Modelle für den Worker-Microservice.
 Diese Datei verwendet die gleichen Modelle wie der Hauptserver, um mit der Datenbank zu interagieren.
 """
 import os
+import json
 import logging
+from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
@@ -13,6 +15,105 @@ logger.info("Worker-spezifische models.py mit echter DB-Verbindung geladen")
 
 # SQLAlchemy-Instanz erstellen
 db = SQLAlchemy()
+
+# Dummy-Definition für SQLAlchemy-Kompatibilität, da der Worker nur mit Redis arbeitet
+class DummyDatabase:
+    def __init__(self):
+        self.Model = Model
+    
+    def create_all(self, *args, **kwargs):
+        logger.info("Dummy-Datenbank create_all aufgerufen - wird ignoriert im Worker")
+        pass
+    
+    def session(self, *args, **kwargs):
+        logger.info("Dummy-Datenbank session aufgerufen - wird ignoriert im Worker")
+        return DummySession()
+
+class DummySession:
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+    
+    def commit(self):
+        pass
+    
+    def rollback(self):
+        pass
+    
+    def close(self):
+        pass
+
+class Model:
+    """
+    Basisklasse für alle Modelle im Worker-Microservice.
+    Diese Klasse dient nur der API-Kompatibilität, da der Worker
+    vorrangig mit Redis arbeitet und keine eigene Datenbank verwendet.
+    """
+    id = None
+    
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Konvertiert das Modell in ein Dictionary."""
+        result = {}
+        for key in dir(self):
+            # Überspringe private und dunder Methoden und Eigenschaften
+            if key.startswith('_'):
+                continue
+            
+            value = getattr(self, key)
+            # Überspringe Methoden
+            if callable(value):
+                continue
+                
+            # Sonderbehandlung für datetime-Objekte
+            if isinstance(value, datetime):
+                value = value.isoformat()
+                
+            result[key] = value
+            
+        return result
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Model':
+        """Erstellt eine Modell-Instanz aus einem Dictionary."""
+        return cls(**data)
+    
+    @classmethod
+    def query(cls):
+        """
+        Dummy-Methode für Kompatibilität mit Flask-SQLAlchemy.
+        """
+        return DummyQuery(cls)
+
+class DummyQuery:
+    def __init__(self, model_class):
+        self.model_class = model_class
+        
+    def filter_by(self, **kwargs):
+        """
+        Dummy-Implementation von filter_by.
+        """
+        return self
+        
+    def first(self):
+        """
+        Dummy-Implementation von first.
+        """
+        return None
+        
+    def all(self):
+        """
+        Dummy-Implementation von all.
+        """
+        return []
+
+# Erstelle eine globale Instanz der Dummy-Datenbank
+db = DummyDatabase()
 
 # Definiere die gleichen Modelle wie im Hauptserver
 class User(db.Model):

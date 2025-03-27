@@ -36,7 +36,13 @@ ENV PYTHONUNBUFFERED=1 \
     DO_APP_PLATFORM=true \
     USE_COLORED_LOGS=false \
     DIGITAL_OCEAN_DEPLOYMENT=true \
-    PORT=8080
+    PORT=8080 \
+    # Redis- und OpenAI-Cache-Konfiguration
+    REDIS_URL=redis://localhost:6379/0 \
+    REDIS_HOST=localhost \
+    OPENAI_CACHE_ENABLED=true \
+    OPENAI_CACHE_TTL=86400 \
+    OPENAI_MAX_RETRIES=3
 
 # Installiere nur die für Laufzeit benötigten Abhängigkeiten
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -75,7 +81,11 @@ RUN sed -i 's/bind 127.0.0.1/bind 0.0.0.0/g' /etc/redis/redis.conf \
     && sed -i 's|logfile /var/log/redis/redis-server.log|logfile ""|g' /etc/redis/redis.conf \
     && sed -i 's/databases 16/databases 4/g' /etc/redis/redis.conf \
     && sed -i 's/# maxmemory-policy noeviction/maxmemory-policy allkeys-lru/g' /etc/redis/redis.conf \
-    && sed -i 's/# maxmemory <bytes>/maxmemory 128mb/g' /etc/redis/redis.conf
+    && sed -i 's/# maxmemory <bytes>/maxmemory 256mb/g' /etc/redis/redis.conf \
+    && sed -i 's/save 900 1/save 3600 1/g' /etc/redis/redis.conf \
+    && sed -i 's/save 300 10/save ""/' /etc/redis/redis.conf \
+    && sed -i 's/save 60 10000/save ""/' /etc/redis/redis.conf \
+    && sed -i 's/# requirepass foobared/requirepass hackthestudy_redis_password/g' /etc/redis/redis.conf
 
 # Kopiere die Wheels und requirements.txt aus dem Builder-Stage
 COPY --from=builder /wheels /wheels
@@ -114,7 +124,7 @@ RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
 RUN chown -R appuser:appuser /app /var/log
 
 # Ports freigeben
-EXPOSE 8080 8081
+EXPOSE 8080 8081 6379
 
 # Healthcheck für DigitalOcean App Platform - prüft den Health-Check-Server
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \

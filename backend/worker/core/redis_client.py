@@ -40,12 +40,12 @@ def set_key(key: str, value: Any, expire_seconds: Optional[int] = None) -> bool:
 
 def get_key(key: str, default: Any = None, as_json: bool = False) -> Any:
     """
-    Liest einen Wert aus Redis.
+    Holt einen Wert aus Redis.
     
     Args:
         key: Redis-Schlüssel
         default: Standardwert, falls Schlüssel nicht existiert
-        as_json: Falls True, wird der Wert als JSON interpretiert
+        as_json: Ob der Wert als JSON interpretiert werden soll
     
     Returns:
         Wert aus Redis oder default
@@ -56,19 +56,22 @@ def get_key(key: str, default: Any = None, as_json: bool = False) -> Any:
         
         if value is None:
             return default
-        
-        # Decodieren
-        str_value = value.decode('utf-8')
-        
+            
         # Als JSON interpretieren, falls gewünscht
-        if as_json:
+        if as_json and isinstance(value, (str, bytes)):
             try:
-                return json.loads(str_value)
-            except:
-                logger.warning(f"Konnte Redis-Wert für {key} nicht als JSON interpretieren")
+                if isinstance(value, bytes):
+                    value = value.decode('utf-8')
+                return json.loads(value)
+            except json.JSONDecodeError:
+                logger.warning(f"Konnte Redis-Wert für Schlüssel {key} nicht als JSON interpretieren")
                 return default
         
-        return str_value
+        # Bytes in String umwandeln
+        if isinstance(value, bytes):
+            value = value.decode('utf-8')
+            
+        return value
     except Exception as e:
         logger.error(f"Fehler beim Lesen aus Redis ({key}): {str(e)}")
         return default
@@ -90,6 +93,43 @@ def delete_key(key: str) -> bool:
     except Exception as e:
         logger.error(f"Fehler beim Löschen aus Redis ({key}): {str(e)}")
         return False
+
+def exists_key(key: str) -> bool:
+    """
+    Prüft, ob ein Schlüssel in Redis existiert.
+    
+    Args:
+        key: Redis-Schlüssel
+    
+    Returns:
+        True, wenn der Schlüssel existiert, sonst False
+    """
+    try:
+        client = get_redis_client()
+        result = client.exists(key)
+        return result > 0
+    except Exception as e:
+        logger.error(f"Fehler beim Prüfen der Existenz in Redis ({key}): {str(e)}")
+        return False
+
+def increment_key(key: str, amount: int = 1) -> Optional[int]:
+    """
+    Inkrementiert einen Zählerwert in Redis.
+    
+    Args:
+        key: Redis-Schlüssel
+        amount: Zu inkrementierender Betrag
+    
+    Returns:
+        Neuer Wert nach Inkrementierung oder None bei Fehler
+    """
+    try:
+        client = get_redis_client()
+        result = client.incrby(key, amount)
+        return result
+    except Exception as e:
+        logger.error(f"Fehler beim Inkrementieren in Redis ({key}): {str(e)}")
+        return None
 
 def add_to_list(list_key: str, value: Any) -> bool:
     """
@@ -113,4 +153,14 @@ def add_to_list(list_key: str, value: Any) -> bool:
         return result > 0
     except Exception as e:
         logger.error(f"Fehler beim Hinzufügen zur Liste ({list_key}): {str(e)}")
-        return False 
+        return False
+
+# Exportierte Funktionen
+__all__ = [
+    'set_key',
+    'get_key',
+    'delete_key',
+    'exists_key',
+    'increment_key',
+    'add_to_list'
+] 

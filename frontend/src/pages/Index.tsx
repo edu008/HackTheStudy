@@ -356,21 +356,17 @@ const Index = () => {
 
   // Handle upload success
   const handleUploadSuccess = (data: UploadResponse) => {
-    // Setze zunächst die grundlegenden Daten
+    // Setze zunächst die grundlegenden Daten aus dem Upload
     setFlashcards(data.flashcards || []);
     setQuestions(data.questions || []);
     setSessionId(data.session_id);
-
-    // Wenn eine Session-ID vorhanden ist, lade die vollständigen Daten inklusive ConceptMap
-    if (data.session_id) {
-      console.log("Lade vollständige Session-Daten nach Upload:", data.session_id);
-      
-      // Kurze Verzögerung, damit die Datenbank Zeit hat, alle Daten zu speichern
-      setTimeout(() => {
-        loadSessionData(data.session_id!);
-      }, 500);
-    }
-
+    
+    // Die vollständigen Daten (einschließlich ConceptMap) wurden bereits in der
+    // ExamUploader-Komponente geladen, bevor diese Funktion aufgerufen wurde
+    
+    // Hier können wir nur noch zusätzliche UI-Aktionen ausführen
+    console.log("Upload und Analyseprozess erfolgreich abgeschlossen für Session:", data.session_id);
+    
     // Scrolle zu den Flashcards
     document.getElementById('flashcards')?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -749,34 +745,166 @@ const Index = () => {
       if (existingSessionId) {
         console.log('DEBUG: Loading data for existing session:', existingSessionId);
         
-        // Token für die Authentifizierung abrufen
-        const token = localStorage.getItem('exammaster_token');
-        if (!token) {
-          throw new Error('Nicht eingeloggt. Bitte melde dich an, um diese Funktion zu nutzen.');
-        }
-        
-        // Cache-busting Parameter hinzufügen, um aktuelle Daten zu erhalten
-        const timestamp = new Date().getTime();
-        const response = await axios.get<{ success: boolean; data: SessionData }>(
-          `${API_URL}/api/v1/results/${existingSessionId}?nocache=${timestamp}`,
-          { 
-            withCredentials: true,
-            headers: {
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache',
-              'Expires': '0',
-              'Authorization': `Bearer ${token}`
-            }
+        try {
+          // Token für die Authentifizierung abrufen
+          const token = localStorage.getItem('exammaster_token');
+          if (!token) {
+            throw new Error('Nicht eingeloggt. Bitte melde dich an, um diese Funktion zu nutzen.');
           }
-        );
+          
+          // Klareres Logging
+          console.log(`Sende Anfrage an: ${API_URL}/api/v1/results/${existingSessionId}`);
+          
+          // Verzögerung hinzufügen, um sicherzustellen, dass die Daten im Backend vollständig verfügbar sind
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Zuerst überprüfen wir den Status der Session
+          const checkStatusTimestamp = new Date().getTime();
+          
+          // Prüfe den Upload-Status mit session-info Endpoint
+          const statusResponse = await axios.get<{ success: boolean; data: { processing_status: string } }>(
+            `${API_URL}/api/v1/session-info/${existingSessionId}?nocache=${checkStatusTimestamp}`,
+            { 
+              withCredentials: true,
+              headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                'Authorization': `Bearer ${token}`
+              }
+            }
+          );
+          
+          // Überprüfe, ob der Upload-Status "completed" ist
+          if (statusResponse.data.success && 
+              statusResponse.data.data.processing_status !== "completed") {
+            console.log(`Upload-Status ist noch nicht 'completed': ${statusResponse.data.data.processing_status}`);
+            
+            // Werfe eine spezifischere Fehlermeldung, die im Frontend besser behandelt werden kann
+            throw new Error(`Die Session wird noch verarbeitet. Status: ${statusResponse.data.data.processing_status}`);
+          }
+          
+          console.log("Upload-Status ist 'completed', lade Daten..");
         
-        if (response.data.success && response.data.data) {
-          // Speichere die Session-ID im localStorage für spätere Verwendung
-          localStorage.setItem('current_session_id', existingSessionId);
-          return response.data.data;
+          // Cache-busting Parameter hinzufügen, um aktuelle Daten zu erhalten
+          const timestamp = new Date().getTime();
+          const response = await axios.get<{ success: boolean; data: SessionData }>(
+            `${API_URL}/api/v1/results/${existingSessionId}?nocache=${timestamp}`,
+            { 
+              withCredentials: true,
+              headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                'Authorization': `Bearer ${token}`
+              }
+            }
+          );
+          
+          // Debug-Log der Antwort
+          console.log("API-Antwort erhalten:", response.status, response.statusText);
+          
+          // Vollständigen Inhalt der API-Antwort loggen
+          console.log("VOLLSTÄNDIGE API-ANTWORT:", response.data);
+          
+          // Wenn Daten in der API-Antwort vorhanden sind, inspiziere sie genauer
+          console.log("API-Antwort hat success:", response.data.success);
+          // Sicherer Zugriff auf den Status, da er in beiden Formaten vorkommen kann
+          console.log("API-Antwort hat status:", (response.data as any).status);
+          console.log("API-Antwort data vorhanden:", !!response.data.data);
+          console.log("API-Antwort Typ von data:", typeof response.data.data);
+          
+          // Anpassung an tatsächliches API-Antwortformat
+          // Prüfe, ob es das erwartete Format oder das tatsächliche Format ist
+          const hasExpectedFormat = response.data.success === true && 
+                                   response.data.data && 
+                                   (Array.isArray(response.data.data.flashcards) || 
+                                    Array.isArray(response.data.data.test_questions));
+          
+          // Verwende any für das tatsächliche API-Antwortformat, da es ein anderes Schema hat
+          const responseData = response.data as any;
+          
+          const hasActualFormat = responseData.status === "completed" && 
+                                 responseData.data && 
+                                 responseData.data.main_topic && 
+                                 Array.isArray(responseData.data.topics);
+          
+          console.log("Hat erwartetes Format:", hasExpectedFormat);
+          console.log("Hat tatsächliches Format:", hasActualFormat);
+          
+          if (hasExpectedFormat) {
+            // Wenn es das erwartete Format hat, verwende es direkt
+            localStorage.setItem('current_session_id', existingSessionId);
+            return response.data.data;
+          } else if (hasActualFormat) {
+            // Wenn es das tatsächliche Format hat, adaptiere es
+            console.log("Adaptiere API-Antwort zum erwarteten Format");
+            
+            // Erstelle eine Struktur, die dem erwarteten Format entspricht
+            const adaptedData: SessionData = {
+              session_id: existingSessionId,
+              flashcards: new Array(responseData.data.flashcards_count || 0).fill({
+                id: "placeholder",
+                question: "Lade Flashcards...",
+                answer: "Bitte warten..."
+              }),
+              test_questions: new Array(responseData.data.questions_count || 0).fill({
+                id: "placeholder",
+                text: "Lade Fragen...",
+                options: ["Option 1", "Option 2", "Option 3", "Option 4"],
+                correct_answer: 0
+              }),
+              analysis: {
+                main_topic: responseData.data.main_topic || "Unbekanntes Thema",
+                subtopics: Array.isArray(responseData.data.topics) ? 
+                  responseData.data.topics.filter((t: string, i: number) => i > 0) : [],
+                content_type: responseData.data.document_type,
+                language: responseData.data.language,
+                processing_status: responseData.status
+              },
+              topics: {
+                main_topic: {
+                  id: "main_topic_id",
+                  name: responseData.data.main_topic
+                },
+                subtopics: Array.isArray(responseData.data.topics) ? 
+                  responseData.data.topics.filter((t: string, i: number) => i > 0).map((name: string, i: number) => ({
+                    id: `subtopic_${i}`,
+                    name
+                  })) : []
+              },
+              concept_map: {
+                nodes: [
+                  {
+                    id: "main_topic_id",
+                    text: responseData.data.main_topic,
+                    isMainTopic: true
+                  },
+                  ...Array.isArray(responseData.data.topics) ? 
+                    responseData.data.topics.filter((t: string, i: number) => i > 0).map((name: string, i: number) => ({
+                      id: `subtopic_${i}`,
+                      text: name
+                    })) : []
+                ],
+                edges: []
+              }
+            };
+            
+            localStorage.setItem('current_session_id', existingSessionId);
+            console.log("Adaptierte Daten:", adaptedData);
+            return adaptedData;
+          }
+        } catch (error) {
+          console.error("Fehler beim Laden der Themen (Details):", error);
+          
+          // Wenn der Status-Check fehlschlägt, werfen wir den Fehler weiter
+          if (error.message && error.message.includes("Session wird noch verarbeitet")) {
+            throw error; // Wir werfen den speziellen Status-Fehler
+          }
+          
+          // Für andere Fehler werfen wir einen beschreibenden Fehler
+          throw new Error(`Fehler beim Laden der Themen: ${error.message || 'Unbekannter Fehler'}`);
         }
-        
-        throw new Error("Keine gültigen Daten für diese Session gefunden");
       }
       
       // Wenn keine Session-ID übergeben wurde, starte eine völlig neue Session
@@ -790,8 +918,7 @@ const Index = () => {
       // Navigiere zu einer sicheren Zwischen-URL ohne Sessions und erzwinge einen harten Refresh
       window.location.href = `${window.location.pathname}?reset=${redirectId}`;
       
-      // Rückgabewert wird nicht verwendet, da wir die Seite neuladen
-      return { success: true };
+      return null; // Diese Zeile sollte nie erreicht werden, da wir vorher umleiten
     },
     onSuccess: (data) => {
       // Wenn Daten zurückgegeben wurden (bei bestehender Session), aktualisiere den State

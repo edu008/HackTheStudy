@@ -10,6 +10,9 @@ def register_tasks(celery_app):
     
     Args:
         celery_app: Die Celery-App-Instanz
+        
+    Returns:
+        Dict mit registrierten Tasks
     """
     # Registriere die process_upload Task
     process_upload = register_process_upload(celery_app)
@@ -18,6 +21,11 @@ def register_tasks(celery_app):
     process_api_request = register_api_request(celery_app)
     
     # Hier können weitere Tasks registriert werden...
+    
+    # Log der registrierten Tasks
+    from logging import getLogger
+    logger = getLogger(__name__)
+    logger.info(f"Registrierte Tasks: process_upload, process_api_request")
     
     # Gib die registrierten Tasks zurück
     return {

@@ -41,13 +41,35 @@ from .error_handler import (
     FileProcessingError
 )
 
-# Vorhandene Routen-Imports bleiben gleich
-from .upload import upload_file, get_results, upload_chunk
+# Neue Module für Utilities und Hilfsfunktionen (ersetzt utils.py)
+from .file_utils import allowed_file, extract_text_from_file, extract_text_from_pdf, extract_text_from_pdf_safe
+from .text_processing import clean_text_for_database, detect_language, count_words, extract_sentences, get_text_statistics
+from .ai_utils import query_chatgpt, cached_query_chatgpt, format_json_response
+from .content_analysis import analyze_content, generate_concept_map_suggestions, unified_content_processing
+from .learning_materials import generate_additional_flashcards, generate_additional_questions, generate_quiz
+from .session_utils import check_and_manage_user_sessions, update_session_timestamp, delete_session
+from .utils_common import (
+    generate_unique_id, generate_hash, store_in_redis, get_from_redis,
+    format_timestamp, sanitize_filename, truncate_text, parse_bool
+)
+
+# Neue Module für Upload-Funktionalität
+from .upload_core import upload_redirect, upload_file, get_results
+from .upload_chunked import upload_chunk, get_upload_progress
+from .session_management import session_mgmt_get_session_info
+from .processing import process_upload, retry_processing
+from .diagnostics import get_diagnostics, debug_session_status, get_session_info
+
+# Andere bestehende Imports
 from .flashcards import generate_more_flashcards
 from .questions import generate_more_questions
 from .topics import generate_related_topics, get_topics
 from .user import get_user_uploads, get_user_history, update_activity_timestamp
+
+# Modulare Authentifizierung importieren (ersetzt auth.py)
 from .auth import auth_bp, setup_oauth
+from .auth.token_auth import token_required
+
 from .payment import payment_bp
 from .admin import admin_bp
 
@@ -61,6 +83,25 @@ for bp in [api_bp, api_v1_bp]:
 # Dies stellt sicher, dass alle wichtigen Routes registriert sind, auch wenn sie nicht importiert wurden
 api_bp.add_url_rule('/upload/chunk', view_func=upload_chunk, methods=['POST', 'OPTIONS'])
 api_v1_bp.add_url_rule('/upload/chunk', view_func=upload_chunk, methods=['POST', 'OPTIONS'])
+
+# Registriere neue Routen aus der aufgeteilten upload.py-Datei
+api_bp.add_url_rule('/upload/progress/<session_id>', view_func=get_upload_progress, methods=['GET', 'OPTIONS'])
+api_v1_bp.add_url_rule('/upload/progress/<session_id>', view_func=get_upload_progress, methods=['GET', 'OPTIONS'])
+
+api_bp.add_url_rule('/process-upload/<session_id>', view_func=process_upload, methods=['POST', 'OPTIONS'])
+api_v1_bp.add_url_rule('/process-upload/<session_id>', view_func=process_upload, methods=['POST', 'OPTIONS'])
+
+api_bp.add_url_rule('/session-info/<session_id>', view_func=get_session_info, methods=['GET', 'OPTIONS'])
+api_v1_bp.add_url_rule('/session-info/<session_id>', view_func=get_session_info, methods=['GET', 'OPTIONS'])
+
+api_bp.add_url_rule('/diagnostics/<session_id>', view_func=get_diagnostics, methods=['GET'])
+api_v1_bp.add_url_rule('/diagnostics/<session_id>', view_func=get_diagnostics, methods=['GET'])
+
+api_bp.add_url_rule('/debug-status/<session_id>', view_func=debug_session_status, methods=['GET'])
+api_v1_bp.add_url_rule('/debug-status/<session_id>', view_func=debug_session_status, methods=['GET'])
+
+api_bp.add_url_rule('/retry-processing/<session_id>', view_func=retry_processing, methods=['POST', 'OPTIONS'])
+api_v1_bp.add_url_rule('/retry-processing/<session_id>', view_func=retry_processing, methods=['POST', 'OPTIONS'])
 
 # Registriere v1 Blueprint mit dem Hauptblueprint
 api_bp.register_blueprint(api_v1_bp, url_prefix='/v1')

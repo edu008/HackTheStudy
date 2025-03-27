@@ -480,8 +480,16 @@ const UserHistory: React.FC<UserHistoryProps> = ({ onSessionSelect }) => {
               errorData.error.message.includes("Nicht genügend Credits")) {
             
             // Extrahiere die benötigten Credits aus der Fehlermeldung
-            const creditsMatch = errorData.error.message.match(/Benötigt: (\d+) Credits/);
-            creditsRequired = creditsMatch ? parseInt(creditsMatch[1]) : 0;
+            // Zusätzliche Sicherheit bei der Verwendung von match
+            try {
+              // Prüfe ob errorData.error.message existiert und ein String ist
+              if (typeof errorData.error.message === 'string') {
+                const creditsMatch = errorData.error.message.match(/Benötigt: (\d+) Credits/);
+                creditsRequired = creditsMatch && creditsMatch[1] ? parseInt(creditsMatch[1]) : 0;
+              }
+            } catch (matchError) {
+              console.error("Fehler beim Extrahieren der Credits aus der Fehlermeldung:", matchError);
+            }
             
             isCreditsError = true;
             errorMessage = `Nicht genügend Credits für diese Aktion. Es werden ${creditsRequired} Credits benötigt.`;

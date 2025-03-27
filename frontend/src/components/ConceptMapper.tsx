@@ -666,9 +666,16 @@ const ConceptMapper = ({ sessionId: propsSessionId, conceptMapData }: ConceptMap
         if (response.status === 402) {
           // Versuche, die Credits-Informationen aus der Fehlermeldung zu extrahieren
           let creditsRequired = 0;
-          const creditsMatch = errorText.match(/Benötigt: (\d+) Credits/);
-          if (creditsMatch && creditsMatch[1]) {
-            creditsRequired = parseInt(creditsMatch[1], 10);
+          try {
+            // Prüfe, ob errorText ein gültiger String ist
+            if (typeof errorText === 'string') {
+              const creditsMatch = errorText.match(/Benötigt: (\d+) Credits/);
+              if (creditsMatch && creditsMatch[1]) {
+                creditsRequired = parseInt(creditsMatch[1], 10);
+              }
+            }
+          } catch (matchError) {
+            console.error("Fehler beim Extrahieren der Credits-Informationen:", matchError);
           }
           
           toast({

@@ -321,8 +321,8 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
       onProgress?: (progress: number) => void
     }) => {
       const { filesToUpload, sessionId: initialSessionId, onProgress } = params;
-      
-      // Status für jeden Upload initialisieren
+
+      // Initialisiere Upload-Status für jede Datei
       const uploadStatuses: Record<string, UploadStatus> = {};
       filesToUpload.forEach(file => {
         uploadStatuses[file.name] = {
@@ -331,24 +331,23 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
           status: 'pending'
         };
       });
-      
-      let currentSessionId = initialSessionId;
-      let totalProgress = 0;
+
+      // Funktion zum Aktualisieren des Gesamtfortschritts
       const updateProgress = () => {
-        const totalProgressValue = Object.values(uploadStatuses)
-          .reduce((sum, status) => sum + status.progress, 0) / filesToUpload.length;
+        const totalProgress = Object.values(uploadStatuses).reduce(
+          (sum, status) => sum + status.progress, 
+          0
+        ) / filesToUpload.length;
         
         if (onProgress) {
-          onProgress(totalProgressValue);
+          onProgress(totalProgress);
         }
-        
-        totalProgress = totalProgressValue;
       };
+
+      // Behalte die aktuelle Session-ID bei
+      let currentSessionId = initialSessionId;
       
-      // Prüfe auf wiederaufnehmbare Uploads
-      const resumableUploads = filesToUpload.filter(file => canResumeUpload(file.name));
-      
-      // Verarbeite jedes File sequentiell
+      // Verarbeite jede Datei sequentiell
       for (let i = 0; i < filesToUpload.length; i++) {
         const file = filesToUpload[i];
         const fileStatus = uploadStatuses[file.name];
@@ -408,177 +407,31 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
           }
           
           uploadStatuses[file.name].sessionId = sessionId;
+          fileStatus.status = 'completed';
+          updateProgress();
         } catch (error) {
           console.error(`Fehler beim Upload von Datei ${file.name}:`, error);
+          fileStatus.status = 'error';
+          updateProgress();
           throw error;
         }
       }
 
-      // Verbesserte Polling-Logik mit exponentieller Verzögerung
-      let retries = 0;
-      const maxRetries = 30;
-      let baseDelay = 2000; // Startverzögerung in ms
-      let consecutiveRateLimitErrors = 0;
-      let lastStatusChange = Date.now();
-      let finalStabilized = false;
-      let lastDataHash = '';
-
-      // Hole den Token für die API-Anfragen
-      const authToken = localStorage.getItem('exammaster_token');
+      console.log(`Upload aller Dateien abgeschlossen für Session: ${currentSessionId}`);
       
-      // Log für Debugging
-      console.log(`Upload abgeschlossen, starte Polling für Session: ${currentSessionId}`);
-
-      while (retries < maxRetries) {
-        try {
-          setUploadProgress(50 + ((retries / maxRetries) * 50));
-          
-          const timestamp = new Date().getTime();
-          console.log(`Polling API: GET /api/v1/results/${currentSessionId} - Versuch ${retries+1}/${maxRetries}`);
-          const resultsResponse = await axios.get<{ success: boolean, data: SessionData, error?: any, error_type?: string }>(
-            normalizeUrl(API_URL, `api/v1/results/${currentSessionId}?nocache=${timestamp}`),
-            { 
-              headers: {
-                'Authorization': authToken ? `Bearer ${authToken}` : '',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-                'Expires': '0'
-              },
-              withCredentials: true,
-              timeout: 30000
-            }
-          );
-
-          consecutiveRateLimitErrors = 0;
-
-          if (!resultsResponse.data.success) {
-            if (resultsResponse.data.error_type === 'rate_limit') {
-              consecutiveRateLimitErrors++;
-              
-              if (consecutiveRateLimitErrors >= 3) {
-                toast({
-                  title: "API-Anfragelimit erreicht",
-                  description: "Die Verarbeitung wurde aufgrund zu vieler Anfragen abgebrochen. Bitte versuche es später erneut.",
-                  variant: "destructive",
-                  duration: 15000,
-                });
-                
-                return {
-                  success: false,
-                  message: "API-Anfragelimit erreicht. Die Verarbeitung wurde abgebrochen.",
-                  session_id: currentSessionId,
-                  flashcards: [],
-                  questions: []
-                };
-              }
-              
-              // Exponentielles Backoff bei Rate-Limit-Fehlern
-              await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(2, consecutiveRateLimitErrors)));
-              retries++;
-              continue;
-            }
-            
-            return {
-              success: false,
-              message: resultsResponse.data.error?.message || "Ein Fehler ist während der Verarbeitung aufgetreten",
-              session_id: currentSessionId,
-              flashcards: [],
-              questions: []
-            };
-          }
-
-          if (resultsResponse.data.success && resultsResponse.data.data) {
-            const flashcards = resultsResponse.data.data.flashcards || [];
-            const questions = resultsResponse.data.data.test_questions || [];
-            const processingStatus = resultsResponse.data.data.analysis?.processing_status || "";
-            
-            // Berechne einen Hash der aktuellen Daten
-            const currentDataHash = JSON.stringify({ flashcards, questions });
-            
-            // Prüfe auf spezielle Fehlertypen im Processing-Status
-            if (processingStatus === "rate_limit_error" || processingStatus === "failed") {
-              if (processingStatus === "rate_limit_error") {
-                toast({
-                  title: "OpenAI-Anfragelimit überschritten",
-                  description: "Die Datei ist zu groß für die Verarbeitung in einem Durchgang. Teile die Datei in kleinere Abschnitte auf oder versuche es später erneut.",
-                  variant: "destructive",
-                  duration: 15000,
-                });
-                
-                setError("OpenAI-Anfragelimit überschritten: Die Datei ist zu groß für die Verarbeitung in einem Durchgang.");
-                setIsUploaded(false);
-                setUploadProgress(0);
-                
-                return {
-                  success: false,
-                  message: "OpenAI-Anfragelimit überschritten",
-                  session_id: currentSessionId,
-                  flashcards: [],
-                  questions: []
-                };
-              }
-            }
-
-            // Prüfe auf erfolgreiche Verarbeitung
-            if (processingStatus === "completed" && 
-                flashcards.length > 0 && 
-                questions.length > 0) {
-              
-              // Wenn die Daten stabil sind (sich nicht mehr ändern)
-              if (currentDataHash === lastDataHash) {
-                finalStabilized = true;
-              } else {
-                lastDataHash = currentDataHash;
-                lastStatusChange = Date.now();
-              }
-              
-              // Warte noch mindestens 2 Sekunden nach der letzten Änderung
-              if (finalStabilized && Date.now() - lastStatusChange >= 2000) {
-                const completeResponse: UploadResponse = {
-                  success: true,
-                  message: "Dateien erfolgreich hochgeladen und verarbeitet.",
-                  session_id: currentSessionId,
-                  flashcards: flashcards,
-                  questions: questions,
-                  credits_available: resultsResponse.data.data.credits_available
-                };
-                
-                // Aktualisiere die Session-ID und Credits
-                if (resultsResponse.data.data.credits_available !== undefined) {
-                  const storedUser = localStorage.getItem('exammaster_user');
-                  if (storedUser) {
-                    try {
-                      const parsedUser = JSON.parse(storedUser);
-                      parsedUser.credits = resultsResponse.data.data.credits_available;
-                      localStorage.setItem('exammaster_user', JSON.stringify(parsedUser));
-                    } catch (error) {
-                      console.error('Fehler beim Aktualisieren der Credits:', error);
-                    }
-                  }
-                }
-                
-                return completeResponse;
-              }
-            }
-            
-            // Warte vor dem nächsten Versuch mit exponentieller Verzögerung
-            await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(1.5, retries)));
-            retries++;
-            continue;
-          }
-        } catch (error) {
-          console.error('Fehler beim Polling:', error);
-          retries++;
-          await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(1.5, retries)));
-        }
+      // Wenn alle Dateien hochgeladen wurden, warte auf die Verarbeitungsergebnisse
+      if (!currentSessionId) {
+        throw new Error("Keine Session-ID erhalten. Upload gescheitert.");
       }
       
+      // Da wir in onSuccess auch auf den Upload-Status warten werden,
+      // können wir hier einfach die Basisdaten zurückgeben
       return {
-        success: false,
-        message: "Timeout bei der Verarbeitung der Dateien",
+        success: true, 
+        message: "Dateien hochgeladen, Verarbeitung läuft...",
         session_id: currentSessionId,
-        flashcards: [],
-        questions: []
+        flashcards: [],  // Diese werden erst nach Verarbeitung verfügbar sein
+        questions: []    // Diese werden erst nach Verarbeitung verfügbar sein
       };
     },
     
@@ -598,38 +451,242 @@ const ExamUploader = ({ onUploadSuccess, sessionId, loadTopicsMutation, onResetS
         }
       }
       
+      // Kredite aktualisieren
       refreshUserCredits();
       
-      if (data.flashcards.length === 0 && data.questions.length === 0) {
+      // Der sequentielle Prozess verhindert konkurrierende API-Aufrufe
+      if (!data.session_id) {
         toast({
-          title: "Dateien hochgeladen",
-          description: data.message || "Die Dateien wurden hochgeladen, aber es konnten keine Lernmaterialien erstellt werden. Bitte versuche es später erneut.",
-          variant: "default",
+          title: "Fehler",
+          description: "Keine Session-ID erhalten. Bitte versuche es später erneut.",
+          variant: "destructive",
         });
-      } else {
-        toast({
-          title: "Dateien hochgeladen",
-          description: `${files.length} Prüfung${files.length > 1 ? 'en wurden' : ' wurde'} erfolgreich hochgeladen und analysiert.`,
-        });
+        return;
       }
       
-      if (loadTopicsMutation && data.session_id) {
-        setTimeout(() => {
-          loadTopicsMutation.mutate(data.session_id, {
-            onSuccess: () => {
-              localStorage.setItem('current_session_id', data.session_id);
-            },
-            onError: (error) => {
-              console.error('Fehler beim Laden der Themen:', error);
-              toast({
-                title: "Fehler beim Laden der Themen",
-                description: "Die Themen konnten nicht geladen werden. Bitte versuche es später erneut.",
-                variant: "destructive",
-              });
-            }
+      // Speichere die Session-ID
+      localStorage.setItem('current_session_id', data.session_id);
+      
+      // Benachrichtigung über erfolgreichen Upload
+      toast({
+        title: "Dateien hochgeladen",
+        description: `${files.length} Datei${files.length > 1 ? 'en wurden' : ' wurde'} erfolgreich hochgeladen. Die Analyse läuft...`,
+      });
+      
+      // Sequentieller Prozess:
+      // 1. Upload ist abgeschlossen (wir sind hier)
+      // 2. Warte auf "completed" Status
+      // 3. Lade Themen mit loadTopicsMutation
+      // 4. Erst nach Erfolg von loadTopicsMutation rufe onUploadSuccess mit den Daten auf
+      
+      let statusPollingInterval: number | null = null;
+      let retryCount = 0;
+      const maxRetries = 30;
+      
+      const checkUploadStatus = async () => {
+        if (retryCount >= maxRetries) {
+          if (statusPollingInterval) window.clearInterval(statusPollingInterval);
+          toast({
+            title: "Zeitüberschreitung",
+            description: "Die Verarbeitung dauert länger als erwartet. Die Analyse könnte noch laufen.",
+            variant: "destructive",
           });
-        }, 1000);
-      }
+          return;
+        }
+        
+        retryCount++;
+        
+        try {
+          const timestamp = new Date().getTime();
+          const authToken = localStorage.getItem('exammaster_token');
+          
+          const statusResponse = await axios.get<{ success: boolean; data: { processing_status: string } }>(
+            normalizeUrl(API_URL, `api/v1/session-info/${data.session_id}?nocache=${timestamp}`),
+            { 
+              headers: {
+                'Authorization': authToken ? `Bearer ${authToken}` : '',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+              },
+              withCredentials: true,
+              timeout: 10000
+            }
+          );
+          
+          if (statusResponse.data.success) {
+            const status = statusResponse.data.data.processing_status;
+            console.log(`Upload-Status für Session ${data.session_id}: ${status} (Versuch ${retryCount}/${maxRetries})`);
+            
+            if (status === "completed") {
+              if (statusPollingInterval) window.clearInterval(statusPollingInterval);
+              console.log("Upload-Status ist 'completed', lade Themen...");
+              
+              // Jetzt können wir die Themen laden
+              if (loadTopicsMutation) {
+                loadTopicsMutation.mutate(data.session_id, {
+                  onSuccess: (topicsData) => {
+                    console.log("Themen erfolgreich geladen:", topicsData);
+                    
+                    // Überprüfe das Format der Daten
+                    if (!topicsData) {
+                      console.error("Keine Daten von loadTopicsMutation zurückgegeben");
+                      toast({
+                        title: "Unvollständige Daten",
+                        description: "Es wurden unvollständige Daten vom Server zurückgegeben. Seite wird neu geladen...",
+                        variant: "destructive",
+                      });
+                      
+                      // Verzögerte Neuladen der Seite als Fallback
+                      setTimeout(() => window.location.reload(), 3000);
+                      return;
+                    }
+                    
+                    // Validiere die zurückgegebenen Daten auf grundlegende Struktur
+                    try {
+                      // Prüfe, ob die grundlegenden Eigenschaften vorhanden sind
+                      if (!Array.isArray(topicsData.flashcards)) topicsData.flashcards = [];
+                      if (!Array.isArray(topicsData.test_questions)) topicsData.test_questions = [];
+                      
+                      // Stelle sicher, dass analysis als Objekt existiert
+                      if (!topicsData.analysis || typeof topicsData.analysis !== 'object') {
+                        topicsData.analysis = { main_topic: "Unbekanntes Thema", subtopics: [] };
+                      }
+                      
+                      // Stelle sicher, dass connections als Array existiert (wenn nötig)
+                      if (topicsData.connections && !Array.isArray(topicsData.connections)) {
+                        topicsData.connections = [];
+                      }
+                      
+                      // Stelle sicher, dass topics existiert (wenn nötig)
+                      if (topicsData.topics && typeof topicsData.topics !== 'object') {
+                        topicsData.topics = null;
+                      }
+                      
+                      console.log("Datenstruktur validiert und bereinigt:", topicsData);
+                    } catch (validationError) {
+                      console.error("Fehler bei der Datenvalidierung:", validationError);
+                    }
+                    
+                    // Erstelle ein erweitertes Ergebnisobjekt mit den vollständigen Daten
+                    const enhancedData = {
+                      ...data,
+                      flashcards: topicsData.flashcards || [],
+                      questions: topicsData.test_questions || [],
+                      adaptedData: topicsData
+                    };
+                    
+                    // Log-Ausgabe sicherstellen
+                    console.log("Erweiterte Daten erstellt:", JSON.stringify({
+                      session_id: enhancedData.session_id,
+                      flashcards_length: enhancedData.flashcards.length,
+                      questions_length: enhancedData.questions.length,
+                      topics: enhancedData.adaptedData.topics ? "vorhanden" : "fehlt"
+                    }));
+                    
+                    // Erst nachdem die Themen erfolgreich geladen wurden, 
+                    // benachrichtige die übergeordnete Komponente mit den erweiterten Daten
+                    if (onUploadSuccess) {
+                      console.log("Rufe onUploadSuccess auf mit erweiterten Daten");
+                      onUploadSuccess(enhancedData);
+                    }
+                    
+                    toast({
+                      title: "Analyse abgeschlossen",
+                      description: "Die Dateien wurden erfolgreich analysiert und stehen jetzt zur Verfügung.",
+                    });
+                  },
+                  onError: (error) => {
+                    // Detailliertes Logging des Fehlers
+                    console.error('Vollständiger Fehler beim Laden der Themen:', error);
+                    
+                    if (error.response) {
+                      console.error('Fehler-Response-Daten:', error.response.data);
+                      console.error('Fehler-Status:', error.response.status);
+                    }
+                    
+                    if (error.message) {
+                      console.error('Fehlermeldung:', error.message);
+                    }
+                    
+                    // Detaillierter Error-Stack, falls vorhanden
+                    if (error.stack) {
+                      console.error('Fehler-Stack:', error.stack);
+                    }
+                    
+                    // Detaillierte Fehlerbeschreibung im Toast
+                    const toastRef = toast({
+                      title: "Fehler beim Laden der Themen",
+                      description: `Die Themen konnten nicht geladen werden: ${error?.message || 'Unbekannter Fehler'}. Sie können es erneut versuchen oder die Seite neu laden.`,
+                      variant: "destructive",
+                      duration: 0 // Toast bleibt bestehen, bis der Benutzer aktiv wird
+                    });
+                    
+                    // Erstelle einen Button-Container für den Toast
+                    setTimeout(() => {
+                      const toastElement = document.querySelector(`[data-toast-id="${toastRef.id}"] .toast-description`);
+                      if (toastElement) {
+                        // Container für die Buttons
+                        const buttonContainer = document.createElement('div');
+                        buttonContainer.className = 'flex gap-2 mt-4';
+                        
+                        // Button zum Neuladen der Seite
+                        const reloadButton = document.createElement('button');
+                        reloadButton.innerText = 'Seite neu laden';
+                        reloadButton.className = 'bg-primary text-white px-4 py-2 rounded';
+                        reloadButton.onclick = () => window.location.reload();
+                        
+                        // Button zum erneuten Versuch
+                        const retryButton = document.createElement('button');
+                        retryButton.innerText = 'Erneut versuchen';
+                        retryButton.className = 'bg-secondary text-white px-4 py-2 rounded';
+                        retryButton.onclick = () => {
+                          // Toast schließen
+                          const closeButton = document.querySelector(`[data-toast-id="${toastRef.id}"] button[aria-label="Close"]`);
+                          if (closeButton && 'click' in closeButton) {
+                            (closeButton as HTMLButtonElement).click();
+                          }
+                          
+                          // Erneut versuchen, nach kurzer Verzögerung
+                          setTimeout(() => {
+                            if (loadTopicsMutation) {
+                              loadTopicsMutation.mutate(data.session_id);
+                            }
+                          }, 1000);
+                        };
+                        
+                        // Buttons zum Container hinzufügen
+                        buttonContainer.appendChild(retryButton);
+                        buttonContainer.appendChild(reloadButton);
+                        
+                        // Container zum Toast hinzufügen
+                        toastElement.appendChild(buttonContainer);
+                      }
+                    }, 100); // Kurze Verzögerung, um sicherzustellen, dass der Toast gerendert wurde
+                    
+                    // Als Fallback die übergeordnete Komponente trotzdem benachrichtigen,
+                    // aber nicht automatisch die Seite neuladen
+                    if (onUploadSuccess) {
+                      onUploadSuccess(data);
+                    }
+                  }
+                });
+              } else {
+                // Falls loadTopicsMutation nicht verfügbar ist
+                if (onUploadSuccess) onUploadSuccess(data);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Fehler beim Abrufen des Upload-Status:", error);
+        }
+      };
+      
+      // Status-Prüfung alle 3 Sekunden
+      statusPollingInterval = window.setInterval(checkUploadStatus, 3000);
+      
+      // Starte sofort die erste Prüfung
+      checkUploadStatus();
     },
     
     onError: (error) => {

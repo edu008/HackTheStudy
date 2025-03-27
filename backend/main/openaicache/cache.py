@@ -1,15 +1,14 @@
 """
 OpenAI Cache-Implementierung für das Caching von API-Aufrufen.
-Dies reduziert Kosten und Latenz durch Wiederverwendung von identischen Anfragen.
+Delegiert an die zentrale Implementation in core/openai_integration.py.
+Redis wird exklusiv für diesen OpenAI-Cache verwendet.
 """
 
-import json
-import hashlib
 import logging
-import time
 from typing import Any, Dict, Optional, Union, List
 
-from core.redis_client import redis_client
+# Importiere die zentrale Implementierung
+from core.openai_integration import OpenAICache as CentralOpenAICache
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -32,7 +31,8 @@ def get_cache_instance() -> 'OpenAICache':
 class OpenAICache:
     """
     Cache für OpenAI-API-Aufrufe zur Reduzierung von Kosten und Wartezeiten.
-    Verwendet Redis als Backend-Speicher.
+    Delegiert an die zentrale Implementation.
+    Redis wird exklusiv für diesen Cache verwendet.
     """
     
     def __init__(self, ttl: int = 604800):  # 7 Tage Standard-TTL
@@ -43,21 +43,21 @@ class OpenAICache:
             ttl: Time-to-Live für Cache-Einträge in Sekunden (Standard: 7 Tage)
         """
         self.ttl = ttl
-        self.enabled = True
-        logger.info("OpenAI-Cache initialisiert. TTL: {} Sekunden".format(ttl))
+        self._central_cache = CentralOpenAICache()
+        self._central_cache.ttl = ttl
+        logger.info("OpenAI-Cache-Wrapper initialisiert. TTL: {} Sekunden".format(ttl))
+        logger.info("Redis wird exklusiv für den OpenAI-Cache verwendet")
     
     def enable(self):
         """Aktiviert den Cache."""
-        self.enabled = True
-        logger.info("OpenAI-Cache aktiviert")
+        self._central_cache.enable()
     
     def disable(self):
         """Deaktiviert den Cache."""
-        self.enabled = False
-        logger.info("OpenAI-Cache deaktiviert")
+        self._central_cache.disable()
     
     def generate_key(self, model: str, messages: List[Dict], temperature: float = 0.7, 
-                     max_tokens: Optional[int] = None, **kwargs) -> str:
+                    max_tokens: Optional[int] = None, **kwargs) -> str:
         """
         Generiert einen Cache-Schlüssel aus den Anfrageparametern.
         
@@ -71,25 +71,13 @@ class OpenAICache:
         Returns:
             Cache-Schlüssel als String
         """
-        # Hauptparameter zusammenfassen
-        key_data = {
-            "model": model,
-            "messages": messages,
-            "temperature": round(temperature, 2),  # Runden für konsistente Schlüssel
-        }
-        
-        # Optionale Parameter hinzufügen
+        # Füge temperature und max_tokens zu kwargs hinzu, wenn sie angegeben wurden
+        if temperature is not None:
+            kwargs['temperature'] = temperature
         if max_tokens is not None:
-            key_data["max_tokens"] = max_tokens
+            kwargs['max_tokens'] = max_tokens
         
-        # Relevante zusätzliche Parameter
-        for param in ["top_p", "frequency_penalty", "presence_penalty", "stop"]:
-            if param in kwargs and kwargs[param] is not None:
-                key_data[param] = kwargs[param]
-        
-        # JSON-String erstellen und hashen
-        json_str = json.dumps(key_data, sort_keys=True)
-        return f"openai:cache:{hashlib.md5(json_str.encode()).hexdigest()}"
+        return self._central_cache.generate_key(model, messages, **kwargs)
     
     def get(self, key: str) -> Optional[Dict[str, Any]]:
         """
@@ -101,19 +89,7 @@ class OpenAICache:
         Returns:
             Gecachte Antwort oder None, falls nicht im Cache
         """
-        if not self.enabled:
-            return None
-        
-        try:
-            value = redis_client.get(key, default=None, as_json=True)
-            if value:
-                logger.debug(f"Cache-Treffer für Schlüssel: {key}")
-                return value
-        except Exception as e:
-            logger.error(f"Fehler beim Lesen aus dem Cache: {str(e)}")
-        
-        logger.debug(f"Cache-Fehltreffer für Schlüssel: {key}")
-        return None
+        return self._central_cache.get(key)
     
     def set(self, key: str, value: Dict[str, Any]) -> bool:
         """
@@ -126,19 +102,7 @@ class OpenAICache:
         Returns:
             True bei Erfolg, False bei Fehler
         """
-        if not self.enabled:
-            return False
-        
-        try:
-            # Wir fügen einen Zeitstempel hinzu, um das Caching-Datum zu verfolgen
-            value["_cached_at"] = int(time.time())
-            result = redis_client.set(key, value, ex=self.ttl)
-            if result:
-                logger.debug(f"Wert erfolgreich gecached für Schlüssel: {key}")
-            return result
-        except Exception as e:
-            logger.error(f"Fehler beim Schreiben in den Cache: {str(e)}")
-            return False
+        return self._central_cache.set(key, value)
     
     def invalidate(self, key: str) -> bool:
         """
@@ -150,14 +114,7 @@ class OpenAICache:
         Returns:
             True bei Erfolg, False bei Fehler
         """
-        try:
-            result = redis_client.delete(key)
-            if result:
-                logger.debug(f"Cache-Eintrag ungültig gemacht für Schlüssel: {key}")
-            return result
-        except Exception as e:
-            logger.error(f"Fehler beim Löschen aus dem Cache: {str(e)}")
-            return False
+        return self._central_cache.invalidate(key)
     
     def clear(self) -> bool:
         """
@@ -166,13 +123,5 @@ class OpenAICache:
         Returns:
             True bei Erfolg, False bei Fehler
         """
-        try:
-            client = redis_client.get_client()
-            keys = client.keys("openai:cache:*")
-            if keys:
-                client.delete(*keys)
-                logger.info(f"{len(keys)} Cache-Einträge gelöscht")
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Löschen aller Cache-Einträge: {str(e)}")
-            return False 
+        count = self._central_cache.clear("openai:cache:*")
+        return count > 0 

@@ -1,224 +1,229 @@
 """
-Optimierter OpenAI-Client mit verbesserter Fehlerbehandlung, Caching und Retry-Logik.
+Optimierter OpenAI-Client - Wrapper für die zentrale Implementierung.
+Delegiert alle Funktionen an core/openai_integration.py.
 """
 
-import os
-import time
 import logging
-import json
-import hashlib
 import functools
-from datetime import datetime, timedelta
-import threading
-import backoff  # Für exponentielles Backoff bei Wiederholungen
-from openai import OpenAI, APIError, APITimeoutError, RateLimitError
-from flask import current_app
-from tasks import redis_client
-from api.log_utils import AppLogger
-from api.token_tracking import count_tokens, calculate_token_cost, deduct_credits, check_credits_available, track_token_usage
-import traceback
+from typing import Dict, List, Any, Optional, Union
 
-# Thread-lokaler Speicher für Client-Instanzen
-_thread_local = threading.local()
+# Importiere die zentralen Implementierungen
+from core.openai_integration import (
+    get_openai_client,
+    chat_completion,
+    extract_content_from_response,
+    clear_cache,
+    count_tokens,
+    calculate_token_cost,
+    track_token_usage,
+    check_credits_available,
+    deduct_credits,
+    get_user_credits,
+    get_usage_stats
+)
 
 # Logger konfigurieren
 logger = logging.getLogger('api.openai_client')
 
-# Konfigurationswerte aus Umgebungsvariablen
-DEFAULT_MODEL = os.environ.get('OPENAI_DEFAULT_MODEL', 'gpt-4o')
-CACHE_TTL = int(os.environ.get('OPENAI_CACHE_TTL', 86400))  # 24 Stunden Standard-TTL
-CACHE_ENABLED = os.environ.get('OPENAI_CACHE_ENABLED', 'true').lower() == 'true'
-MAX_RETRIES = int(os.environ.get('OPENAI_MAX_RETRIES', 3))
-MAX_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', 120))  # Timeout in Sekunden
-
-# Modell-Preiskonfiguration
-MODEL_PRICING = {
-    'gpt-4o': {'input': 0.00005, 'output': 0.00015},
-    'gpt-4-turbo': {'input': 0.00001, 'output': 0.00003},
-    'gpt-3.5-turbo': {'input': 0.000001, 'output': 0.000002},
-    'gpt-4-vision-preview': {'input': 0.00001, 'output': 0.00003},
-    'gpt-4': {'input': 0.00003, 'output': 0.00006},
-    'gpt-4-32k': {'input': 0.00006, 'output': 0.00012},
-}
-
-def get_openai_client():
+# Kompatibilitätsfunktion für den alten Aufruf
+def chat_completion_with_backoff(model, messages, user_id=None, session_id=None, 
+                               function_name=None, use_cache=True, **kwargs):
     """
-    Holt oder erstellt einen OpenAI-Client für den aktuellen Thread.
-    
-    Returns:
-        OpenAI: Eine thread-lokale OpenAI-Client-Instanz
+    Kompatibilitätsfunktion für die alte Schnittstelle.
+    Delegiert an die zentrale Implementierung.
     """
-    if not hasattr(_thread_local, 'client'):
-        api_key = os.environ.get('OPENAI_API_KEY')
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY nicht konfiguriert")
-        
-        # Client mit angepassten Timeout-Einstellungen erstellen
-        _thread_local.client = OpenAI(
-            api_key=api_key,
-            timeout=MAX_TIMEOUT,
-            max_retries=MAX_RETRIES
-        )
-        
-    return _thread_local.client
+    return chat_completion(
+        model=model,
+        messages=messages,
+        user_id=user_id,
+        session_id=session_id,
+        function_name=function_name,
+        use_cache=use_cache,
+        **kwargs
+    )
 
+# Rückwärtskompatible Funktionen
 def generate_cache_key(model, messages, **kwargs):
     """
-    Generiert einen eindeutigen Cache-Schlüssel basierend auf Anfrageparametern.
-    
-    Args:
-        model: Das verwendete Modell
-        messages: Die Nachrichten für die Anfrage
-        **kwargs: Andere OpenAI-Parameter
-    
-    Returns:
-        str: Ein eindeutiger Cache-Schlüssel
+    Generiert einen eindeutigen Cache-Schlüssel.
+    Verwendet die integrierte Funktion des OpenAICache-Objekts.
     """
-    # Relevante Parameter für den Cache-Schlüssel extrahieren
-    cache_params = {
-        'model': model,
-        'messages': messages,
-    }
-    
-    # Optionale Parameter hinzufügen, die das Ergebnis beeinflussen
-    for param in ['temperature', 'top_p', 'n', 'stream', 'stop', 'max_tokens', 
-                  'presence_penalty', 'frequency_penalty', 'logit_bias', 'functions']:
-        if param in kwargs and kwargs[param] is not None:
-            cache_params[param] = kwargs[param]
-    
-    # JSON-String erzeugen und Hash berechnen
-    param_str = json.dumps(cache_params, sort_keys=True)
-    return f"openai:chat:{hashlib.md5(param_str.encode()).hexdigest()}"
+    from core.openai_integration import OpenAICache
+    cache = OpenAICache()
+    return cache.generate_key(model, messages, **kwargs)
 
 def get_cached_response(cache_key):
     """
-    Holt eine zwischengespeicherte Antwort, wenn verfügbar.
-    
-    Args:
-        cache_key: Der Cache-Schlüssel für die Anfrage
-    
-    Returns:
-        dict oder None: Die zwischengespeicherte Antwort oder None
+    Abrufen einer Antwort aus dem Cache.
     """
-    if not CACHE_ENABLED:
-        return None
-    
-    try:
-        cached = redis_client.get(cache_key)
-        if cached:
-            logger.debug(f"Cache-Treffer für Schlüssel: {cache_key}")
-            return json.loads(cached)
-        logger.debug(f"Cache-Fehltreffer für Schlüssel: {cache_key}")
-    except Exception as e:
-        logger.warning(f"Fehler beim Abrufen aus Cache: {e}")
-    
-    return None
+    from core.openai_integration import OpenAICache
+    cache = OpenAICache()
+    return cache.get(cache_key)
 
 def cache_response(cache_key, response, ttl=None):
     """
-    Speichert eine Antwort im Cache.
-    
-    Args:
-        cache_key: Der Cache-Schlüssel
-        response: Die zu speichernde Antwort
-        ttl: Time-to-Live in Sekunden (optional)
+    Speichern einer Antwort im Cache.
     """
-    if not CACHE_ENABLED:
-        return
-    
-    if ttl is None:
-        ttl = CACHE_TTL
-    
-    try:
-        redis_client.setex(
-            cache_key,
-            ttl,
-            json.dumps(response)
-        )
-        logger.debug(f"Antwort im Cache gespeichert: {cache_key}, TTL: {ttl}s")
-    except Exception as e:
-        logger.warning(f"Fehler beim Speichern im Cache: {e}")
+    from core.openai_integration import OpenAICache
+    cache = OpenAICache()
+    return cache.set(cache_key, response)
 
-@backoff.on_exception(
-    backoff.expo,
-    (APIError, APITimeoutError, RateLimitError),
-    max_tries=MAX_RETRIES + 1,  # +1, da der erste Versuch nicht als Wiederholung zählt
-    giveup=lambda e: isinstance(e, RateLimitError) and "exceeded your quota" in str(e),
-    on_backoff=lambda details: logger.warning(
-        f"Wiederhole OpenAI-Anfrage nach {details['wait']:.1f}s "
-        f"(Versuch {details['tries']}/{MAX_RETRIES + 1})"
-    )
-)
-def chat_completion_with_backoff(model, messages, user_id=None, session_id=None, 
-                                function_name=None, use_cache=True, **kwargs):
+def track_cached_usage(model, messages, cached_response, user_id, session_id, function_name):
     """
-    Führt eine OpenAI-Chat-Completion mit Backoff-Wiederholungen durch.
-    
-    Args:
-        model: Das zu verwendende OpenAI-Modell
-        messages: Die Nachrichten für die Anfrage
-        user_id: Benutzer-ID für Tracking (optional)
-        session_id: Sitzungs-ID für Tracking (optional)
-        function_name: Funktionsname für Tracking (optional)
-        use_cache: Ob der Cache verwendet werden soll (Standard: True)
-        **kwargs: Weitere Parameter für die OpenAI-API
-    
-    Returns:
-        dict: Die OpenAI-Antwort
+    Token-Tracking für Cache-Treffer.
     """
-    # Cache-Schlüssel generieren
-    cache_key = generate_cache_key(model, messages, **kwargs)
-    
-    # Zwischengespeicherte Antwort abrufen, wenn Cache aktiviert
-    if use_cache:
-        cached_response = get_cached_response(cache_key)
-        if cached_response:
-            # Token-Nutzung für zwischengespeicherte Antwort tracken
-            track_cached_usage(model, messages, cached_response, user_id, session_id, function_name)
-            return cached_response
-    
-    # OpenAI-Client abrufen
-    client = get_openai_client()
-    
-    start_time = time.time()
     try:
-        # Anfrage an OpenAI senden
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            **kwargs
-        )
+        # Token-Zählung aus der gecachten Antwort extrahieren
+        input_tokens = cached_response.get('usage', {}).get('prompt_tokens', 0)
+        output_tokens = cached_response.get('usage', {}).get('completion_tokens', 0)
         
-        # Response in Dict umwandeln
-        response_dict = response.model_dump()
+        # Wenn keine Token-Zählung verfügbar, schätzen wir sie
+        if input_tokens == 0:
+            input_tokens = count_tokens(messages, model)
         
-        # Im Cache speichern, wenn aktiviert
-        if use_cache:
-            cache_response(cache_key, response_dict)
+        if output_tokens == 0 and 'choices' in cached_response:
+            content = cached_response['choices'][0].get('message', {}).get('content', '')
+            output_tokens = count_tokens(content, model)
         
-        # Token-Nutzung tracken
+        # Token-Nutzung tracken mit reduziertem Preis
         track_token_usage(
             user_id=user_id,
             session_id=session_id,
             model=model,
-            input_tokens=response.usage.prompt_tokens,
-            output_tokens=response.usage.completion_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             function_name=function_name,
-            cached=False
+            cached=True
         )
-        
-        # Erfolgreiche Anfrage protokollieren
-        logger.info(
-            f"OpenAI-Anfrage erfolgreich: Modell={model}, "
-            f"Tokens={response.usage.prompt_tokens}+{response.usage.completion_tokens}, "
-            f"Zeit={time.time() - start_time:.2f}s"
-        )
-        
-        return response_dict
-    
     except Exception as e:
-        logger.error(f"Fehler bei OpenAI-Anfrage: {type(e).__name__}: {e}")
-        raise
+        logger.warning(f"Fehler beim Tracking der Cache-Nutzung: {e}")
+
+def invalidate_cache(pattern="openai:chat:*"):
+    """
+    Ungültigmachen von Cache-Einträgen.
+    """
+    return clear_cache(pattern)
+
+# Rückwärtskompatible Klasse
+class OptimizedOpenAIClient:
+    """
+    Kompatibilitätsklasse für vorhandene Aufrufstellen.
+    Alle Methoden delegieren an die zentrale Implementierung.
+    """
+    
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        """
+        Gibt die Singleton-Instanz zurück.
+        """
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
+    @staticmethod
+    def get_model():
+        """
+        Gibt das Standard-Modell zurück.
+        """
+        from core.openai_integration import DEFAULT_MODEL
+        return DEFAULT_MODEL
+    
+    @classmethod
+    def query(cls, prompt, system_content=None, session_id=None, user_id=None, 
+             function_name=None, temperature=0.7, max_tokens=4000):
+        """
+        Einfache Schnittstelle für Textanfragen.
+        """
+        instance = cls.get_instance()
+        return instance.chat_completion(
+            prompt=prompt,
+            system_content=system_content,
+            session_id=session_id,
+            user_id=user_id,
+            function_name=function_name or "query",
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+    
+    def chat_completion(self, prompt, system_content=None, model=None, temperature=0.7, 
+                      max_tokens=4000, use_cache=True, user_id=None, session_id=None, 
+                      function_name="chat_completion", endpoint=None, max_retries=3):
+        """
+        Führt eine Chat-Completion für den gegebenen Prompt durch.
+        """
+        # Standardwerte verwenden
+        model = model or self.get_model()
+        
+        # Nachrichten erstellen
+        messages = []
+        
+        # System-Nachricht hinzufügen, wenn vorhanden
+        if system_content:
+            messages.append({"role": "system", "content": system_content})
+        
+        # Prompt als Benutzernachricht hinzufügen
+        if isinstance(prompt, str):
+            messages.append({"role": "user", "content": prompt})
+        elif isinstance(prompt, list):
+            # Wenn prompt bereits eine Liste von Nachrichten ist
+            messages.extend(prompt)
+        
+        # Chat-Completion durchführen
+        try:
+            response = chat_completion(
+                model=model,
+                messages=messages,
+                user_id=user_id,
+                session_id=session_id,
+                function_name=function_name,
+                use_cache=use_cache,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            # Antworttext extrahieren
+            content = extract_content_from_response(response)
+            
+            return {
+                "success": True,
+                "text": content,
+                "response": response
+            }
+        except Exception as e:
+            logger.error(f"Fehler bei Chat-Completion: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "text": None,
+                "response": None
+            }
+
+def calculate_cost(model, input_tokens, output_tokens):
+    """
+    Berechnet die Kosten für eine API-Anfrage basierend auf dem Modell und der Token-Anzahl.
+    
+    Args:
+        model: Das verwendete Modell
+        input_tokens: Anzahl der Eingabe-Token
+        output_tokens: Anzahl der Ausgabe-Token
+    
+    Returns:
+        float: Die berechneten Kosten in USD
+    """
+    # Standardpreise verwenden, wenn das Modell nicht in der Konfiguration enthalten ist
+    if model not in MODEL_PRICING:
+        logger.warning(f"Unbekanntes Modell für Preisberechnung: {model}, verwende gpt-4-Preise")
+        pricing = MODEL_PRICING['gpt-4']
+    else:
+        pricing = MODEL_PRICING[model]
+    
+    # Kosten berechnen
+    input_cost = input_tokens * pricing['input']
+    output_cost = output_tokens * pricing['output']
+    
+    return input_cost + output_cost
 
 def track_cached_usage(model, messages, cached_response, user_id, session_id, function_name):
     """

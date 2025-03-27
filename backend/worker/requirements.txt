@@ -1,43 +1,80 @@
-# Essentielle Abhängigkeiten
-openai[datalib]==1.10.0  # Für OpenAI-API-Zugriff
-celery==5.3.6            # Für Worker-Tasks
-billiard==4.2.0          # Celery-Abhängigkeit
-kombu==5.3.5             # Celery-Abhängigkeit
-redis==4.4.4             # Für Redis-Verbindung
-psycopg2-binary==2.9.9   # Für PostgreSQL-Verbindung
-Flask-SQLAlchemy==3.0.5  # Für Datenbankzugriff
-Flask==2.3.3             # Flask-Framework
-Flask-Cors==4.0.0        # CORS-Unterstützung
-Flask-Session==0.5.0     # Sitzungsverwaltung
-Werkzeug==2.3.8          # Flask-Abhängigkeit
-gunicorn==21.0.1         # WSGI-Server
-psutil==5.9.5            # Systemressourcenüberwachung - für Watchdog zwingend erforderlich
-requests==2.32.3         # HTTP-Anfragen für API-Checks
+# Flask und Erweiterungen
+Flask==2.3.2
+Werkzeug==2.3.6
+Flask-Cors==4.0.0
+Flask-RESTful==0.3.10
+gunicorn==21.2.0
+gevent==23.9.1
+
+# Celery und Redis
+celery==5.3.1
+redis==4.6.0
+
+# Datenbank-Anbindung
+SQLAlchemy==2.0.19
+SQLAlchemy-Utils==0.41.1
+psycopg2-binary==2.9.5
+shortuuid==1.0.11
+
+# OpenAI und KI-Bibliotheken
+openai==1.13.3
+backoff==2.2.1
+tiktoken==0.5.2
+llm-utils==0.2.3         # Hilfsbibliothek für LLM-Interaktionen
+aiohttp==3.9.1           # Für asynchrone OpenAI-Anfragen
+
+# Dateiverarbeitung und Analyse
+pytesseract==0.3.10
+pdfplumber==0.10.2
+PyMuPDF==1.22.5
+PyPDF2==3.0.1
+python-docx==1.0.1
+langdetect==1.0.9
+nltk==3.8.1
+scikit-learn==1.3.0
+spacy==3.6.1
+pypdf==3.15.1
+pdf2image==1.16.3
+Pillow==10.0.0
+pdftotext==2.2.2         # Schnelle PDF-Textextraktion
+
+# NLP-Komponenten
+transformers==4.36.2      # Für fortgeschrittene NLP-Modelle
+sentencepiece==0.2.0      # Tokenisierung für NLP
+
+# Allgemeine Hilfsbibliotheken
+python-dotenv==1.0.0
+requests==2.31.0
+tenacity==8.2.2
+pytz==2023.3
+cryptography==41.0.3
+ujson==5.8.0             # Schnellere JSON-Verarbeitung
+
+# Protokollierung und Überwachung
+psutil==5.9.5
+prometheus-client==0.20.0 # Metriken für Monitoring
+rich==13.7.0             # Verbessertes Logging
+pydantic==2.5.2           # Datenvalidierung
+
+# Dienstprogramme
+supervisor==4.2.5        # Prozessüberwachung
+PyJWT==2.8.0             # JWT-Verarbeitung
+marshmallow==3.21.1      # Daten-Serialisierung
+httpx==0.27.0            # HTTP-Client
+
+# Debugging und Tests
+pytest==7.4.0
+pytest-asyncio==0.23.2   # Für asynchrone Tests
+pytest-cov==4.1.0        # Testabdeckung
+colorama==0.4.6          # Farbiges Terminal-Logging
 
 # Zahlungs-Integration
 stripe==2.65.0           # Stripe-Zahlungen
 
 # Dateiformatunterstützung
-PyPDF2==3.0.1            # PDF-Verarbeitung
-python-docx==1.1.0       # Word-Dokumente
-PyMuPDF==1.24.10         # Erweiterte PDF-Unterstützung
 pdfminer.six==20231228   # PDF-Textextraktion
 
 # Textverarbeitungsbibliotheken
-langdetect==1.0.9        # Spracherkennung
-tiktoken                 # OpenAI Token-Zählung
 bleach==6.1.0            # HTML-Bereinigung
 
-# Dienstprogramme
-python-dotenv==1.0.1     # Umgebungsvariablen
-backoff==2.2.1           # Retry-Mechanismen
-supervisor==4.2.5        # Prozessüberwachung
-Authlib==1.3.1           # OAuth-Unterstützung
-PyJWT==2.8.0             # JWT-Verarbeitung
-marshmallow==3.21.1      # Daten-Serialisierung
-prometheus-flask-exporter==0.23.0  # Monitoring
-gevent==22.10.2          # Async-Support
-httpx==0.27.0            # HTTP-Client
-
 # Optional - je nach Anforderungen
-colorama==0.4.6          # Farbiges Terminal-Logging
