@@ -6,22 +6,24 @@ Enthält die Hauptgeschäftslogik für die Benutzerauthentifizierung.
 import logging
 from datetime import datetime, timedelta
 from uuid import uuid4
-from flask import request, jsonify, redirect, current_app
+
+from core.models import OAuthToken, Payment, User, UserActivity, db
+from flask import current_app, jsonify, redirect, request
 from flask_jwt_extended import create_access_token
-from core.models import db, User, OAuthToken, UserActivity, Payment
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
+
 
 def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = None):
     """Zentrale Funktion zur Verarbeitung von OAuth-Callbacks."""
     try:
         # Initialisiere existing_user mit None
         existing_user = None
-        
+
         # Suche nach existierendem Benutzer mit OAuth-Provider und ID
         user = User.query.filter_by(oauth_provider=provider, oauth_id=user_info['id']).first()
-        
+
         # Wenn kein Benutzer gefunden wurde, suche nach E-Mail
         if not user:
             existing_user = User.query.filter_by(email=user_info['email']).first()
@@ -43,15 +45,15 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
                     credits=0
                 )
                 db.session.add(user)
-        
+
         try:
             # Schneller Commit, um die User-ID zu erhalten
             db.session.commit()
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Fehler beim Speichern des Benutzers: {str(e)}")
+            logger.error("Fehler beim Speichern des Benutzers: %s", str(e))
             raise
-        
+
         # Speichere OAuth-Token, falls token_data vorhanden ist
         if token_data:
             # Prüfe, ob bereits ein Token für diesen Benutzer und Provider existiert
@@ -59,11 +61,11 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
                 user_id=user.id,
                 provider=provider
             ).first()
-            
+
             # Lösche das alte Token, falls vorhanden
             if existing_token:
                 db.session.delete(existing_token)
-            
+
             # Erstelle neues Token
             oauth_token = OAuthToken(
                 id=str(uuid4()),
@@ -74,7 +76,7 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
                 expires_at=datetime.utcnow() + timedelta(seconds=token_data.get('expires_in', 3600))
             )
             db.session.add(oauth_token)
-        
+
         # Protokolliere Aktivität
         activity = UserActivity(
             id=str(uuid4()),
@@ -84,18 +86,18 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
             timestamp=datetime.utcnow()
         )
         db.session.add(activity)
-        
+
         # Speichere alle Änderungen
         try:
             db.session.commit()
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Fehler beim Speichern der OAuth-Daten: {str(e)}")
+            logger.error("Fehler beim Speichern der OAuth-Daten: %s", str(e))
             raise
-        
+
         # Erstelle JWT-Token mit flask_jwt_extended
         token = create_access_token(identity=user.id)
-        
+
         # Prüfe ob es ein API-Request ist (Accept: application/json)
         if request.headers.get('Accept') == 'application/json':
             # Bei API-Anfragen JSON zurückgeben
@@ -103,19 +105,19 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
                 'access_token': token,
                 'user': user.to_dict()
             }), 200
-        else:
-            # Bei normalen Anfragen zum Frontend weiterleiten
-            frontend_url = current_app.config.get('FRONTEND_URL', 'https://www.hackthestudy.ch')
-            redirect_url = f"{frontend_url}/auth-callback?token={token}"
-            logger.info(f"Weiterleitung nach erfolgreicher Authentifizierung zu: {redirect_url}")
-            return redirect(redirect_url)
-        
+        # Bei normalen Anfragen zum Frontend weiterleiten
+        frontend_url = current_app.config.get('FRONTEND_URL', 'https://www.hackthestudy.ch')
+        redirect_url = f"{frontend_url}/auth-callback?token={token}"
+        logger.info("Weiterleitung nach erfolgreicher Authentifizierung zu: %s", redirect_url)
+        return redirect(redirect_url)
+
     except Exception as e:
-        logger.error(f"Fehler bei OAuth Callback Verarbeitung: {str(e)}")
+        logger.error("Fehler bei OAuth Callback Verarbeitung: %s", str(e))
         return jsonify({
             'error': 'Authentication failed',
             'message': str(e)
         }), 500
+
 
 def create_user_activity(user_id, activity_type, title, **kwargs):
     """Erstellt eine neue Benutzeraktivität."""
@@ -125,8 +127,8 @@ def create_user_activity(user_id, activity_type, title, **kwargs):
         if len(existing_activities) >= 5:
             oldest_activity = existing_activities[0]
             db.session.delete(oldest_activity)
-            logger.info(f"Alte Aktivität gelöscht: {oldest_activity.id}")
-        
+            logger.info("Alte Aktivität gelöscht: %s", oldest_activity.id)
+
         activity = UserActivity(
             id=str(uuid4()),
             user_id=user_id,
@@ -143,39 +145,40 @@ def create_user_activity(user_id, activity_type, title, **kwargs):
         return activity
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Fehler beim Erstellen der Benutzeraktivität: {str(e)}")
+        logger.error("Fehler beim Erstellen der Benutzeraktivität: %s", str(e))
         raise
 
-def process_payment(user_id, amount, credits, payment_method):
+
+def process_payment(user_id, amount, credit_amount, payment_method):
     """Verarbeitet eine Zahlung und aktualisiert das Benutzerkonto."""
     try:
         # Erstelle Zahlungsdatensatz
         payment = Payment(
             id=str(uuid4()),
-            user_id=user_id, 
-            amount=amount, 
-            credits=credits, 
-            payment_method=payment_method, 
-            transaction_id=str(uuid4()), 
+            user_id=user_id,
+            amount=amount,
+            credits=credit_amount,
+            payment_method=payment_method,
+            transaction_id=str(uuid4()),
             status='completed'
         )
         db.session.add(payment)
-        
+
         # Aktualisiere Benutzerguthaben
         user = User.query.get(user_id)
-        user.credits += credits
-        
+        user.credits += credit_amount
+
         # Erstelle Aktivitätseintrag
         create_user_activity(
             user_id=user_id,
             activity_type='payment',
-            title=f"Purchased {credits} credits",
+            title=f"Purchased {credit_amount} credits",
             details={'amount': amount, 'payment_method': payment_method}
         )
-        
+
         db.session.commit()
         return payment, user
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Fehler bei der Zahlungsverarbeitung: {str(e)}")
-        raise 
+        logger.error("Fehler bei der Zahlungsverarbeitung: %s", str(e))
+        raise

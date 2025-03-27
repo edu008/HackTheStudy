@@ -3,13 +3,14 @@ Basis-Datenbankmodelle für den API-Container.
 Integriert auch Datenbankinitialisierung und Verwaltungsfunktionen.
 """
 
-import os
 import logging
+import os
 from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.sql import func
-from sqlalchemy.exc import SQLAlchemyError
+
 from flask import current_app
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.sql import func
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 db = SQLAlchemy()
 
 # Datenbankinitialisierung und -verwaltung
+
+
 def init_db():
     """
     Initialisiert die Datenbank und erstellt alle Tabellen, falls sie noch nicht existieren.
@@ -26,14 +29,15 @@ def init_db():
         # Erstelle alle definierten Tabellen
         db.create_all()
         logger.info("Datenbanktabellen erfolgreich erstellt/überprüft")
-        
+
         # Optional: Initialdaten einfügen, falls nötig
         _insert_initial_data()
-        
+
         return True
     except SQLAlchemyError as e:
-        logger.error(f"Fehler bei der Datenbankinitialisierung: {str(e)}")
+        logger.error("Fehler bei der Datenbankinitialisierung: %s", str(e))
         return False
+
 
 def _insert_initial_data():
     """
@@ -46,7 +50,7 @@ def _insert_initial_data():
             # Nur ausführen, wenn keine Benutzer vorhanden sind
             if User.query.count() == 0:
                 logger.info("Keine Benutzer in der Datenbank gefunden, erstelle Test-Admin-Benutzer")
-                
+
                 # Erstelle einen Admin-Benutzer für Testzwecke
                 admin_user = User(
                     id="00000000-0000-0000-0000-000000000000",
@@ -54,15 +58,16 @@ def _insert_initial_data():
                     name="Admin User",
                     settings={"role": "admin", "is_test_account": True}
                 )
-                
+
                 db.session.add(admin_user)
                 db.session.commit()
-                
+
                 logger.info("Test-Admin-Benutzer erfolgreich erstellt")
     except SQLAlchemyError as e:
-        logger.error(f"Fehler beim Einfügen von Initialdaten: {str(e)}")
+        logger.error("Fehler beim Einfügen von Initialdaten: %s", str(e))
         # Wir wollen den Startvorgang nicht abbrechen, daher kein Raise
         db.session.rollback()
+
 
 def get_connection_info():
     """
@@ -71,7 +76,7 @@ def get_connection_info():
     """
     try:
         engine = db.engine
-        
+
         # Basisdaten über die Verbindung sammeln
         connection_info = {
             "dialect": engine.dialect.name,
@@ -80,19 +85,20 @@ def get_connection_info():
             "pool_timeout": engine.pool.timeout(),
             "database": current_app.config.get('SQLALCHEMY_DATABASE_URI', '').split('/')[-1].split('?')[0]
         }
-        
+
         # Statistiken über Tabellen abrufen
         stats = {}
         stats['users'] = User.query.count()
         stats['uploads'] = Upload.query.count()
         stats['activities'] = UserActivity.query.count()
-        
+
         connection_info['table_stats'] = stats
-        
+
         return connection_info
     except Exception as e:
-        logger.error(f"Fehler beim Abrufen der Verbindungsinformationen: {str(e)}")
+        logger.error("Fehler beim Abrufen der Verbindungsinformationen: %s", str(e))
         return {"error": str(e)}
+
 
 def check_db_connection():
     """
@@ -103,13 +109,14 @@ def check_db_connection():
         db.session.execute("SELECT 1")
         return True
     except Exception as e:
-        logger.error(f"Datenbankverbindungsfehler: {str(e)}")
+        logger.error("Datenbankverbindungsfehler: %s", str(e))
         return False
+
 
 class User(db.Model):
     """Benutzermodell für die Authentifizierung und Profilinformationen."""
     __tablename__ = 'user'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False)
     name = db.Column(db.String(120), nullable=False)
@@ -117,7 +124,7 @@ class User(db.Model):
     oauth_provider = db.Column(db.String(50), nullable=True)
     oauth_id = db.Column(db.String(100), nullable=True)
     credits = db.Column(db.Integer, nullable=True)
-    
+
     # Beziehungen
     uploads = db.relationship('Upload', backref='user', lazy=True)
     activities = db.relationship('UserActivity', backref='user', lazy=True)
@@ -137,10 +144,11 @@ class User(db.Model):
             'credits': self.credits
         }
 
+
 class Upload(db.Model):
     """Modell für hochgeladene Dateien und Dokumente."""
     __tablename__ = 'upload'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     session_id = db.Column(db.String(36), nullable=False, unique=True, index=True)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id', ondelete='SET NULL'), nullable=True, index=True)
@@ -156,12 +164,17 @@ class Upload(db.Model):
     updated_at = db.Column(db.DateTime, nullable=True, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
     last_used_at = db.Column(db.DateTime, nullable=True, index=True)
     processing_status = db.Column(db.String(50), nullable=True, index=True)
-    
+
     # Beziehungen
     topics = db.relationship('Topic', backref='upload', lazy=True, cascade="all, delete-orphan")
     questions = db.relationship('Question', backref='upload', lazy=True, cascade="all, delete-orphan")
     flashcards = db.relationship('Flashcard', backref='upload', lazy=True, cascade="all, delete-orphan")
-    connections = db.relationship('Connection', backref='upload', lazy=True, foreign_keys='Connection.upload_id', cascade="all, delete-orphan")
+    connections = db.relationship(
+        'Connection',
+        backref='upload',
+        lazy=True,
+        foreign_keys='Connection.upload_id',
+        cascade="all, delete-orphan")
 
     def to_dict(self):
         """Konvertiert das Model in ein Dictionary."""
@@ -183,10 +196,11 @@ class Upload(db.Model):
             'processing_status': self.processing_status
         }
 
+
 class UserActivity(db.Model):
     """Modell für Benutzeraktivitäten."""
     __tablename__ = 'user_activity'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
     activity_type = db.Column(db.String(50), nullable=False)
@@ -211,16 +225,17 @@ class UserActivity(db.Model):
             'timestamp': self.timestamp.isoformat() if self.timestamp else None
         }
 
+
 class Connection(db.Model):
     """Modell für Verbindungen zwischen Themen/Elementen."""
     __tablename__ = 'connection'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
     source_id = db.Column(db.String(36), db.ForeignKey('topic.id'), nullable=False, index=True)
     target_id = db.Column(db.String(36), db.ForeignKey('topic.id'), nullable=False, index=True)
     label = db.Column(db.String(500), nullable=False)
-    
+
     # Beziehungen zu Topics
     source = db.relationship('Topic', foreign_keys=[source_id])
     target = db.relationship('Topic', foreign_keys=[target_id])
@@ -235,10 +250,11 @@ class Connection(db.Model):
             'label': self.label
         }
 
+
 class Flashcard(db.Model):
     """Modell für Lernkarten."""
     __tablename__ = 'flashcard'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
     question = db.Column(db.Text, nullable=False)
@@ -253,10 +269,11 @@ class Flashcard(db.Model):
             'answer': self.answer
         }
 
+
 class OAuthToken(db.Model):
     """Modell für OAuth Authentifizierungs-Tokens."""
     __tablename__ = 'o_auth_token'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
     provider = db.Column(db.String(50), nullable=False)
@@ -273,10 +290,11 @@ class OAuthToken(db.Model):
             'expires_at': self.expires_at.isoformat() if self.expires_at else None
         }
 
+
 class Payment(db.Model):
     """Modell für Zahlungen und Kreditkäufe."""
     __tablename__ = 'payment'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
     amount = db.Column(db.Float, nullable=False)
@@ -299,10 +317,11 @@ class Payment(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+
 class Question(db.Model):
     """Modell für Fragen/Quiz zu Uploads."""
     __tablename__ = 'question'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     upload_id = db.Column(db.String(36), db.ForeignKey('upload.id'), nullable=False)
     text = db.Column(db.String(500), nullable=False)
@@ -321,10 +340,11 @@ class Question(db.Model):
             'explanation': self.explanation
         }
 
+
 class TokenUsage(db.Model):
     """Modell für Token-Nutzungsverfolgung."""
     __tablename__ = 'token_usage'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=True)
     session_id = db.Column(db.String(255), nullable=True)
@@ -355,10 +375,11 @@ class TokenUsage(db.Model):
             'request_metadata': self.request_metadata
         }
 
+
 class Topic(db.Model):
     """Modell für Themen aus Uploads."""
     __tablename__ = 'topic'
-    
+
     id = db.Column(db.String(36), primary_key=True)
     upload_id = db.Column(db.String(36), db.ForeignKey('upload.id', ondelete='CASCADE'), nullable=False, index=True)
     name = db.Column(db.String(200), nullable=False, index=True)
@@ -366,20 +387,20 @@ class Topic(db.Model):
     parent_id = db.Column(db.String(36), db.ForeignKey('topic.id', ondelete='CASCADE'), nullable=True, index=True)
     description = db.Column(db.Text, nullable=True)
     is_key_term = db.Column(db.Boolean, nullable=True, index=True)
-    
+
     # Rekursive Beziehung für Hierarchie
     subtopics = db.relationship(
-        'Topic', 
+        'Topic',
         backref=db.backref('parent', remote_side=[id]),
         cascade="all, delete-orphan",
         single_parent=True
     )
-    
+
     # Beziehungen zu Verbindungen
-    outgoing_connections = db.relationship('Connection', foreign_keys='Connection.source_id', 
-                                         backref='source_topic', lazy='dynamic')
-    incoming_connections = db.relationship('Connection', foreign_keys='Connection.target_id', 
-                                         backref='target_topic', lazy='dynamic')
+    outgoing_connections = db.relationship('Connection', foreign_keys='Connection.source_id',
+                                           backref='source_topic', lazy='dynamic')
+    incoming_connections = db.relationship('Connection', foreign_keys='Connection.target_id',
+                                           backref='target_topic', lazy='dynamic')
 
     def to_dict(self):
         """Konvertiert das Model in ein Dictionary."""
@@ -391,4 +412,4 @@ class Topic(db.Model):
             'parent_id': self.parent_id,
             'description': self.description,
             'is_key_term': self.is_key_term
-        } 
+        }

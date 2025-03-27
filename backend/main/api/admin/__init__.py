@@ -3,9 +3,16 @@ Administrationsmodul für den API-Container.
 Bietet Funktionen für Systemverwaltung, Debugging und Überwachung.
 """
 
-import os
 import logging
+import os
+
 from flask import Blueprint
+
+from .auth import admin_required
+from .cache import clear_cache, get_cache_stats
+from .debugging import get_openai_errors, test_openai_api, toggle_openai_debug
+from .routes import register_routes
+from .token_usage import get_token_stats, get_top_users
 
 # Blueprint erstellen
 admin_bp = Blueprint('admin', __name__)
@@ -14,15 +21,10 @@ admin_bp = Blueprint('admin', __name__)
 logger = logging.getLogger(__name__)
 
 # Importiere alle Submodule
-from .auth import admin_required
-from .cache import get_cache_stats, clear_cache
-from .token_usage import get_token_stats, get_top_users
-from .debugging import toggle_openai_debug, test_openai_api, get_openai_errors
-from .routes import register_routes
 
 # Exportiere wichtige Komponenten
 __all__ = [
     'admin_bp',
     'admin_required',
     'register_routes'
-] 
+]

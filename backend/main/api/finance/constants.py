@@ -38,35 +38,36 @@ TOKEN_CREDITS = {
     }
 }
 
+
 def calculate_credits(amount_in_cents):
     """
     Berechnet die Credits basierend auf dem Betrag in Rappen.
-    
+
     Args:
         amount_in_cents (int): Der Betrag in Rappen
-        
+
     Returns:
         int: Die Anzahl der Credits
     """
     if amount_in_cents == PRICES['standard']:
         return CREDITS['standard']
-    elif amount_in_cents == PRICES['premium']:
+    if amount_in_cents == PRICES['premium']:
         return CREDITS['premium']
-    elif amount_in_cents == PRICES['ultimate']:
+    if amount_in_cents == PRICES['ultimate']:
         return CREDITS['ultimate']
-    else:
-        # Fallback für unbekannte Beträge: 10 Credits pro Franken
-        return amount_in_cents // 100 * 10
+    # Fallback für unbekannte Beträge: 10 Credits pro Franken
+    return amount_in_cents // 100 * 10
+
 
 def token_to_credits(model, input_tokens, output_tokens):
     """
     Berechnet die Credits basierend auf Token-Nutzung und Modell.
-    
+
     Args:
         model (str): Das verwendete Modell
         input_tokens (int): Die Anzahl der Input-Token
         output_tokens (int): Die Anzahl der Output-Token
-        
+
     Returns:
         float: Die Anzahl der Credits
     """
@@ -75,19 +76,20 @@ def token_to_credits(model, input_tokens, output_tokens):
     output_cost = (output_tokens / 1000) * model_rates['output']
     return round(input_cost + output_cost, 2)
 
-def credits_to_token(model, credits, is_output=True):
+
+def credits_to_token(model, credit_amount, is_output=True):
     """
     Berechnet die maximale Anzahl von Token, die mit den angegebenen Credits generiert werden können.
-    
+
     Args:
         model (str): Das verwendete Modell
-        credits (float): Die Anzahl der verfügbaren Credits
+        credit_amount (float): Die Anzahl der verfügbaren Credits
         is_output (bool): True, wenn Output-Token berechnet werden sollen
-        
+
     Returns:
         int: Die maximale Anzahl von Token
     """
     model_rates = TOKEN_CREDITS.get(model, TOKEN_CREDITS['gpt-3.5-turbo'])
     token_type = 'output' if is_output else 'input'
     tokens_per_credit = 1000 / model_rates[token_type]
-    return int(credits * tokens_per_credit) 
+    return int(credit_amount * tokens_per_credit)

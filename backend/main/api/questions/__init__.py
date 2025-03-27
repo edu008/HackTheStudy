@@ -15,25 +15,24 @@ Dieses Modul bietet eine modularisierte Struktur für die Verwaltung von Testfra
 
 from flask import Blueprint
 
+from .controllers import (process_generate_more_questions,
+                          process_generate_questions)
+from .generation import (generate_additional_questions,
+                         generate_fallback_questions, generate_questions)
+from .models import get_questions, save_question
+from .routes import *
+from .schemas import QuestionRequestSchema
+from .utils import detect_language_wrapper, format_questions
+from .validation import (sanitize_question, sanitize_question_options,
+                         sanitize_question_text, validate_generated_questions,
+                         validate_question_data)
+
 # Erstelle den Blueprint für das Questions-Modul
 questions_bp = Blueprint('questions', __name__)
 
 # Importiere die Routen, um sie zu registrieren
-from .routes import *
 
 # Exportiere wichtige Komponenten
-from .generation import generate_questions, generate_additional_questions, generate_fallback_questions
-from .controllers import process_generate_questions, process_generate_more_questions
-from .models import get_questions, save_question
-from .schemas import QuestionRequestSchema
-from .validation import (
-    validate_question_data, 
-    validate_generated_questions,
-    sanitize_question, 
-    sanitize_question_text, 
-    sanitize_question_options
-)
-from .utils import format_questions, detect_language_wrapper
 
 __all__ = [
     'questions_bp',

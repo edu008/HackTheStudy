@@ -15,25 +15,23 @@ Dieses Modul bietet eine modularisierte Struktur für die Verwaltung von Lernkar
 
 from flask import Blueprint
 
+from .controllers import (process_generate_flashcards,
+                          process_generate_more_flashcards)
+from .generation import generate_additional_flashcards, generate_flashcards
+from .models import get_flashcards, save_flashcard
+from .routes import *
+from .schemas import FlashcardRequestSchema
+from .utils import detect_language_wrapper, format_flashcards
+from .validation import (sanitize_flashcard, sanitize_flashcard_back,
+                         sanitize_flashcard_front, validate_flashcard_data,
+                         validate_generated_flashcards)
+
 # Erstelle den Blueprint für das Flashcards-Modul
 flashcards_bp = Blueprint('flashcards', __name__)
 
 # Importiere die Routen, um sie zu registrieren
-from .routes import *
 
 # Exportiere wichtige Komponenten
-from .generation import generate_flashcards, generate_additional_flashcards
-from .controllers import process_generate_flashcards, process_generate_more_flashcards
-from .models import get_flashcards, save_flashcard
-from .schemas import FlashcardRequestSchema
-from .validation import (
-    validate_flashcard_data, 
-    validate_generated_flashcards,
-    sanitize_flashcard, 
-    sanitize_flashcard_front, 
-    sanitize_flashcard_back
-)
-from .utils import format_flashcards, detect_language_wrapper
 
 __all__ = [
     'flashcards_bp',
@@ -51,4 +49,4 @@ __all__ = [
     'sanitize_flashcard_back',
     'format_flashcards',
     'detect_language_wrapper'
-] 
+]

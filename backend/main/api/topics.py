@@ -9,23 +9,31 @@ Diese Datei importiert alle notwendigen Funktionen aus dem neuen modularen Topic
 um Abwärtskompatibilität mit bestehendem Code zu gewährleisten.
 """
 
-# Importiere alle öffentlichen Komponenten aus dem neuen modularen System
-from flask import Blueprint
-from . import api_bp
-
-# Steuere unsere Blueprint-Routen mit dem Blueprint des modularen Topics-Moduls
-from api.topics.routes import *
-
-# Importiere alle notwendigen Funktionen explizit
-from api.topics.generation import generate_topics, generate_related_topics
-from api.topics.concept_map import generate_concept_map_suggestions
-from api.topics.models import get_topic_hierarchy, create_topic, create_connection
-from api.topics.utils import process_topic_response, find_upload_by_session, build_topic_prompt
-
 # Logger, der Verwendung der alten API dokumentiert
 import logging
+
+# Importiere den Namespace als Ganzes für bessere Modularität
+from .topics import concept_map, generation, models, routes, utils
+
 logger = logging.getLogger(__name__)
 logger.warning(
     "Die Datei topics.py wird verwendet, die aus Gründen der Abwärtskompatibilität beibehalten wird. "
     "Bitte verwenden Sie für neue Implementierungen das api.topics-Modul."
 )
+
+# Importiere Blueprint explizit für Kompatibilität
+try:
+    topics_bp = routes.topics_bp
+except AttributeError:
+    topics_bp = None
+    logger.error("Konnte topics_bp nicht importieren")
+
+# Exportiere Module für Abwärtskompatibilität
+__all__ = [
+    'topics_bp',
+    'concept_map',
+    'generation',
+    'models',
+    'routes',
+    'utils'
+]

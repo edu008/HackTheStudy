@@ -1,10 +1,13 @@
-from flask import jsonify, request, Blueprint
-from . import api_bp
-from .auth import token_required
-from core.models import db, Upload, Flashcard, Question, UserActivity
 import logging
 
+from core.models import Flashcard, Question, Upload, UserActivity, db
+from flask import Blueprint, jsonify, request
+
+from . import api_bp
+from .auth import token_required
+
 logger = logging.getLogger(__name__)
+
 
 @api_bp.route('/user/uploads', methods=['GET', 'OPTIONS'])
 def get_user_uploads():
@@ -12,14 +15,14 @@ def get_user_uploads():
     if request.method == 'OPTIONS':
         response = jsonify({"success": True})
         return response
-        
+
     # Authentifizierung für nicht-OPTIONS Anfragen
     auth_decorator = token_required(lambda: None)
     auth_result = auth_decorator()
     if auth_result is not None:
         return auth_result
-    
-    logger.info(f"Fetching uploads for user_id: {request.user_id}")
+
+    logger.info("Fetching uploads for user_id: %s", request.user_id)
     uploads = Upload.query.filter_by(user_id=request.user_id).order_by(Upload.upload_date.desc()).all()
     uploads_data = [
         {
@@ -33,23 +36,24 @@ def get_user_uploads():
     ]
     return jsonify({"success": True, "uploads": uploads_data}), 200
 
+
 @api_bp.route('/user-history', methods=['GET', 'OPTIONS'])
 def get_user_history():
     # OPTIONS-Anfragen sofort beantworten
     if request.method == 'OPTIONS':
         response = jsonify({"success": True})
         return response
-        
+
     # Authentifizierung für nicht-OPTIONS Anfragen
     auth_decorator = token_required(lambda: None)
     auth_result = auth_decorator()
     if auth_result is not None:
         return auth_result
-    
+
     try:
         # Hole alle Aktivitäten des aktuellen Benutzers
         activities = UserActivity.query.filter_by(user_id=request.user_id).order_by(UserActivity.timestamp.desc()).all()
-        
+
         activity_list = [{
             'id': activity.id,
             'user_id': activity.user_id,
@@ -64,8 +68,9 @@ def get_user_history():
 
         return jsonify({'success': True, 'activities': activity_list})
     except Exception as e:
-        logger.error(f"Fehler beim Abrufen der User-History: {str(e)}")
+        logger.error("Fehler beim Abrufen der User-History: %s", str(e))
         return jsonify({'success': False, 'message': 'Fehler beim Abrufen der Aktivitäten'}), 500
+
 
 @api_bp.route('/user-history/<activity_id>', methods=['PUT', 'OPTIONS'])
 def update_activity_timestamp(activity_id):
@@ -73,24 +78,25 @@ def update_activity_timestamp(activity_id):
     if request.method == 'OPTIONS':
         response = jsonify({"success": True})
         return response
-        
+
     # Authentifizierung für nicht-OPTIONS Anfragen
     auth_decorator = token_required(lambda: None)
     auth_result = auth_decorator()
     if auth_result is not None:
         return auth_result
-    
+
     try:
         activity = UserActivity.query.filter_by(id=activity_id, user_id=request.user_id).first()
         if not activity:
             return jsonify({'success': False, 'message': 'Aktivität nicht gefunden'}), 404
-        
+
         # Aktualisiere den timestamp auf den aktuellen Zeitpunkt
         activity.timestamp = db.func.current_timestamp()
         db.session.commit()
-        
-        return jsonify({'success': True, 'message': 'Aktivität aktualisiert', 'timestamp': activity.timestamp.isoformat()})
+
+        return jsonify({'success': True, 'message': 'Aktivität aktualisiert',
+                       'timestamp': activity.timestamp.isoformat()})
     except Exception as e:
-        logger.error(f"Fehler beim Aktualisieren der Aktivität: {str(e)}")
+        logger.error("Fehler beim Aktualisieren der Aktivität: %s", str(e))
         db.session.rollback()
         return jsonify({'success': False, 'message': 'Fehler beim Aktualisieren der Aktivität'}), 500

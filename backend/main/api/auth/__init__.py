@@ -5,14 +5,15 @@ Bietet Funktionen für OAuth, JWT und Benutzeridentifikation.
 
 from flask import Blueprint
 
+from .controllers import handle_oauth_callback
+from .oauth_providers import get_user_info, setup_oauth, validate_provider
+from .routes import register_routes
+from .token_auth import token_required
+
 # Blueprint erstellen
 auth_bp = Blueprint('auth', __name__)
 
 # Importiere alle Submodule
-from .oauth_providers import setup_oauth, validate_provider, get_user_info
-from .token_auth import token_required
-from .controllers import handle_oauth_callback
-from .routes import register_routes
 
 # Exportiere wichtige Komponenten
 __all__ = [
@@ -23,4 +24,4 @@ __all__ = [
     'get_user_info',
     'handle_oauth_callback',
     'register_routes'
-] 
+]

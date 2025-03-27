@@ -1,34 +1,33 @@
 # Flask und Erweiterungen
-Flask==2.3.2
-Werkzeug==2.3.6
+Flask==2.3.3
+Werkzeug==2.3.8
 Flask-Cors==4.0.0
 Flask-RESTful==0.3.10
 gunicorn==21.2.0
 gevent==23.9.1
 
 # Celery und Redis
-celery==5.3.1
-redis==4.6.0
+celery==5.3.6
+redis==4.4.4
 
 # Datenbank-Anbindung
 SQLAlchemy==2.0.19
 SQLAlchemy-Utils==0.41.1
-psycopg2-binary==2.9.5
+psycopg2-binary==2.9.9
 shortuuid==1.0.11
 
 # OpenAI und KI-Bibliotheken
-openai==1.13.3
+openai[datalib]==1.10.0
 backoff==2.2.1
 tiktoken==0.5.2
-llm-utils==0.2.3         # Hilfsbibliothek für LLM-Interaktionen
-aiohttp==3.9.1           # Für asynchrone OpenAI-Anfragen
+aiohttp==3.9.1
 
 # Dateiverarbeitung und Analyse
 pytesseract==0.3.10
 pdfplumber==0.10.2
-PyMuPDF==1.22.5
+PyMuPDF==1.24.10
 PyPDF2==3.0.1
-python-docx==1.0.1
+python-docx==1.1.0
 langdetect==1.0.9
 nltk==3.8.1
 scikit-learn==1.3.0
@@ -38,40 +37,55 @@ pdf2image==1.16.3
 Pillow==10.0.0
 
 # NLP-Komponenten
-transformers==4.36.2      # Für fortgeschrittene NLP-Modelle
-sentencepiece==0.2.0      # Tokenisierung für NLP
+transformers==4.36.2
+sentencepiece==0.2.0
 
 # Allgemeine Hilfsbibliotheken
-python-dotenv==1.0.0
-requests==2.31.0
+python-dotenv==1.0.1
+requests==2.32.3
 tenacity==8.2.2
 pytz==2023.3
 cryptography==41.0.3
-ujson==5.8.0             # Schnellere JSON-Verarbeitung
+ujson==5.8.0
+colorama==0.4.6
+numpy==1.26.4
 
 # Protokollierung und Überwachung
 psutil==5.9.5
-prometheus-client==0.20.0 # Metriken für Monitoring
-rich==13.7.0             # Verbessertes Logging
-pydantic==2.5.2           # Datenvalidierung
+prometheus-client==0.20.0
+rich==13.7.0
+pydantic==2.5.2
 
 # Dienstprogramme
-supervisor==4.2.5        # Prozessüberwachung
-PyJWT==2.8.0             # JWT-Verarbeitung
-marshmallow==3.21.1      # Daten-Serialisierung
-httpx==0.27.0            # HTTP-Client
+supervisor==4.2.5
+PyJWT==2.8.0
+marshmallow==3.21.1
+httpx==0.27.0
 
-# Debugging und Tests
+# Testing
 pytest==7.4.0
-pytest-asyncio==0.23.2   # Für asynchrone Tests
-pytest-cov==4.1.0        # Testabdeckung
-colorama==0.4.6          # Farbiges Terminal-Logging
+pytest-asyncio==0.23.2
+pytest-cov==4.1.0
 
 # Zahlungs-Integration
-stripe==2.65.0           # Stripe-Zahlungen
-
+stripe==2.65.0
 
 # Textverarbeitungsbibliotheken
-bleach==6.1.0            # HTML-Bereinigung
+bleach==6.1.0
+
+# Fachspezifische Pakete
+Flask-SQLAlchemy==3.0.5
+Flask-Migrate==4.0.5
+Flask-Caching==2.1.0
+Flask-JWT-Extended==4.6.0
+Authlib==1.3.1
+Flask-OAuthlib==0.9.6
+prometheus-flask-exporter==0.23.0
+
+# Entwicklungsabhängigkeiten
+pylint==2.17.5
+autopep8==2.0.4
+isort==5.12.0
 
 # Optional - je nach Anforderungen
+

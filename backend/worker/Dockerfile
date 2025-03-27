@@ -1,27 +1,28 @@
 # Multi-Stage Build für optimierte Container-Größe
 FROM python:3.10-slim AS builder
 
-# Build-Abhängigkeiten
+# Build-Abhängigkeiten installieren
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libc6-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Arbeitsverzeichnis im Container
+# Arbeitsverzeichnis festlegen
 WORKDIR /build
 
-# Abhängigkeiten kopieren und installieren (nur im Builder-Stage)
+# Abhängigkeiten kopieren und vorbauen
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt && \
-    pip wheel --no-cache-dir --wheel-dir=/wheels requests==2.31.0 psutil==5.9.5 backoff==2.2.1
+    pip wheel --no-cache-dir --wheel-dir=/wheels requests==2.32.3 psutil==5.9.5 backoff==2.2.1
 
-# Finales Image ohne Build-Tools
+# Finales Image
 FROM python:3.10-slim
 
-# DigitalOcean-optimierte Umgebungsvariablen
+# Umgebungsvariablen setzen
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONIOENCODING=UTF-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -36,6 +37,9 @@ ENV PYTHONUNBUFFERED=1 \
     DO_APP_PLATFORM=true \
     USE_COLORED_LOGS=false \
     DIGITAL_OCEAN_DEPLOYMENT=true \
+    # Speicherverwaltung für bessere Stabilität
+    PYTHONMALLOC=malloc \
+    MALLOC_TRIM_THRESHOLD_=65536 \
     # Celery-Konfiguration für optimierte Leistung
     CELERY_WORKERS=1 \
     CELERY_MAX_TASKS_PER_CHILD=10 \
@@ -45,7 +49,8 @@ ENV PYTHONUNBUFFERED=1 \
     CELERY_WORKER_WITHOUT_HEARTBEAT=1 \
     CELERY_WORKER_WITHOUT_GOSSIP=1 \
     CELERY_WORKER_WITHOUT_MINGLE=1 \
-    CELERY_WORKER_SEND_TASK_EVENTS=0 \
+    CELERY_WORKER_SEND_TASK_EVENTS=1 \
+    CELERY_TASK_EVENTS=1 \
     CELERY_POOL=solo \
     # Logging-Konfiguration
     LOG_PREFIX="[WORKER] " \
@@ -67,7 +72,7 @@ ENV PYTHONUNBUFFERED=1 \
     # Redis-Authentifizierung
     REDIS_PASSWORD=hackthestudy_redis_password
 
-# Installiere nur die für Laufzeit benötigten Abhängigkeiten
+# Laufzeitabhängigkeiten installieren
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     postgresql-client \
@@ -83,38 +88,49 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Arbeitsverzeichnis im Container festlegen
+# Nicht-Root-Benutzer erstellen
+RUN useradd -m -u 1000 appuser
+
+# Arbeitsverzeichnis festlegen
 WORKDIR /app
 
-# Erstelle alle benötigten Verzeichnisse
-RUN mkdir -p /app/config /app/core /app/health /app/redis_utils /app/resource_manager /app/tasks /app/utils /app/api /app/openaicache /var/log/app /var/log/hackthestudy
+# Verzeichnisstruktur erstellen (angepasst für vollständige Konsistenz mit dem Main-Container)
+RUN mkdir -p /app/config /app/core /app/api /app/health /app/redis_utils /app/resource_manager \
+    /app/tasks /app/utils /app/openaicache /app/bootstrap \
+    /app/api/auth /app/api/admin /app/api/uploads /app/api/topics /app/api/questions /app/api/flashcards /app/api/finance \
+    /app/api/errors /app/api/utils \
+    /var/log/app /var/log/hackthestudy \
+    && touch /var/log/worker-stdout.log /var/log/worker-stderr.log \
+    && chmod 666 /var/log/worker-stdout.log /var/log/worker-stderr.log \
+    && chmod 777 /var/log/hackthestudy
 
-# Kopiere die Wheels und requirements.txt aus dem Builder-Stage
+# Wheels und requirements.txt aus dem Builder-Stage kopieren
 COPY --from=builder /wheels /wheels
 COPY --from=builder /build/requirements.txt /app/requirements.txt
 
-# Installiere die Abhängigkeiten
-RUN pip install --no-index --find-links=/wheels requests==2.31.0 psutil==5.9.5 backoff==2.2.1 \
+# Abhängigkeiten installieren
+RUN pip install --no-index --find-links=/wheels requests==2.32.3 psutil==5.9.5 backoff==2.2.1 \
     && pip install --no-index --find-links=/wheels -r /app/requirements.txt \
     && rm -rf /wheels
 
-# Kopiere die Quellcodedateien der Microservice-Struktur
-# Erst die Config-Verzeichnisse kopieren
-COPY config/ ./config/
+# Basisstruktur erstellen
+RUN touch /app/core/__init__.py
 
-# Danach die restlichen Module
-COPY core/ ./core/
-COPY health/ ./health/
-COPY redis_utils/ ./redis_utils/
-COPY resource_manager/ ./resource_manager/
-COPY tasks/ ./tasks/
-COPY utils/ ./utils/
-COPY api/ ./api/
-COPY openaicache/ ./openaicache/
-
-# Kopiere die Hauptdateien
+# Anwendungsdateien kopieren - nach der neuen Architektur
+# Exakt dieselbe Struktur wie im Main-Container verwenden
 COPY app.py .
 COPY __init__.py .
+COPY api/ ./api/
+COPY core/ ./core/
+COPY config/ ./config/
+COPY redis_utils/ ./redis_utils/
+COPY resource_manager/ ./resource_manager/
+COPY tasks.py .
+COPY resources.py .
+COPY utils/ ./utils/
+COPY bootstrap/ ./bootstrap/
+COPY health/ ./health/
+COPY openaicache/ ./openaicache/
 
 # Erstelle Startup-Skript, das auf Redis wartet
 RUN echo '#!/bin/bash\n\
@@ -145,15 +161,12 @@ done\n\
 # Starte den Worker\n\
 exec python -m app\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
-# Erstelle leere Log-Dateien mit korrekten Berechtigungen
-RUN mkdir -p /var/log/app /var/log/hackthestudy \
-    && touch /var/log/worker-stdout.log /var/log/worker-stderr.log \
-    && chmod 666 /var/log/worker-stdout.log /var/log/worker-stderr.log \
-    && chmod 777 /var/log/hackthestudy
-
 # Datei-Deskriptoren-Limit erhöhen
 RUN echo "* soft nofile 65536" >> /etc/security/limits.conf && \
     echo "* hard nofile 65536" >> /etc/security/limits.conf
+
+# Dateibesitzer ändern
+RUN chown -R appuser:appuser /app /var/log
 
 # Verbesserter Healthcheck für Worker
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
@@ -164,6 +177,9 @@ EXPOSE 8080
 
 # Umgebungsvariable für verbesserte Redis-Erkennung
 ENV REDIS_FALLBACK_URLS="api,api.backend,api.hackthestudy-backend,api:6379,localhost:6379,redis:6379"
+
+# Als appuser ausführen (statt root) - verbesserte Sicherheit
+USER appuser
 
 # Starte den Worker mit dem neuen Entrypoint-Skript
 CMD ["/app/entrypoint.sh"] 

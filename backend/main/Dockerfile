@@ -37,9 +37,11 @@ ENV PYTHONUNBUFFERED=1 \
     USE_COLORED_LOGS=false \
     DIGITAL_OCEAN_DEPLOYMENT=true \
     PORT=8080 \
+    HEALTH_PORT=8081 \
     # Redis- und OpenAI-Cache-Konfiguration
     REDIS_URL=redis://localhost:6379/0 \
     REDIS_HOST=localhost \
+    REDIS_PASSWORD=hackthestudy_redis_password \
     OPENAI_CACHE_ENABLED=true \
     OPENAI_CACHE_TTL=86400 \
     OPENAI_MAX_RETRIES=3
@@ -85,7 +87,7 @@ RUN sed -i 's/bind 127.0.0.1/bind 0.0.0.0/g' /etc/redis/redis.conf \
     && sed -i 's/save 900 1/save 3600 1/g' /etc/redis/redis.conf \
     && sed -i 's/save 300 10/save ""/' /etc/redis/redis.conf \
     && sed -i 's/save 60 10000/save ""/' /etc/redis/redis.conf \
-    && sed -i 's/# requirepass foobared/requirepass hackthestudy_redis_password/g' /etc/redis/redis.conf
+    && sed -i 's/# requirepass foobared/requirepass ${REDIS_PASSWORD}/g' /etc/redis/redis.conf
 
 # Kopiere die Wheels und requirements.txt aus dem Builder-Stage
 COPY --from=builder /wheels /wheels
@@ -126,22 +128,22 @@ RUN chown -R appuser:appuser /app /var/log
 # Ports freigeben
 EXPOSE 8080 8081 6379
 
-# Healthcheck für DigitalOcean App Platform - prüft den Health-Check-Server
+# Healthcheck für DigitalOcean App Platform - optimiert für einen primären Endpunkt
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/api/v1/simple-health || curl -f http://localhost:8080/ping || curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Wechsle zum nicht-root Benutzer für mehr Sicherheit
+USER appuser
 
 # Starte Redis im Hintergrund und dann die Flask-Anwendung
 CMD /usr/bin/redis-server /etc/redis/redis.conf --daemonize yes && \
     echo "Redis gestartet, warte 2 Sekunden..." && \
     sleep 2 && \
-    redis-cli ping && \
+    redis-cli -a ${REDIS_PASSWORD} ping && \
     echo "Redis bereit, starte Flask-App..." && \
     export FLASK_APP=app.py && \
     export FLASK_RUN_HOST=0.0.0.0 && \
-    export FLASK_RUN_PORT=8080 && \
-    export APP_PORT=8080 && \
-    export HEALTH_PORT=8081 && \
-    export PORT=8080 && \
-    export REDIS_URL=redis://localhost:6379/0 && \
-    export REDIS_HOST=localhost && \
+    export FLASK_RUN_PORT=${PORT} && \
+    export APP_PORT=${PORT} && \
+    export HEALTH_PORT=${HEALTH_PORT} && \
     python app.py 

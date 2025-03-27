@@ -1,0 +1,99 @@
+[MAIN]
+# Verwende mehrere Prozesse für schnelleres Linting
+jobs=4
+
+# Python-Version angeben
+py-version = 3.10
+
+# Ignoriere bestimmte Warnungen
+disable=
+    C0103, # Naming style (für kürze Variablennamen)
+    C0111, # Missing docstring
+    C0303, # Trailing whitespace
+    W0212, # Access to a protected member
+    W0703, # Broad except
+    W1201, # Specify format argument
+    R0903, # Too few public methods
+    R0913, # Too many arguments
+    R0914, # Too many local variables
+    E1101, # No member (für dynamische Attribute)
+    W1203, # F-Strings in Logging-Funktionen
+    C0413, # Import sollte am Anfang des Moduls stehen
+    C0412, # Unsortierte Imports
+    W0611, # Ungenutzte Imports
+    C0415, # Import außerhalb des Top-Levels
+    W0613, # Unbenutzte Argumente
+    W0102, # Gefährlicher Default-Wert [] als Default-Parameter
+
+# Ignoriere bestimmte Dateien und Verzeichnisse
+ignore=
+    __pycache__,
+    .git,
+    .env,
+    venv,
+    bootstrap,
+    __init__.py
+
+# Maximale Zeilenlänge
+max-line-length=120
+
+[REPORTS]
+# Detailgrad des Reports
+reports=yes
+evaluation=10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10)
+output-format=text
+score=yes
+
+[FORMAT]
+# Maximale Zeilenlänge
+max-line-length=120
+max-module-lines=2000
+indent-string='    '
+
+[SIMILARITIES]
+# Prüfung auf Code-Duplikate
+min-similarity-lines=4
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+
+[TYPECHECK]
+# Konfiguration der Typüberprüfung
+ignore-mixin-members=yes
+ignored-modules=
+    flask_sqlalchemy,
+    flask_migrate,
+    celery,
+    sqlalchemy,
+    alembic,
+    flask_jwt_extended,
+    flask_cors
+
+[VARIABLES]
+# Ignoriere bestimmte Variablennamen
+dummy-variables-rgx=_|dummy|temp|unused
+
+[BASIC]
+# Basis-Überprüfungen
+good-names=i,j,k,ex,Run,_,id,db,app,e,f
+
+[LOGGING]
+# Logging-Konfiguration
+logging-modules=logging
+
+[DESIGN]
+# Design-Überprüfungen
+max-args=10
+max-locals=25
+max-returns=10
+max-branches=15
+max-statements=75
+max-parents=10
+max-attributes=15
+min-public-methods=0
+max-public-methods=30
+
+[IMPORTS]
+# Import-Überprüfungen
+allow-wildcard-with-all=no
+analyse-fallback-blocks=no 

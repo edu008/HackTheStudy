@@ -2,7 +2,7 @@
 Fehlerbehandlungsmodul für das Backend
 --------------------------------------
 
-Dieses Modul bietet eine modulare Struktur für die Fehlerbehandlung, 
+Dieses Modul bietet eine modulare Struktur für die Fehlerbehandlung,
 aufgeteilt in verschiedene spezialisierte Komponenten:
 
 - constants: Fehlerkonstanten und Statuscodes
@@ -15,22 +15,23 @@ aufgeteilt in verschiedene spezialisierte Komponenten:
 
 # Importiere alle öffentlichen Komponenten aus den Submodulen
 from .constants import *
-from .logging import log_error
-from .handlers import setup_error_handlers
 from .decorators import safe_transaction
-from .exceptions import (
-    APIError, InvalidInputError, AuthenticationError, PermissionError,
-    ResourceNotFoundError, DatabaseError, InsufficientCreditsError,
-    FileProcessingError
-)
+from .exceptions import (APIError, AuthenticationError, DatabaseError,
+                         FileProcessingError, InsufficientCreditsError,
+                         InvalidInputError, PermissionError,
+                         ResourceNotFoundError)
+from .handlers import setup_error_handlers
+from .logging import log_error
 from .responses import create_error_response
 
 # Ein praktischer Wrapper für setup_error_handlers
+
+
 def init_app(app):
     """
     Initialisiert die Fehlerbehandlung für die Flask-App.
-    
+
     Args:
         app: Die Flask-App
     """
-    setup_error_handlers(app) 
+    setup_error_handlers(app)

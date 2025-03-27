@@ -6,20 +6,23 @@ Dieses Modul enthält Funktionen zur KI-gestützten Generierung von Flashcards.
 Es verwendet OpenAI-APIs, um Lernkarten aus einem gegebenen Text zu extrahieren.
 """
 
-import logging
 import json
+import logging
 import re
-from openai import OpenAI
+
 import tiktoken
-from api.token_tracking import track_token_usage
+from core.openai_integration import track_token_usage
+from openai import OpenAI
+
 from .utils import categorize_content
 
 logger = logging.getLogger(__name__)
 
+
 def generate_flashcards(content, client, analysis, count=10, language='de', session_id=None, function_name=None):
     """
     Generiert Lernkarten aus einem gegebenen Text.
-    
+
     Args:
         content: Der Inhalt, aus dem Flashcards generiert werden sollen
         client: Der OpenAI-Client
@@ -28,28 +31,31 @@ def generate_flashcards(content, client, analysis, count=10, language='de', sess
         language: Die Sprache der Flashcards ('de' oder 'en')
         session_id: Optional - Die Sitzungs-ID für das Token-Tracking
         function_name: Optional - Der Name der Funktion für das Token-Tracking
-        
+
     Returns:
         Eine Liste von Flashcard-Dictionaries
     """
     # Sicherstellen, dass content ein String ist
     if not isinstance(content, str):
         content = str(content)
-    
+
     # Kürze den Inhalt, falls er zu lang ist
     max_token_length = 4000
     encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
     content_tokens = encoding.encode(content)
-    
+
     if len(content_tokens) > max_token_length:
         # Kürze den Inhalt auf die max_token_length
         truncated_content = encoding.decode(content_tokens[:max_token_length])
-        logger.warning(f"Inhalt zu lang ({len(content_tokens)} Tokens). Gekürzt auf {max_token_length} Tokens.")
+        logger.warning(
+            "Inhalt zu lang (%s Tokens). Gekürzt auf %s Tokens.", 
+            len(content_tokens), max_token_length
+        )
         content = truncated_content
-    
+
     # Systemprompt je nach Sprache
     if language == 'de':
-        system_prompt = """Du bist ein hilfreicher Assistent, der Lernkarten für Studierende erstellt. 
+        system_prompt = """Du bist ein hilfreicher Assistent, der Lernkarten für Studierende erstellt.
 Deine Aufgabe ist es, aus dem bereitgestellten Text wichtige Konzepte zu identifizieren und daraus Lernkarten zu generieren.
 
 Jede Lernkarte sollte folgende Struktur haben:
@@ -82,14 +88,14 @@ The flashcards should:
 5. Function as independent learning units
 
 Respond with a JSON array of flashcard objects."""
-    
+
     # Vorbereitung der Kategorien
     main_topic = analysis.get('main_topic', '')
     subtopics = [st.get('name', '') for st in analysis.get('subtopics', [])]
-    
+
     # Filtere leere Strings
     subtopics = [st for st in subtopics if st]
-    
+
     # Benutzerprompt je nach Sprache
     if language == 'de':
         user_prompt = f"""Generiere {count} Lernkarten basierend auf dem folgenden Text.
@@ -124,12 +130,14 @@ Distribute the flashcards across different aspects of the text to ensure good co
 
 Return the answer in the following JSON format:
 [
-  {{"front": "Question or term", "back": "Answer or explanation", "category": "Category name"}},
+  {{"front": "Question or term", 
+    "back": "Answer or explanation", 
+    "category": "Category name"}},
   // additional flashcards
 ]
 
 The 'category' should be one of the subtopics or another suitable topic if no matching subtopic exists."""
-    
+
     try:
         # OpenAI-Anfrage
         response = client.chat.completions.create(
@@ -142,19 +150,25 @@ The 'category' should be one of the subtopics or another suitable topic if no ma
             temperature=0.7,
             max_tokens=2000
         )
-        
+
         # Token-Tracking
         if session_id and function_name:
-            track_token_usage(
-                client=client,
-                response=response,
-                session_id=session_id,
-                function_name=function_name
-            )
-        
+            try:
+                track_token_usage(
+                    None,  # Kein user_id benötigt
+                    session_id,
+                    "gpt-3.5-turbo-1106",
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                    function_name,
+                    None  # kein endpoint benötigt
+                )
+            except Exception as track_err:
+                logger.warning("Token-Tracking fehlgeschlagen: %s", str(track_err))
+
         # Extrahiere JSON aus der Antwort
         result_text = response.choices[0].message.content
-        
+
         # Suche nach JSON-Strukturen
         json_match = re.search(r'(\[[\s\S]*\])', result_text)
         if json_match:
@@ -171,7 +185,7 @@ The 'category' should be one of the subtopics or another suitable topic if no ma
                         return result_json['flashcards']
                     return result_json
                 except json.JSONDecodeError:
-                    logger.error(f"Fehler beim JSON-Parsing: {result_text}")
+                    logger.error("Fehler beim JSON-Parsing: %s", result_text)
                     return generate_fallback_flashcards(analysis, count, language)
         else:
             try:
@@ -182,17 +196,19 @@ The 'category' should be one of the subtopics or another suitable topic if no ma
                     return result_json['flashcards']
                 return result_json
             except json.JSONDecodeError:
-                logger.error(f"Keine JSON-Struktur gefunden: {result_text}")
+                logger.error("Keine JSON-Struktur gefunden: %s", result_text)
                 return generate_fallback_flashcards(analysis, count, language)
-    
+
     except Exception as e:
-        logger.error(f"Fehler bei der Flashcard-Generierung: {str(e)}")
+        logger.error("Fehler bei der Flashcard-Generierung: %s", str(e))
         return generate_fallback_flashcards(analysis, count, language)
 
-def generate_additional_flashcards(content, client, analysis, existing_flashcards, count=5, language='de', session_id=None, function_name=None):
+
+def generate_additional_flashcards(content, client, analysis, existing_flashcards,
+                                   count=5, language='de', session_id=None, function_name=None):
     """
     Generiert zusätzliche Lernkarten, wobei bestehende Lernkarten berücksichtigt werden.
-    
+
     Args:
         content: Der Inhalt, aus dem Flashcards generiert werden sollen
         client: Der OpenAI-Client
@@ -202,31 +218,34 @@ def generate_additional_flashcards(content, client, analysis, existing_flashcard
         language: Die Sprache der Flashcards ('de' oder 'en')
         session_id: Optional - Die Sitzungs-ID für das Token-Tracking
         function_name: Optional - Der Name der Funktion für das Token-Tracking
-        
+
     Returns:
         Eine Liste von Flashcard-Dictionaries
     """
     # Sicherstellen, dass content ein String ist
     if not isinstance(content, str):
         content = str(content)
-    
+
     # Kürze den Inhalt, falls er zu lang ist
     max_token_length = 3500
     encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
     content_tokens = encoding.encode(content)
-    
+
     if len(content_tokens) > max_token_length:
         # Kürze den Inhalt auf die max_token_length
         truncated_content = encoding.decode(content_tokens[:max_token_length])
-        logger.warning(f"Inhalt zu lang ({len(content_tokens)} Tokens). Gekürzt auf {max_token_length} Tokens.")
+        logger.warning(
+            "Inhalt zu lang (%s Tokens). Gekürzt auf %s Tokens.", 
+            len(content_tokens), max_token_length
+        )
         content = truncated_content
-    
+
     # Formatiere die bestehenden Lernkarten
     existing_cards_str = json.dumps(existing_flashcards[:min(len(existing_flashcards), 20)], indent=2)
-    
+
     # Systemprompt je nach Sprache
     if language == 'de':
-        system_prompt = """Du bist ein hilfreicher Assistent, der Lernkarten für Studierende erstellt. 
+        system_prompt = """Du bist ein hilfreicher Assistent, der Lernkarten für Studierende erstellt.
 Deine Aufgabe ist es, basierend auf dem bereitgestellten Text weitere Lernkarten zu generieren, die die bereits vorhandenen Lernkarten ergänzen.
 
 Jede Lernkarte sollte folgende Struktur haben:
@@ -259,17 +278,18 @@ The flashcards should:
 5. Function as independent learning units
 
 Respond with a JSON array of flashcard objects."""
-    
+
     # Vorbereitung der Kategorien
     main_topic = analysis.get('main_topic', '')
     subtopics = [st.get('name', '') for st in analysis.get('subtopics', [])]
-    
+
     # Filtere leere Strings
     subtopics = [st for st in subtopics if st]
-    
+
     # Benutzerprompt je nach Sprache
     if language == 'de':
-        user_prompt = f"""Generiere {count} NEUE Lernkarten basierend auf dem folgenden Text. Diese Lernkarten sollen ZUSÄTZLICH zu den bereits vorhandenen Lernkarten sein und diese ERGÄNZEN.
+        user_prompt = f"""Generiere {count} NEUE Lernkarten basierend auf dem folgenden Text. 
+Diese Lernkarten sollen ZUSÄTZLICH zu den bereits vorhandenen Lernkarten sein und diese ERGÄNZEN.
 
 Text: ```{content}```
 
@@ -293,7 +313,8 @@ Gib die Antwort im folgenden JSON-Format zurück:
 
 Die 'category' sollte eines der Unterthemen sein oder ein anderes passendes Thema, falls kein passendes Unterthema existiert."""
     else:
-        user_prompt = f"""Generate {count} NEW flashcards based on the following text. These flashcards should be IN ADDITION to the existing flashcards and COMPLEMENT them.
+        user_prompt = f"""Generate {count} NEW flashcards based on the following text. 
+These flashcards should be IN ADDITION to the existing flashcards and COMPLEMENT them.
 
 Text: ```{content}```
 
@@ -311,12 +332,14 @@ Important rules:
 
 Return the answer in the following JSON format:
 [
-  {{"front": "Question or term", "back": "Answer or explanation", "category": "Category name"}},
+  {{"front": "Question or term", 
+    "back": "Answer or explanation", 
+    "category": "Category name"}},
   // additional flashcards
 ]
 
 The 'category' should be one of the subtopics or another suitable topic if no matching subtopic exists."""
-    
+
     try:
         # OpenAI-Anfrage
         response = client.chat.completions.create(
@@ -329,19 +352,25 @@ The 'category' should be one of the subtopics or another suitable topic if no ma
             temperature=0.7,
             max_tokens=2000
         )
-        
+
         # Token-Tracking
         if session_id and function_name:
-            track_token_usage(
-                client=client,
-                response=response,
-                session_id=session_id,
-                function_name=function_name
-            )
-        
+            try:
+                track_token_usage(
+                    None,  # Kein user_id benötigt
+                    session_id,
+                    "gpt-3.5-turbo-1106",
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                    function_name,
+                    None  # kein endpoint benötigt
+                )
+            except Exception as track_err:
+                logger.warning("Token-Tracking fehlgeschlagen: %s", str(track_err))
+
         # Extrahiere JSON aus der Antwort
         result_text = response.choices[0].message.content
-        
+
         # Suche nach JSON-Strukturen
         json_match = re.search(r'(\[[\s\S]*\])', result_text)
         if json_match:
@@ -358,7 +387,7 @@ The 'category' should be one of the subtopics or another suitable topic if no ma
                         return result_json['flashcards']
                     return result_json
                 except json.JSONDecodeError:
-                    logger.error(f"Fehler beim JSON-Parsing: {result_text}")
+                    logger.error("Fehler beim JSON-Parsing: %s", result_text)
                     return generate_fallback_flashcards(analysis, count, language)
         else:
             try:
@@ -369,53 +398,58 @@ The 'category' should be one of the subtopics or another suitable topic if no ma
                     return result_json['flashcards']
                 return result_json
             except json.JSONDecodeError:
-                logger.error(f"Keine JSON-Struktur gefunden: {result_text}")
+                logger.error("Keine JSON-Struktur gefunden: %s", result_text)
                 return generate_fallback_flashcards(analysis, count, language)
-    
+
     except Exception as e:
-        logger.error(f"Fehler bei der Flashcard-Generierung: {str(e)}")
+        logger.error("Fehler bei der Flashcard-Generierung: %s", str(e))
         return generate_fallback_flashcards(analysis, count, language)
+
 
 def generate_fallback_flashcards(analysis, count, language='de'):
     """
     Generiert einfache Fallback-Lernkarten, wenn die OpenAI-API fehlschlägt.
-    
+
     Args:
         analysis: Die Analyse des Inhalts (Themen, Unterthemen)
         count: Die Anzahl der zu generierenden Flashcards
         language: Die Sprache der Flashcards ('de' oder 'en')
-        
+
     Returns:
         Eine Liste von Flashcard-Dictionaries
     """
     main_topic = analysis.get('main_topic', 'Unbekanntes Thema' if language == 'de' else 'Unknown Topic')
     subtopics = [st.get('name', '') for st in analysis.get('subtopics', [])]
-    
+
     # Filtere leere Strings
     subtopics = [st for st in subtopics if st]
-    
+
     if not subtopics:
         if language == 'de':
             subtopics = ['Grundkonzepte', 'Definitionen', 'Anwendungen', 'Beispiele']
         else:
             subtopics = ['Basic Concepts', 'Definitions', 'Applications', 'Examples']
-    
+
     flashcards = []
-    
+
     for i in range(min(count, 10)):  # Maximal 10 Fallback-Karten
         subtopic = subtopics[i % len(subtopics)]
-        
+
         if language == 'de':
             front = f"Was sind wichtige Aspekte von {subtopic} im Kontext von {main_topic}?"
-            back = f"Dies ist eine automatisch generierte Fallback-Karte. Bitte beziehen Sie sich auf den ursprünglichen Text, um Informationen über {subtopic} im Kontext von {main_topic} zu erhalten."
+            back = (f"Dies ist eine automatisch generierte Fallback-Karte. "
+                  f"Bitte beziehen Sie sich auf den ursprünglichen Text, um Informationen über "
+                  f"{subtopic} im Kontext von {main_topic} zu erhalten.")
         else:
             front = f"What are important aspects of {subtopic} in the context of {main_topic}?"
-            back = f"This is an automatically generated fallback card. Please refer to the original text to find information about {subtopic} in the context of {main_topic}."
-        
+            back = (f"This is an automatically generated fallback card. "
+                  f"Please refer to the original text to find information about "
+                  f"{subtopic} in the context of {main_topic}.")
+
         flashcards.append({
             'front': front,
             'back': back,
             'category': subtopic
         })
-    
+
     return flashcards

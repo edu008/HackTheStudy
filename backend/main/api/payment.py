@@ -5,7 +5,7 @@ unter api/finance/*.py und wird nur für Abwärtskompatibilität beibehalten.
 """
 
 from .finance import finance_bp as payment_bp
-from .finance.constants import PRICES, CREDITS, calculate_credits
+from .finance.constants import CREDITS, PRICES, calculate_credits
 
 # Reexportiere wichtige Komponenten für Abwärtskompatibilität
 __all__ = [
@@ -13,4 +13,4 @@ __all__ = [
     'PRICES',
     'CREDITS',
     'calculate_credits'
-] 
+]
