@@ -98,7 +98,12 @@ def get_openai_client():
     Returns:
         OpenAI: Eine Instanz des OpenAI-Clients
     """
-    return OpenAI(api_key=current_app.config['OPENAI_API_KEY'])
+    return OpenAI(
+        api_key=current_app.config['OPENAI_API_KEY'],
+        default_headers={
+            "OpenAI-Beta": "assistants=v2"
+        }
+    )
 
 
 def build_topic_prompt(main_topic, subtopics, language='en'):

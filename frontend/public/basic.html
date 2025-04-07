@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HackTheStudy - Basic Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        h1 {
+            color: blue;
+        }
+    </style>
+</head>
+<body>
+    <h1>HackTheStudy - Einfacher Test</h1>
+    <p>Wenn du diese Seite siehst, funktioniert der grundlegende Webserver richtig.</p>
+    <p>Dies ist eine reine HTML-Seite ohne externe Abhängigkeiten.</p>
+    
+    <div style="margin-top: 20px; padding: 10px; background-color: #e0e0e0; border-radius: 5px;">
+        <p><strong>Browser-Info:</strong></p>
+        <p>Zeit: <span id="time"></span></p>
+        <p>URL: <span id="url"></span></p>
+    </div>
+
+    <script>
+        // Reines JavaScript ohne externe Abhängigkeiten
+        document.getElementById('time').textContent = new Date().toString();
+        document.getElementById('url').textContent = window.location.href;
+    </script>
+</body>
+</html> 

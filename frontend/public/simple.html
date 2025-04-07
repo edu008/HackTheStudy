@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HackTheStudy - Einfache React-App</title>
+    
+    <!-- Umgebungsvariablen - wird automatisch vom Entrypoint-Script erstellt -->
+    <script src="/env-config.js"></script>
+    
+    <!-- React und ReactDOM direkt von CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Für JSX-Transformation wird Babel benötigt -->
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+        }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1d4ed8;
+        }
+        .error {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .success {
+            background-color: #d1fae5;
+            color: #065f46;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Root-Element für React -->
+    <div id="root"></div>
+    
+    <!-- React-Komponente -->
+    <script type="text/babel">
+        // SimpleApp-Komponente
+        const SimpleApp = () => {
+            // State für Zähler und Umgebungsvariablen
+            const [count, setCount] = React.useState(0);
+            const [envVars, setEnvVars] = React.useState({});
+            const [apiStatus, setApiStatus] = React.useState(null);
+            
+            // Beim Laden die Umgebungsvariablen erfassen
+            React.useEffect(() => {
+                console.log('SimpleApp wurde geladen');
+                if (window.__env) {
+                    console.log('Umgebungsvariablen gefunden:', window.__env);
+                    setEnvVars(window.__env);
+                } else {
+                    console.warn('Keine Umgebungsvariablen gefunden');
+                }
+            }, []);
+            
+            // API-Test-Funktion
+            const testApi = async () => {
+                try {
+                    setApiStatus({type: 'info', message: 'Teste API...'});
+                    
+                    // API-URL aus Umgebungsvariablen oder Fallback
+                    const apiUrl = window.__env?.API_URL || 'http://localhost:8080';
+                    const response = await fetch(`${apiUrl}/health`);
+                    
+                    if (response.ok) {
+                        const data = await response.text();
+                        setApiStatus({
+                            type: 'success', 
+                            message: `API antwortet: ${data.substring(0, 50)}...`
+                        });
+                    } else {
+                        setApiStatus({
+                            type: 'error', 
+                            message: `API-Fehler: ${response.status} ${response.statusText}`
+                        });
+                    }
+                } catch (error) {
+                    setApiStatus({
+                        type: 'error', 
+                        message: `API-Fehler: ${error.message}`
+                    });
+                }
+            };
+            
+            return (
+                <div className="container">
+                    <h1>HackTheStudy - Einfache React-App</h1>
+                    <div className="success">
+                        Diese Seite wurde mit React gerendert! Die Grundfunktionalität funktioniert.
+                    </div>
+                    
+                    <div style={{ margin: '20px 0' }}>
+                        <p>Zähler: {count}</p>
+                        <button onClick={() => setCount(count + 1)}>
+                            Erhöhen
+                        </button>
+                    </div>
+                    
+                    <div style={{ margin: '20px 0' }}>
+                        <h2>API-Test</h2>
+                        <button onClick={testApi}>API testen</button>
+                        
+                        {apiStatus && (
+                            <div className={apiStatus.type === 'success' ? 'success' : 'error'} style={{marginTop: '10px'}}>
+                                {apiStatus.message}
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div style={{ margin: '20px 0' }}>
+                        <h2>Umgebungsvariablen</h2>
+                        <pre>
+                            {Object.keys(envVars).length > 0
+                                ? JSON.stringify(envVars, null, 2)
+                                : "Keine Umgebungsvariablen gefunden"}
+                        </pre>
+                    </div>
+                    
+                    <div style={{ margin: '20px 0' }}>
+                        <h2>Browser-Informationen</h2>
+                        <pre>
+                            {JSON.stringify({
+                                userAgent: navigator.userAgent,
+                                url: window.location.href,
+                                timestamp: new Date().toISOString()
+                            }, null, 2)}
+                        </pre>
+                    </div>
+                </div>
+            );
+        };
+        
+        // Render the app
+        const rootElement = document.getElementById('root');
+        const root = ReactDOM.createRoot(rootElement);
+        root.render(<SimpleApp />);
+    </script>
+</body>
+</html> 

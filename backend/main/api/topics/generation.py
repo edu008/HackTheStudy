@@ -13,19 +13,22 @@ import uuid
 from datetime import datetime
 
 import tiktoken
+import openai
+from flask import current_app, g
+from openai import OpenAI
+
 from api.error_handler import (InsufficientCreditsError, InvalidInputError,
                                ResourceNotFoundError)
 from api.token_tracking import (calculate_token_cost, check_credits_available,
                                 deduct_credits)
-from core.models import Connection, Topic, Upload, User, db
-from flask import current_app, g
-from openai import OpenAI
+from core.models import Topic, Upload, User, db
 
 from ..utils import detect_language, query_chatgpt
-from .models import (create_connection, create_connections_from_list,
-                     create_topic, create_topics_from_list, find_topic_by_name)
+from .models import (create_connection_via_parent, create_connections_from_list,
+                     create_topic, create_topics_from_list, find_topic_by_name,
+                     get_topic_hierarchy)
 from .utils import (build_topic_prompt, find_upload_by_session,
-                    get_openai_client, process_topic_response)
+                   get_openai_client, process_topic_response)
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +99,7 @@ def generate_topics(session_id, user_id=None):
                     target = find_topic_by_name(upload.id, target_name)
 
                     if source and target:
-                        create_connection(upload.id, source.id, target.id, label)
+                        create_connection_via_parent(upload.id, source.id, target.id, label)
 
             # Speichere Änderungen in der Datenbank
             db.session.commit()
@@ -194,7 +197,7 @@ def generate_related_topics(session_id, user_id=None):
                 target = find_topic_by_name(upload.id, target_text)
 
                 if source and target:
-                    create_connection(upload.id, source.id, target.id, label)
+                    create_connection_via_parent(upload.id, source.id, target.id, label)
 
             # Speichere Änderungen in der Datenbank
             db.session.commit()

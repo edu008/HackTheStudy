@@ -1,3 +1,4 @@
+
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -7,55 +8,22 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { CreditCard, Upload, Lightbulb, BookOpen, Network } from 'lucide-react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import UserHistory from '@/components/UserHistory';
-import PaymentHistory from '@/components/PaymentHistory';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from 'react-i18next';
 
 const Dashboard = () => {
   const { user, isLoading } = useAuth();
   const navigate = useNavigate();
-  const { toast } = useToast();
-  const { t } = useTranslation();
 
   useEffect(() => {
     if (!isLoading && !user) {
-      navigate('/');
+      navigate('/signin');
     }
   }, [user, isLoading, navigate]);
-
-  // Scroll to top when component mounts
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, []);
-
-  const handleSessionSelect = (sessionId: string, activityType: string, mainTopic: string) => {
-    // Navigate to the home page with the session ID and appropriate hash
-    const hash = activityType === 'concept' ? 'concept-mapper' : 
-                activityType === 'test' ? 'test-simulator' : 
-                'flashcards';
-    
-    toast({
-      title: t('dashboard.loadingAnalysis'),
-      description: t('dashboard.navigatingTo', { topic: mainTopic }),
-    });
-    
-    // Use navigate with state to pass the session ID
-    navigate(`/?session=${sessionId}#${hash}`, {
-      state: { 
-        sessionId,
-        activityType,
-        mainTopic,
-        fromHistory: true
-      }
-    });
-  };
 
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center">
-        <div className="animate-pulse text-lg">{t('common.loading')}</div>
+        <div className="animate-pulse text-lg">Loading...</div>
       </div>
     );
   }
@@ -81,7 +49,7 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="flex justify-between items-center py-2 border-b">
-                <span className="font-medium">{t('navigation.credits')}</span>
+                <span className="font-medium">Credits</span>
                 <span className="font-bold">{user.credits}</span>
               </div>
               <Button 
@@ -90,7 +58,7 @@ const Dashboard = () => {
                 onClick={() => navigate('/payment')}
               >
                 <CreditCard className="mr-2 h-4 w-4" />
-                {t('navigation.buyCredits')}
+                Buy More Credits
               </Button>
             </CardContent>
           </Card>
@@ -98,68 +66,32 @@ const Dashboard = () => {
           {/* User Activities and History */}
           <Card className="md:col-span-2">
             <CardHeader>
-              <CardTitle>{t('dashboard.title')}</CardTitle>
-              <CardDescription>{t('dashboard.welcomeBack')}</CardDescription>
+              <CardTitle>Activities</CardTitle>
+              <CardDescription>Your recent activities on ExamMaster</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-                <Button 
-                  variant="outline" 
-                  className="flex flex-col h-24 justify-center"
-                  onClick={() => {
-                    // Use window.location for hash navigation to ensure proper scrolling
-                    window.location.href = '/#exam-uploader';
-                  }}
-                >
+                <Button variant="outline" className="flex flex-col h-24 justify-center">
                   <Upload className="h-6 w-6 mb-2" />
-                  <span>{t('uploader.title')}</span>
+                  <span>Upload Exam</span>
                 </Button>
-                <Button 
-                  variant="outline" 
-                  className="flex flex-col h-24 justify-center"
-                  onClick={() => {
-                    // Use window.location for hash navigation to ensure proper scrolling
-                    window.location.href = '/#flashcards';
-                  }}
-                >
+                <Button variant="outline" className="flex flex-col h-24 justify-center">
                   <Lightbulb className="h-6 w-6 mb-2" />
-                  <span>{t('flashcards.title')}</span>
+                  <span>Create Flashcards</span>
                 </Button>
-                <Button 
-                  variant="outline" 
-                  className="flex flex-col h-24 justify-center"
-                  onClick={() => {
-                    // Use window.location for hash navigation to ensure proper scrolling
-                    window.location.href = '/#test-simulator';
-                  }}
-                >
+                <Button variant="outline" className="flex flex-col h-24 justify-center">
                   <BookOpen className="h-6 w-6 mb-2" />
-                  <span>{t('tests.title')}</span>
+                  <span>Test Simulator</span>
                 </Button>
-                <Button 
-                  variant="outline" 
-                  className="flex flex-col h-24 justify-center"
-                  onClick={() => {
-                    // Use window.location for hash navigation to ensure proper scrolling
-                    window.location.href = '/#concept-mapper';
-                  }}
-                >
+                <Button variant="outline" className="flex flex-col h-24 justify-center">
                   <Network className="h-6 w-6 mb-2" />
-                  <span>{t('conceptMap.title')}</span>
+                  <span>Concept Mapper</span>
                 </Button>
               </div>
-              <Tabs defaultValue="activity" className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="activity">{t('dashboard.history')}</TabsTrigger>
-                  <TabsTrigger value="payments">{t('dashboard.payments')}</TabsTrigger>
-                </TabsList>
-                <TabsContent value="activity">
-                  <UserHistory onSessionSelect={handleSessionSelect} />
-                </TabsContent>
-                <TabsContent value="payments">
-                  <PaymentHistory />
-                </TabsContent>
-              </Tabs>
+              <div>
+                <h3 className="text-lg font-medium mb-4">Recent History</h3>
+                <UserHistory />
+              </div>
             </CardContent>
           </Card>
         </div>

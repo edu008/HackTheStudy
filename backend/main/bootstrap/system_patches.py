@@ -62,6 +62,11 @@ def patch_gevent():
     Dieses Patching muss VOR allem anderen stattfinden, um SSL-RecursionError
     und andere Probleme zu vermeiden.
     """
+    # Prüfe ob Gevent explizit deaktiviert ist
+    if os.environ.get('GEVENT_MONKEY_PATCH', '1') == '0':
+        logger.info("Gevent-Monkey-Patching wurde explizit deaktiviert durch GEVENT_MONKEY_PATCH=0")
+        return
+
     # Standardmäßig aktiv, außer explizit deaktiviert
     if os.environ.get('USE_GEVENT', 'true').lower() not in ('false', '0', 'no'):
         try:
@@ -182,5 +187,35 @@ def patch_socket_timeout():
         logger.error("Fehler beim Patchen des Socket-Timeouts: %s", str(e))
 
 
+def apply_gevent_patches():
+    """Applies gevent monkey patches if gevent is available."""
+    try:
+        from gevent import monkey
+        # Deaktiviere das Patching hier, um Konflikte zu vermeiden,
+        # besonders bei CLI-Befehlen wie flask db.
+        # Das Patching sollte idealerweise nur im Gunicorn/Gevent Worker-Prozess erfolgen.
+        # monkey.patch_all(
+        #     thread=True, socket=True, dns=True, time=True, select=True,
+        #     ssl=True, os=True, subprocess=True, sys=False, aggressive=True,
+        #     Event=False, builtins=False, signal=True
+        # )
+        logger.info("Gevent-Monkey-Patching in system_patches.py DEAKTIVIERT")
+    except ImportError:
+        logger.debug("Gevent nicht gefunden, überspringe Monkey-Patching")
+    except Exception as e:
+        logger.error(f"Fehler beim Anwenden von Gevent-Patches: {e}", exc_info=True)
+
+
+def apply_all_patches():
+    """Applies all necessary system patches."""
+    # Rufe apply_gevent_patches nicht mehr automatisch auf, oder mache es konditional
+    # apply_gevent_patches() # <-- Kommentiere auch diesen Aufruf aus, falls vorhanden
+    apply_ssl_patch()
+    apply_requests_timeout_patch()
+    apply_socket_timeout_patch()
+    logger.info("Alle Patches erfolgreich angewendet (Gevent-Patching übersprungen/deaktiviert)")
+
+# apply_all_patches() # Stelle sicher, dass dies nicht automatisch am Ende aufgerufen wird
+
 # Wenn dieses Modul direkt importiert wird, führe Patches automatisch aus
-apply_patches()
+# apply_patches() # <-- DIESEN AUFRUF AUSKOMMENTIEREN!

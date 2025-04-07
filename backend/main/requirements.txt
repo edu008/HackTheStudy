@@ -27,10 +27,16 @@ kombu==5.3.5
 redis==4.4.4
 prometheus-flask-exporter==0.23.0
 httpx==0.27.0
-tiktoken
-gunicorn>=21.2.0
-gevent>=23.9.1
+tiktoken==0.5.1
+
+# Produktionsserver-Pakete
+gunicorn==21.2.0
+gevent==23.9.1
+greenlet==3.0.1
+setproctitle==1.3.3  # Bessere Prozessnamen für Gunicorn-Workers
 supervisor==4.2.5
+
+# Systemwerkzeuge
 psutil==5.9.5
 bleach==6.1.0
 backoff==2.2.1
@@ -40,3 +46,6 @@ fakeredis==2.20.0
 pylint==2.17.5
 autopep8==2.0.4
 isort==5.12.0
+
+# Windows-Alternative zu Gunicorn (für Entwicklung)
+waitress==2.1.2

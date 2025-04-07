@@ -8,7 +8,7 @@ import logging
 import re
 import time
 
-from core.models import Connection, Flashcard, Question, Topic, Upload, db
+from core.models import Flashcard, Question, Topic, Upload, db
 from core.redis_client import redis_client
 
 from .ai_utils import query_chatgpt
@@ -438,6 +438,7 @@ def unified_content_processing(text, client, file_names=None, user_id=None,
                     logger.warning("Kein Upload für Session %s gefunden", session_id)
                 else:
                     # Speichere die Themen
+                    topics_by_id = {}
                     for topic_data in topics:
                         topic = Topic(
                             upload_id=upload.id,
@@ -445,32 +446,39 @@ def unified_content_processing(text, client, file_names=None, user_id=None,
                             description=topic_data.get('description', ''),
                             level=topic_data.get('level', 0),
                             parent_id=topic_data.get('parent_id'),
-                            original_id=topic_data.get('id')
+                            original_id=topic_data.get('id'),
+                            is_main_topic=topic_data.get('level', 0) == 0
                         )
                         db.session.add(topic)
-
+                        topics_by_id[topic_data.get('id')] = topic
+                    
                     # Commit, um IDs für die Themen zu erhalten
                     db.session.commit()
-
-                    # Hole alle gerade gespeicherten Themen für diesen Upload
-                    saved_topics = Topic.query.filter_by(upload_id=upload.id).all()
-
-                    # Mapping von original_id zu Datenbank-ID
-                    topic_id_map = {topic.original_id: topic.id for topic in saved_topics}
-
-                    # Speichere die Verbindungen
+                    
+                    # Verarbeite die Verbindungen, um parent_id zu setzen und descriptions zu erweitern
                     for connection_data in connections:
-                        source_original_id = connection_data.get('source_id')
-                        target_original_id = connection_data.get('target_id')
-
-                        if source_original_id in topic_id_map and target_original_id in topic_id_map:
-                            connection = Connection(
-                                upload_id=upload.id,
-                                source_id=topic_id_map[source_original_id],
-                                target_id=topic_id_map[target_original_id],
-                                relationship=connection_data.get('relationship', '')
-                            )
-                            db.session.add(connection)
+                        source_id = connection_data.get('source_id')
+                        target_id = connection_data.get('target_id')
+                        relationship = connection_data.get('relationship', '')
+                        
+                        if source_id in topics_by_id and target_id in topics_by_id:
+                            target_topic = topics_by_id[target_id]
+                            source_topic = topics_by_id[source_id]
+                            
+                            # Setze die parent_id beim Ziel-Topic
+                            target_topic.parent_id = source_topic.id
+                            
+                            # Erweitere die Beschreibung um die Beziehungsinformation
+                            if relationship and relationship not in target_topic.description:
+                                if target_topic.description:
+                                    target_topic.description += f" ({relationship})"
+                                else:
+                                    target_topic.description = f"({relationship})"
+                            
+                            db.session.add(target_topic)
+                    
+                    # Commit der Topic-Änderungen
+                    db.session.commit()
 
                     # Speichere die Fragen
                     for question_data in questions:

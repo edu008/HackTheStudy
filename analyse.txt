@@ -1,0 +1,98 @@
+# HackTheStudy Projektanalyse
+
+## Backend-Analyse
+
+### Struktur
+- Das Backend ist in Python mit Flask entwickelt
+- Haupteinstiegspunkt: `backend/main/app.py`
+- Verwendung von RESTful API-Endpunkten
+- Modulare Struktur mit verschiedenen API-Komponenten:
+  - Auth-System (JWT-basiert)
+  - Uploads-Management
+  - Topics-Verwaltung
+  - Flashcards-System
+  - Fragen-Management
+  - OpenAI-Integration
+  - Zahlungsabwicklung
+
+### Hauptkomponenten
+- **API-Schicht**: RESTful Endpunkte für Frontendkommunikation
+- **Auth-System**: JWT-basierte Authentifizierung
+- **DB-Integration**: SQLAlchemy ORM mit Migrationen
+- **Cache-System**: Redis-basiertes Caching
+- **Health-Monitoring**: Systemstatus-Überwachung
+- **OpenAI-Integration**: KI-Funktionalitäten für Lernunterstützung
+
+### Technologien
+- Flask (Web-Framework)
+- SQLAlchemy (ORM)
+- Redis (Caching)
+- JWT (Authentifizierung)
+- OpenAI API (KI-Funktionalitäten)
+- Gunicorn (WSGI-Server)
+
+## Frontend-Analyse
+
+### Struktur
+- React-basierte Single-Page-Application (SPA)
+- TypeScript für typensichere Entwicklung
+- Routing über React Router
+- State-Management mit React Context API
+- UI-Komponenten mit Tailwind CSS
+
+### Hauptkomponenten
+- **Auth-System**: Context-basierte Authentifizierung (derzeit mit Mock-Daten)
+- **Routing**: Mehrere Hauptrouten (Home, SignIn, Dashboard, Payment)
+- **UI-Komponenten**: Modernes UI mit Toast-Benachrichtigungen, Tooltips
+- **API-Integration**: Tanstack Query für Datenabruf und -verwaltung
+
+### Technologien
+- React
+- TypeScript
+- Tailwind CSS
+- React Router
+- Tanstack Query
+- Context API
+
+## Verbindungsplan
+
+### 1. Authentifizierung
+- Frontend Auth-Context mit Backend JWT-System verbinden
+- Mock-Authentifizierung durch echte OAuth-Flows ersetzen
+- Benutzerdaten vom Backend abrufen und im Frontend speichern
+
+### 2. API-Integration
+- Einrichtung eines API-Clients im Frontend
+- Zentrale Konfiguration für API-Endpunkte
+- Implementierung von Interceptors für JWT-Token-Handling
+- Error-Handling-Strategie
+
+### 3. Daten-Fluss
+- Tanstack Query für Caching und Datenabruf optimieren
+- Zustandssynchronisierung zwischen Backend und Frontend
+- Optimistische UI-Updates für bessere UX
+
+### 4. Zahlungsabwicklung
+- Frontend-Zahlungsseite mit Backend-Zahlungs-API verbinden
+- Sichere Transaktionsverarbeitung implementieren
+- Credits-System vollständig integrieren
+
+### 5. Funktionen-Integration
+- OpenAI-basierte Funktionen im Frontend verfügbar machen
+- Upload-System für Lernmaterialien implementieren
+- Flashcard- und Fragen-Management-UI erstellen
+
+### 6. Deployment & DevOps
+- Docker-Compose für lokale Entwicklung nutzen
+- CI/CD-Pipeline konfigurieren
+- Monitoring und Logging-System einrichten
+
+## Nächste Schritte
+
+1. **API-Client erstellen**: Axios-basierte Lösung mit Interceptors
+2. **Auth-Flow implementieren**: Echte Benutzerauthentifizierung statt Mock-Daten
+3. **Daten-Hooks entwickeln**: Custom Hooks für die wichtigsten API-Endpunkte
+4. **Backend-Erweiterungen**: Fehlende API-Endpunkte für Frontend-Anforderungen implementieren
+5. **UI-Verbesserungen**: Responsive Design und Fehlerbehandlung optimieren
+6. **Testabdeckung erhöhen**: Unit- und Integrationstests für kritische Komponenten
+7. **Dokumentation**: API-Dokumentation und Entwickler-Leitfaden erstellen 

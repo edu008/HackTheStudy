@@ -8,8 +8,13 @@ Hauptanwendungsdatei, definiert die Flask-App und Basis-Routen.
 
 # Importiere zuerst die Gevent-Konfiguration für Monkey-Patching
 try:
+    from gevent import monkey
+    # ERNEUT AUSKOMMENTIERT, um Konflikte mit Trio/Async zu vermeiden
+    # monkey.patch_all(thread=True, socket=True, dns=True, time=True, select=True,
+    #                  ssl=True, os=True, subprocess=True, sys=False, aggressive=True,
+    #                  Event=False, builtins=False, signal=True)
     from bootstrap.system_patches import logger as patch_logger
-    patch_logger.info("System-Patches in app.py importiert")
+    patch_logger.info("System-Patches in app.py importiert (Gevent Monkey-Patching DEAKTIVIERT)") # Log angepasst
 except ImportError:
     pass
 
@@ -20,6 +25,8 @@ import os
 import signal
 import sys
 from datetime import datetime
+import warnings
+from sqlalchemy.exc import SAWarning
 
 from bootstrap.app_factory import create_app
 from bootstrap.extensions import cache, cors, db, jwt, migrate
@@ -29,11 +36,19 @@ from flask import Flask, request
 from health import (get_health_status, start_health_monitoring,
                     stop_health_monitoring, track_api_request)
 
+# Unterdrücke spezifische SQLAlchemy-Warnungen
+warnings.filterwarnings('ignore', r'^DELETE statement on table .* expected to delete')
+
 # Stelle sicher, dass Verzeichnis-Struktur zum Pfad hinzugefügt wird
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 # Konfiguriere Logging sofort mit der vereinfachten zentralen Konfiguration
 logger = config.setup_logging()
+
+# Stelle sicher, dass JWT_SECRET_KEY in der Umgebung gesetzt ist
+if not os.environ.get('JWT_SECRET_KEY') and os.environ.get('JWT_SECRET'):
+    os.environ['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET')
+    logger.info("JWT_SECRET_KEY aus JWT_SECRET gesetzt: %s", os.environ['JWT_SECRET_KEY'][:10] + '*******')
 
 # Logge Basisinformationen für Debugging
 logger.info("REDIS_URL: %s", config.redis_url)
@@ -41,6 +56,11 @@ logger.info("API_URL: %s", config.api_url)
 
 # Erstelle die Flask-Anwendung mit der Factory
 app = create_app()
+
+# Stelle sicher, dass JWT_SECRET_KEY in der App-Konfiguration gesetzt ist
+if 'JWT_SECRET_KEY' not in app.config and os.environ.get('JWT_SECRET'):
+    app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET')
+    logger.info("JWT_SECRET_KEY in app.config gesetzt")
 
 # Die CORS-Konfiguration findet jetzt nur in app_factory.py statt
 

@@ -11,12 +11,12 @@ import logging
 
 from api.token_tracking import (calculate_token_cost, check_credits_available,
                                 deduct_credits)
-from core.models import Connection, Topic, Upload, User, db
+from core.models import Topic, Upload, User, db
 from flask import current_app
 from openai import OpenAI
 
 from ..utils import (detect_language, query_chatgpt)
-from .models import create_connection, find_topic_by_name
+from .models import create_connection_via_parent, find_topic_by_name
 from .utils import get_openai_client, process_topic_response
 
 logger = logging.getLogger(__name__)

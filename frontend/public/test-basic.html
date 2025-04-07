@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HackTheStudy - Basic React Test</title>
+    
+    <!-- Umgebungsvariablen -->
+    <script src="/env-config.js"></script>
+    
+    <!-- React-CDN-Quellen -->
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.22.20/babel.min.js"></script>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+        }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #1d4ed8;
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Einfache React-Komponente ohne Router
+        const App = () => {
+            const [count, setCount] = React.useState(0);
+            
+            return (
+                <div className="container">
+                    <h1>Basic React Test</h1>
+                    <p>Diese Komponente verwendet nur React basics ohne React Router</p>
+                    
+                    <div>
+                        <p>Zähler: {count}</p>
+                        <button onClick={() => setCount(count + 1)}>
+                            Zähler erhöhen
+                        </button>
+                    </div>
+                    
+                    <div style={{ marginTop: '20px' }}>
+                        <h3>Umgebungsvariablen</h3>
+                        <pre>
+                            {JSON.stringify(window.__env || {}, null, 2)}
+                        </pre>
+                    </div>
+                </div>
+            );
+        };
+        
+        // React-Komponente rendern
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html> 

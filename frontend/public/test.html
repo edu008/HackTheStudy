@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HackTheStudy Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+        }
+        .status {
+            margin-top: 30px;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d1fae5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+        .error {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            border: 1px solid #fecaca;
+            display: none;
+        }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background-color: #1d4ed8;
+        }
+        #env-info {
+            margin-top: 30px;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 4px;
+            background-color: #f8f8f8;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>HackTheStudy Testseite</h1>
+        <p>Diese Seite testet, ob die Nginx-Konfiguration korrekt funktioniert.</p>
+        
+        <div class="status success">
+            <strong>Erfolg!</strong> Wenn du diese Seite siehst, funktioniert der grundlegende Nginx-Server korrekt.
+        </div>
+        
+        <div class="status error" id="api-error">
+            <strong>Fehler!</strong> Die API-Verbindung funktioniert nicht.
+        </div>
+        
+        <button id="test-api">API-Verbindung testen</button>
+        
+        <div id="env-info">
+            <strong>Umgebungsvariablen:</strong>
+            <div id="env-content">Wird geladen...</div>
+        </div>
+    </div>
+
+    <script>
+        // Umgebungsvariablen anzeigen
+        document.addEventListener('DOMContentLoaded', function() {
+            const envContent = document.getElementById('env-content');
+            try {
+                if (window.__env) {
+                    let envText = "";
+                    for (const [key, value] of Object.entries(window.__env)) {
+                        envText += `${key}: ${value}\n`;
+                    }
+                    envContent.textContent = envText;
+                } else {
+                    envContent.textContent = "Keine __env Variablen gefunden!";
+                }
+            } catch (error) {
+                envContent.textContent = "Fehler beim Laden der Umgebungsvariablen: " + error.message;
+            }
+            
+            // API-Test-Button
+            const testButton = document.getElementById('test-api');
+            testButton.addEventListener('click', async function() {
+                const apiError = document.getElementById('api-error');
+                try {
+                    const apiUrl = window.__env?.API_URL || 'http://localhost:8080';
+                    const response = await fetch(`${apiUrl}/api/v1/simple-health`);
+                    if (response.ok) {
+                        apiError.style.display = 'none';
+                        alert('API-Verbindung erfolgreich!');
+                    } else {
+                        apiError.style.display = 'block';
+                        apiError.textContent = `Fehler! Status: ${response.status} ${response.statusText}`;
+                    }
+                } catch (error) {
+                    apiError.style.display = 'block';
+                    apiError.textContent = `Fehler! ${error.message}`;
+                }
+            });
+        });
+    </script>
+</body>
+</html> 

@@ -12,11 +12,11 @@ import time
 from functools import lru_cache
 
 try:
-    from .token_tracking import (calculate_token_cost, check_credits_available,
+    from ..token_tracking import (calculate_token_cost, check_credits_available,
                                count_tokens, deduct_credits)
 except ImportError:
     # Fallback bei Import-Fehler
-    from api.utils.token_tracking import (calculate_token_cost, check_credits_available,
+    from api.token_tracking import (calculate_token_cost, check_credits_available,
                                        count_tokens, deduct_credits)
 
 logger = logging.getLogger(__name__)

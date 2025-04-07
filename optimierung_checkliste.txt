@@ -1,0 +1,116 @@
+# HackTheStudy Optimierungs-Checkliste
+
+## Aktueller Status:
+- Datum: 2025-04-04
+- Fortschritt: Verarbeitungslogik überarbeitet, direkte Dateibenutzung implementiert, upload_chunked.py überarbeitet, asynchrone Wrapper entfernt, Celery-Tasks aktualisiert, Import-Fehler behoben
+
+## 1. Entfernung unnötiger Komponenten
+
+- [ ] PDF-zu-Text-Konvertierungsfunktionen entfernen:
+  - [ ] backend/worker/utils/text_extraction.py (gesamte Datei)
+  - [x] backend/main/utils/file_utils.py (extract_text_* Funktionen durch Legacy-Stubs ersetzt)
+  - [ ] backend/main/api/file_utils.py (extract_text_* Funktionen)
+- [x] Chunking-Algorithmen und -Logik entfernen:
+  - [x] Alle Funktionen die 'chunks' zurückgeben
+  - [x] Text-Zerteilung in document_tasks.py
+- [x] Alle redundanten Zwischenspeicherungsschritte eliminieren
+- [x] ChunkedUpload-Modell entfernen und References aktualisieren:
+  - [x] ChunkedUpload-Klasse aus models.py entfernen
+  - [x] ChunkedUpload-Importe in diagnostics.py und anderen Dateien entfernen
+- [x] Fehlende Funktionen hinzufügen:
+  - [x] check_extension-Funktion in backend/main/utils/file_utils.py ergänzen
+  - [x] check_extension-Funktion in backend/main/api/utils/file_utils.py ergänzen
+  - [x] __all__ Listen in beiden Modulen aktualisiert
+
+## 2. Optimierung der API-Aufrufe
+
+- [x] Asynchrone OpenAI-API-Wrapper entfernen
+- [x] Synchrone Implementierung der OpenAI-API verwenden
+- [x] Fehlerbehandlung für API-Aufrufe verbessern
+- [ ] Timeouts anpassen für längere Verarbeitungszeit
+- [ ] Exponentiellen Backoff bei API-Fehlern einbauen
+
+## 3. Task-Verarbeitung optimieren
+
+- [x] Celery-Task-Definitionen aktualisieren
+- [x] Direkte Verarbeitung von Upload-Objekten implementieren
+- [ ] Redis-basierte Upload-Fortschrittsverfolgung verfeinern
+- [ ] Task-Retry-Mechanismus mit angepassten Backoff-Werten implementieren
+- [ ] Verbesserte Task-Protokollierung für Debug-Zwecke
+
+## 4. Dateiverarbeitung optimieren
+
+- [x] Direkte Verarbeitung der binären Dateien ohne Zwischenschritte
+- [x] Optimierung der Upload-Handhabung
+- [ ] Temporäre Dateien sicher verwalten
+- [ ] Effiziente Fehlerbehandlung bei Datei-Operationen
+
+## 5. Dokumentation und Tests
+
+- [x] Systemarchitektur dokumentieren
+- [x] API-Endpunkte dokumentieren
+- [ ] Testfälle für die optimierte Verarbeitung erstellen
+- [ ] Performancetest vor/nach der Optimierung durchführen
+
+## 6. Datenbank-Optimierung
+
+- [x] Upload-Tabelle vereinfachen:
+  - [x] content_1 bis content_5 Felder in Upload-Modell entfernen
+  - [x] Angepasste Migrations-Skripte für Datenbankänderungen
+- [x] Datenbank-Modelle in models.py aktualisieren
+
+## 7. API-Optimierung
+
+- [x] utils.py überarbeiten:
+  - [x] Funktion call_openai_api korrigieren (await-Problem beheben) - ERLEDIGT (2025-04-01): Entfernung von 'await' in der synchronen OpenAI-API-Aufrufen in utils.py
+  - [x] Synchrone API-Aufrufe durch direkte Aufrufe ersetzen - ERLEDIGT (2025-04-03): Ersetzung von async/await in call_openai_api durch synchrone direkte Aufrufe
+  - [x] Unnötige Wrapper-Funktionen entfernen - ERLEDIGT (2025-04-03): Entfernung der asynchronen Wrapper-Funktionen und Ersetzung durch direkte Implementierungen
+
+## 8. Direkte File-Handling-Implementierung
+
+- [x] ai_tasks.py aktualisieren:
+  - [x] Direkte PDF-Dateiverarbeitung implementiert ohne Textextraktion
+  - [x] Filehandling und Upload-Objekte direkt verwenden
+  - [x] Direkte Kommunikation mit OpenAI-API ohne Umwege
+  - [x] Redis-Status-Verwaltung aktualisiert für Fortschrittsverfolgung
+
+## 9. Worker-Prozess-Optimierung
+
+- [x] Vereinfachten Task-Flow implementieren:
+  - [x] Direkte Verarbeitung von binären Dateien
+  - [x] Keine JSON-Umwandlungsschritte mehr
+  - [x] Verbessertes Error-Handling
+- [ ] Message-Queuing optimieren
+
+## 10. Fehlerbehandlung und Logging
+
+- [ ] Logging-Strategie überarbeiten
+- [ ] Fehlerberichterstattung verbessern:
+  - [ ] Detaillierte Fehlermeldungen für Benutzer
+  - [ ] Interne Fehlerprotokolle für Entwickler
+- [ ] Retry-Mechanismen mit exponentiellen Backoff einrichten für:
+  - [ ] Datenbankzugriffe
+  - [ ] Redis-Zugriffe
+  - [ ] OpenAI-API-Aufrufe
+- [ ] Statusaktualisierungen bei Fehlern verbessern
+
+## 11. Tests und Qualitätssicherung
+
+- [ ] Unit-Tests für neue direkte File-Handling-Komponenten
+- [ ] Integration-Tests für den gesamten Pipeline-Prozess
+- [ ] Fehlerinjektionstests für robuste Fehlerbehandlung
+- [ ] Benutzerfreundlichkeits-Check des optimierten Systems
+
+## 12. Dokumentation
+
+- [ ] API-Dokumentation aktualisieren
+- [ ] Architekturübersicht mit neuen optimierten Komponenten
+- [ ] Entwicklerdokumentation zur direkten Dateiverarbeitung
+- [ ] Umstellung auf neue Upload-Struktur dokumentieren
+
+## Nächste Schritte:
+1. ✅ Überarbeitung der upload_chunked.py zur Verwendung der direkten Dateiverarbeitung
+2. ✅ Unnötige asynchrone Wrapper entfernen
+3. ✅ Celery-Task-Definitionen aktualisieren
+4. OpenAI-Fehlerbehandlung verbessern
+5. Message-Queuing optimieren

@@ -100,31 +100,21 @@ def register_tasks(celery_app):
 
         Args:
             pattern (str, optional): Muster für zu löschende Schlüssel.
-                                      Standardmäßig werden alle OpenAI-Cache-Einträge gelöscht.
+                                      Standardmäßig werden alle Cache-Einträge gelöscht.
             older_than_days (int): Cache-Einträge älter als diese Anzahl von Tagen werden gelöscht.
 
         Returns:
             dict: Ergebnis der Cache-Bereinigung.
         """
-        from openaicache.cache_manager import clear_cache
         from redis_utils.client import get_redis_client
 
         # Muster für zu löschende Schlüssel
         if not pattern:
-            pattern = "openai:cache:*"
+            pattern = "*"
 
         logger.info("Bereinige Cache-Einträge: %s (älter als %s Tage)", pattern, older_than_days)
 
-        # OpenAI-Cache direkt bereinigen, wenn das Muster passt
-        if pattern.startswith("openai:cache:"):
-            deleted_count = clear_cache(pattern)
-            return {
-                'status': 'completed',
-                'pattern': pattern,
-                'deleted_count': deleted_count
-            }
-
-        # Für andere Muster: Redis-Client verwenden
+        # Redis-Client verwenden
         redis_client = get_redis_client()
         if not redis_client:
             return {'status': 'error', 'error': 'Redis-Client nicht verfügbar'}
@@ -149,23 +139,22 @@ def register_tasks(celery_app):
                             if created_at and float(created_at) < cutoff_timestamp:
                                 redis_client.delete(key)
                                 deleted_count += 1
-                        else:
-                            # Ohne Metadaten: Lösche Schlüssel ohne TTL
-                            redis_client.delete(key)
-                            deleted_count += 1
-                    except BaseException:
-                        # Im Fehlerfall: Nicht löschen
-                        pass
-
-            logger.info("Cache bereinigt: %s Einträge gelöscht", deleted_count)
+                    except Exception as e:
+                        logger.error(f"Fehler beim Prüfen des Schlüssels {key}: {e}")
+                else:
+                    # Wenn TTL gesetzt ist und abgelaufen, löschen
+                    if ttl <= 0:
+                        redis_client.delete(key)
+                        deleted_count += 1
 
             return {
                 'status': 'completed',
                 'pattern': pattern,
                 'deleted_count': deleted_count
             }
+
         except Exception as e:
-            logger.error("Fehler bei der Cache-Bereinigung: %s", e)
+            logger.error(f"Fehler beim Bereinigen des Caches: {e}")
             return {'status': 'error', 'error': str(e)}
 
     tasks['maintenance.clean_cache'] = clean_cache

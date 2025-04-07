@@ -24,7 +24,8 @@ from core.openai_integration import (calculate_token_cost,
                                      get_user_credits, track_token_usage)
 from flask import current_app, g, jsonify
 
-from . import api_bp
+# Entferne den zirkulären Import
+# from . import api_bp
 from .auth import token_required
 
 # Lokales Caching von Kosten für höhere Leistung
@@ -135,35 +136,43 @@ def update_token_usage(user_id, session_id, input_tokens, output_tokens, model="
         }
 
 
-@api_bp.route('/token-usage', methods=['GET'])
-@token_required
-def get_token_usage():
+# Verschiebe die Routen in eine separate Funktion, um zirkuläre Imports zu vermeiden
+def register_routes(blueprint):
     """
-    Gibt Token-Nutzungsstatistiken für den aktuellen Benutzer zurück.
-
-    Returns:
-        JSON mit Token-Nutzungsstatistiken
+    Registriert die Token-Tracking-Routen am gegebenen Blueprint.
+    
+    Args:
+        blueprint: Das Flask Blueprint-Objekt, an das die Routen angehängt werden sollen
     """
-    try:
-        # Verwende die zentrale Implementierung
-        stats = get_usage_stats(user_id=g.user.id)
-        return jsonify(stats), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    @blueprint.route('/token-usage', methods=['GET'])
+    @token_required
+    def get_token_usage():
+        """
+        Gibt Token-Nutzungsstatistiken für den aktuellen Benutzer zurück.
+
+        Returns:
+            JSON mit Token-Nutzungsstatistiken
+        """
+        try:
+            # Verwende die zentrale Implementierung
+            stats = get_usage_stats(user_id=g.user.id)
+            return jsonify(stats), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
 
-@api_bp.route('/credits', methods=['GET'])
-@token_required
-def get_user_credits_route():
-    """
-    Gibt die Anzahl der verfügbaren Credits des Benutzers zurück.
+    @blueprint.route('/credits', methods=['GET'])
+    @token_required
+    def get_user_credits_route():
+        """
+        Gibt die Anzahl der verfügbaren Credits des Benutzers zurück.
 
-    Returns:
-        JSON mit Credits-Anzahl
-    """
-    try:
-        # Verwende die zentrale Implementierung
-        user_credits = get_user_credits(user_id=g.user.id)
-        return jsonify({"credits": user_credits}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        Returns:
+            JSON mit Credits-Anzahl
+        """
+        try:
+            # Verwende die zentrale Implementierung
+            user_credits = get_user_credits(user_id=g.user.id)
+            return jsonify({"credits": user_credits}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500

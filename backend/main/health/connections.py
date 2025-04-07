@@ -45,20 +45,55 @@ def check_db_connection() -> Tuple[bool, str]:
         Tuple: (ist_verbunden, status_nachricht)
     """
     try:
+        # Import in der Funktion, um zirkuläre Imports zu vermeiden
         from core.models import check_db_connection as core_check_db_connection
+        from flask import current_app
 
-        if core_check_db_connection():
-            return True, "connected"
-        return False, "disconnected"
+        # Wir benötigen einen Anwendungskontext für den Datenbankzugriff
+        # Falls kein Anwendungskontext verfügbar ist, verwende einen temporären
+        if current_app:
+            return (core_check_db_connection(), "connected") if core_check_db_connection() else (False, "disconnected")
+        else:
+            # Fallback: Versuche, einen temporären Anwendungskontext zu erstellen
+            try:
+                from flask import Flask
+                from config.config import config
+                
+                # Erstelle eine Mini-App nur für diesen Zweck
+                app = Flask(__name__)
+                app.config['SQLALCHEMY_DATABASE_URI'] = config.db_uri
+                
+                # Verwende den Anwendungskontext dieser App
+                with app.app_context():
+                    return (core_check_db_connection(), "connected") if core_check_db_connection() else (False, "disconnected")
+            except Exception as temp_app_err:
+                logger.error(f"Konnte keinen temporären Anwendungskontext erstellen: {str(temp_app_err)}")
+                return False, f"error: {str(temp_app_err)}"
     except ImportError:
         logger.warning("Konnte core.models nicht importieren, versuche Fallback.")
         try:
-            from flask import current_app
+            # Versuche, einen lokalen Anwendungskontext zu verwenden
+            from flask import current_app, Flask
             from flask_sqlalchemy import SQLAlchemy
-
-            db = SQLAlchemy(current_app)
-            db.session.execute("SELECT 1")
-            return True, "connected"
+            from config.config import config
+            
+            # Wenn kein Anwendungskontext vorhanden ist, erstelle einen temporären
+            if not current_app:
+                app = Flask(__name__)
+                app.config['SQLALCHEMY_DATABASE_URI'] = config.db_uri
+                context = app.app_context()
+                context.push()
+            else:
+                context = None
+                
+            try:
+                db = SQLAlchemy(current_app)
+                db.session.execute("SELECT 1")
+                return True, "connected"
+            finally:
+                # Pop den temporären Kontext, falls wir einen erstellt haben
+                if context:
+                    context.pop()
         except Exception as e:
             return False, f"error: {str(e)}"
 

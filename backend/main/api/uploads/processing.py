@@ -1,6 +1,8 @@
-# api/processing.py
 """
-Funktionen zur Verarbeitung hochgeladener Dateien und zur Analyse des Inhalts.
+(Refaktoriert) Enthält Hilfsfunktionen für den Upload-Prozess,
+wie Fortschrittsberechnung und Fehlerbehandlung.
+Die Kernlogik für Upload und Task-Start liegt in upload_core.py.
+Die Verarbeitung selbst geschieht im Worker.
 """
 
 import json
@@ -8,34 +10,30 @@ import logging
 import os
 import time
 import traceback
+from datetime import datetime, timedelta # timedelta hinzugefügt
+import uuid
+import re
+import random
 
-import redis
-from celery import Celery
-from flask import current_app, jsonify, request
+# Nur notwendige Flask/Werkzeug-Imports
+from flask import jsonify
 
-from api.auth import token_required
-from . import api_bp
-from ..token_tracking import (calculate_token_cost, check_credits_available,
-                             deduct_credits)
+# Redis-Client (wird für Hilfsfunktionen benötigt)
+from core.redis_client import get_redis_client
 
-# Redis-Client direkt erstellen
-redis_url = os.environ.get('REDIS_URL', 'redis://hackthestudy-backend-main:6379/0')
-redis_client = redis.from_url(redis_url)
-
-# Celery-Client zum Senden von Tasks an den Worker
-celery_app = Celery('api', broker=redis_url, backend=redis_url)
-
-# Konfiguriere Logger
+# Logger konfigurieren
 logger = logging.getLogger(__name__)
 
-# Fehlercodes
+# --- Konstanten --- #
 ERROR_INVALID_INPUT = "INVALID_INPUT"
 ERROR_PROCESSING_FAILED = "PROCESSING_FAILED"
 ERROR_INSUFFICIENT_CREDITS = "INSUFFICIENT_CREDITS"
+# ... (weitere Fehlercodes nach Bedarf)
 
+# --- Hilfsfunktionen --- #
 
-def create_error_response(message, error_code, details=None):
-    """Erstellt eine standardisierte Fehlerantwort"""
+def create_error_response(message, error_code, details=None, status_code=400):
+    """Erstellt eine standardisierte Fehlerantwort."""
     error_response = {
         "success": False,
         "message": message,
@@ -43,264 +41,142 @@ def create_error_response(message, error_code, details=None):
             "code": error_code
         }
     }
-
     if details:
         error_response["error"]["details"] = details
-
-    return jsonify(error_response), 400
-
-
-def delegate_to_worker(task_name, *args, **kwargs):
-    """Delegiert eine Aufgabe an den Worker über Celery."""
-    try:
-        logger.info(
-            f"📤 WORKER-DELEGATION: Sende Task '{task_name}' an Worker mit "
-            f"args={args[:30] if args else []} und kwargs={kwargs}")
-        task = celery_app.send_task(task_name, args=args, kwargs=kwargs)
-        logger.info("✅ WORKER-DELEGATION: Task erfolgreich gesendet - Task-ID: %s", task.id)
-
-        # Zusätzliche Diagnoseinformationen
-        celery_broker = celery_app.conf.broker_url
-        logger.info("📊 WORKER-DIAGNOSE: Broker-URL=%s, Worker-Task-ID=%s", celery_broker, task.id)
-
-        # Versuche Verbindungsstatus zu prüfen
-        try:
-            broker_reachable = celery_app.connection().ensure_connection(max_retries=1)
-            logger.info("🔌 WORKER-VERBINDUNG: Broker erreichbar = %s", broker_reachable)
-        except Exception as conn_err:
-            logger.error("❌ WORKER-VERBINDUNG: Broker-Verbindungsfehler: %s", str(conn_err))
-
-        return task
-    except Exception as e:
-        error_message = f"❌ WORKER-DELEGATION: Fehler beim Senden der Task '{task_name}' an Worker: {str(e)}"
-        logger.error(error_message)
-        logger.error("Stacktrace: %s", traceback.format_exc())
-        raise RuntimeError(error_message) from e
-
-
-def initiate_processing(session_id, upload_id):
-    """
-    Initiiert die Verarbeitung eines hochgeladenen Dokuments.
-    """
-    try:
-        # Setze den Verarbeitungsstatus
-        update_processing_status(session_id, "waiting")
-
-        # Setze den Startzeit-Zeitstempel
-        redis_client.set(f"processing_start_time:{session_id}", int(time.time()))
-
-        # Erstelle die Antwort für den Client
-        response = {
-            "success": True,
-            "message": "Datei erfolgreich hochgeladen. Verarbeitung wird gestartet.",
-            "session_id": session_id,
-            "upload_id": upload_id,
-            "status": "waiting",
-            "next_steps": {
-                "status_check": f"/api/v1/session-info/{session_id}",
-                "process": f"/api/v1/process-upload/{session_id}",
-                "results": f"/api/v1/results/{session_id}"
-            }
-        }
-
-        return jsonify(response)
-    except Exception as e:
-        logger.error("Fehler beim Initiieren der Verarbeitung: %s", str(e))
-        return create_error_response(
-            "Fehler beim Initiieren der Verarbeitung",
-            ERROR_PROCESSING_FAILED,
-            {"detail": str(e)}
-        )
-
-
-def update_processing_status(session_id, status):
-    """
-    Aktualisiert den Verarbeitungsstatus einer Session.
-    """
-    try:
-        redis_client.set(f"processing_status:{session_id}", status)
-        redis_client.set(f"processing_last_update:{session_id}", int(time.time()))
-
-        # Bei completed oder error auch den Fortschritt auf 100% setzen
-        if status in ["completed", "error"]:
-            redis_client.set(f"processing_progress:{session_id}", "100")
-
-        logger.info("Verarbeitungsstatus für Session %s auf '%s' gesetzt", session_id, status)
-        return True
-    except Exception as e:
-        logger.error("Fehler beim Aktualisieren des Verarbeitungsstatus für Session %s: %s", session_id, str(e))
-        return False
-
-
-@api_bp.route('/process-upload/<session_id>', methods=['POST', 'OPTIONS'])
-def process_upload(session_id):
-    """
-    Startet die eigentliche Verarbeitung eines hochgeladenen Dokuments.
-    """
-    # OPTIONS-Anfragen sofort beantworten
-    if request.method == 'OPTIONS':
-        return jsonify(success=True)
-
-    try:
-        # Überprüfe, ob die Session existiert
-        from core.models import Upload
-        upload = Upload.query.filter_by(session_id=session_id).first()
-        if not upload:
-            return jsonify({
-                "success": False,
-                "message": "Session nicht gefunden",
-                "error": {"code": "SESSION_NOT_FOUND"}
-            }), 404
-
-        # Kredit-Check für angemeldete Benutzer
-        user_id = upload.user_id
-        if user_id:
-            # Schätze den Token-Verbrauch basierend auf der Textlänge
-            estimated_token_count = len(upload.content.split()) * 1.5  # Grobe Schätzung
-
-            # Überprüfe, ob genügend Kredite vorhanden sind
-            if not check_credits_available(user_id, estimated_token_count):
-                return jsonify({
-                    "success": False,
-                    "message": "Nicht genügend Kredite für die Verarbeitung",
-                    "error": {"code": ERROR_INSUFFICIENT_CREDITS}
-                }), 402
-
-        # Setze den Verarbeitungsstatus auf "processing"
-        update_processing_status(session_id, "processing")
-
-        # Sende die Verarbeitungsaufgabe an den Worker
-        task = delegate_to_worker(
-            "worker.ai_processing_task",
-            upload.id,
-            session_id,
-            upload.content,
-            user_id
-        )
-
-        # Speichere die Task-ID in Redis
-        redis_client.set(f"task_id:{session_id}", task.id)
-
-        return jsonify({
-            "success": True,
-            "message": "Verarbeitung gestartet",
-            "task_id": task.id,
-            "session_id": session_id,
-            "status": "processing",
-            "status_check": f"/api/v1/session-info/{session_id}"
-        })
-    except Exception as e:
-        # Bei einem Fehler den Status auf "error" setzen
-        update_processing_status(session_id, "error")
-
-        # Fehlerdetails in Redis speichern
-        redis_client.set(f"error_details:{session_id}", str(e))
-
-        logger.error("Fehler bei der Verarbeitung von Session %s: %s", session_id, str(e))
-        logger.error(traceback.format_exc())
-
-        return jsonify({
-            "success": False,
-            "message": "Fehler bei der Verarbeitung",
-            "error": {"code": ERROR_PROCESSING_FAILED, "detail": str(e)}
-        }), 500
-
+    return jsonify(error_response), status_code
 
 def calculate_upload_progress(session_id):
-    """
-    Berechnet den Fortschritt der Verarbeitung.
-    """
+    """Berechnet den Upload-Fortschritt basierend auf Redis-Daten."""
     try:
-        progress = redis_client.get(f"processing_progress:{session_id}")
-        if progress:
-            return float(progress.decode('utf-8'))
+        redis_client = get_redis_client()
+        # Annahme: Chunked-Upload-Infos liegen unter "upload:meta:{session_id}"
+        # oder normale Upload-Infos unter "upload:{session_id}"
+        progress_data = redis_client.hgetall(f"upload:meta:{session_id}")
+        if not progress_data:
+            progress_data = redis_client.hgetall(f"upload:{session_id}")
+
+        if not progress_data:
+             # Vielleicht ist der Status schon direkt gesetzt?
+             status = redis_client.get(f"processing_status:{session_id}")
+             if status == b'completed': return 100
+             if status == b'ready_for_processing': return 100 # Nach Upload, vor Worker
+             logger.debug(f"Keine Fortschrittsdaten in Redis für Session {session_id} gefunden.")
+             return 0
+
+        # Chunked Upload Logik
+        total_chunks_b = progress_data.get(b'total_chunks')
+        # Versuche beide möglichen Schlüssel für abgeschlossene Chunks
+        completed_chunks_b = progress_data.get(b'uploaded_chunks') or progress_data.get(b'completed_chunks')
+        if total_chunks_b and completed_chunks_b:
+            try:
+                 total_chunks = int(total_chunks_b)
+                 completed_chunks = int(completed_chunks_b)
+                 if total_chunks > 0:
+                     progress_percent = int((completed_chunks / total_chunks) * 100)
+                     # Wenn Chunks abgeschlossen, aber Status noch nicht finalized, gib 99% zurück
+                     if progress_percent == 100 and progress_data.get(b'status') != b'finalized':
+                         return 99
+                     return progress_percent
+            except ValueError:
+                 logger.warning(f"Ungültige Chunk-Werte in Redis für Session {session_id}")
+                 pass # Falle zurück zur Statusprüfung
+
+        # Statusprüfung als Fallback
+        status = progress_data.get(b'status')
+        if status == b'completed': return 100
+        if status == b'finalized': return 100 # Chunked upload abgeschlossen
+        if status == b'ready_for_processing': return 100
+
+        # Fortschritt für Worker-Verarbeitung (falls implementiert)
+        worker_progress = redis_client.get(f"processing_progress:{session_id}")
+        if worker_progress:
+            try:
+                return int(float(worker_progress))
+            except ValueError:
+                 pass
+
+        logger.debug(f"Konnte Fortschritt für Session {session_id} nicht bestimmen, gebe 0 zurück.")
         return 0
+        
     except Exception as e:
-        logger.error("Fehler beim Berechnen des Fortschritts für Session %s: %s", session_id, str(e))
-        return 0
+        logger.error(f"Fehler beim Berechnen des Upload-Fortschritts für Session {session_id}: {e}")
+        return 0 # Fallback
 
-
-def estimate_remaining_time(session_id):
-    """
-    Schätzt die verbleibende Zeit für die Verarbeitung.
-    """
+def estimate_remaining_time(session_id, total_size_bytes=0):
+    """Schätzt die verbleibende Upload-Zeit (hauptsächlich für Chunked Uploads)."""
     try:
-        # Hole Start-Zeit und aktuellen Fortschritt
-        start_time = redis_client.get(f"processing_start_time:{session_id}")
-        progress = redis_client.get(f"processing_progress:{session_id}")
+        redis_client = get_redis_client()
+        upload_info = redis_client.hgetall(f"upload:meta:{session_id}")
 
-        if not start_time or not progress or float(progress.decode('utf-8')) <= 0:
+        start_time_str_b = upload_info.get(b'timestamp')
+        total_chunks_b = upload_info.get(b'total_chunks')
+        completed_chunks_b = upload_info.get(b'uploaded_chunks') or upload_info.get(b'completed_chunks')
+        total_size_redis_b = upload_info.get(b'total_size')
+
+        if not start_time_str_b or not total_chunks_b or not completed_chunks_b:
+            logger.debug(f"Nicht genügend Daten für Zeitschätzung (Chunked) für Session {session_id}")
             return None
 
-        start_time = int(start_time.decode('utf-8'))
-        progress = float(progress.decode('utf-8'))
+        start_time = float(start_time_str_b.decode('utf-8'))
+        completed_chunks = int(completed_chunks_b)
+        total_chunks = int(total_chunks_b)
 
-        # Berechne die vergangene Zeit
-        elapsed_time = int(time.time()) - start_time
+        # Versuche die genaueste Gesamtgröße zu ermitteln
+        if total_size_bytes and total_size_bytes > 0:
+            actual_total_size = total_size_bytes
+        elif total_size_redis_b:
+            try:
+                actual_total_size = int(total_size_redis_b)
+            except ValueError:
+                logger.warning(f"Ungültiger total_size Wert in Redis: {total_size_redis_b}")
+                actual_total_size = 0
+        else:
+            actual_total_size = 0
 
-        # Schätze die Gesamtzeit basierend auf dem Fortschritt
-        estimated_total_time = elapsed_time / (progress / 100)
+        # Schätze bisher hochgeladene Bytes, wenn Gesamtgröße bekannt ist
+        completed_bytes = 0
+        if total_chunks > 0 and actual_total_size > 0:
+             completed_bytes = int((completed_chunks / total_chunks) * actual_total_size)
+        elif completed_chunks > 0:
+            # Wenn Gesamtgröße unbekannt, nutze grobe Schätzung
+             CHUNK_SIZE_APPROX = 5 * 1024 * 1024 # Muss ggf. angepasst werden!
+             completed_bytes = completed_chunks * CHUNK_SIZE_APPROX
+             # Setze actual_total_size auf Schätzwert, wenn unbekannt
+             if actual_total_size == 0: actual_total_size = total_chunks * CHUNK_SIZE_APPROX
 
-        # Berechne die verbleibende Zeit
-        remaining_time = estimated_total_time - elapsed_time
+        elapsed_time = time.time() - start_time
 
-        # Runde auf ganze Sekunden
-        return max(0, int(remaining_time))
+        if elapsed_time <= 1 or completed_bytes <= 0 or actual_total_size <= 0:
+            return None
+
+        upload_speed_bps = completed_bytes / elapsed_time # Bytes pro Sekunde
+        remaining_bytes = actual_total_size - completed_bytes
+
+        if upload_speed_bps <= 0 or remaining_bytes < 0:
+            # Wenn Upload abgeschlossen scheint (remaining <= 0) oder Geschwindigkeit ungültig
+            if completed_chunks >= total_chunks:
+                 return 0 # Upload fertig
+                else:
+                 return None # Schätzung nicht möglich
+
+        remaining_time_sec = remaining_bytes / upload_speed_bps
+        return max(0, int(remaining_time_sec))
+        
     except Exception as e:
-        logger.error("Fehler beim Schätzen der verbleibenden Zeit für Session %s: %s", session_id, str(e))
+        logger.error(f"Fehler beim Schätzen der verbleibenden Zeit für Session {session_id}: {e}", exc_info=True)
         return None
 
-
-@api_bp.route('/retry-processing/<session_id>', methods=['POST', 'OPTIONS'])
-@token_required
-def retry_processing(session_id):
-    """
-    Startet die Verarbeitung einer fehlgeschlagenen Session neu.
-    """
-    # OPTIONS-Anfragen sofort beantworten
-    if request.method == 'OPTIONS':
-        return jsonify(success=True)
-
-    try:
-        # Überprüfe, ob die Session existiert
-        from core.models import Upload
-        upload = Upload.query.filter_by(session_id=session_id).first()
-        if not upload:
-            return jsonify({
-                "success": False,
-                "message": "Session nicht gefunden",
-                "error": {"code": "SESSION_NOT_FOUND"}
-            }), 404
-
-        # Lösche alle Fehler- und Status-Informationen in Redis
-        keys_to_delete = [
-            f"processing_status:{session_id}",
-            f"processing_progress:{session_id}",
-            f"processing_start_time:{session_id}",
-            f"processing_heartbeat:{session_id}",
-            f"processing_last_update:{session_id}",
-            f"processing_details:{session_id}",
-            f"processing_result:{session_id}",
-            f"task_id:{session_id}",
-            f"error_details:{session_id}",
-            f"openai_error:{session_id}"
-        ]
-
-        pipeline = redis_client.pipeline()
-        for key in keys_to_delete:
-            pipeline.delete(key)
-        pipeline.execute()
-
-        # Setze den Verarbeitungsstatus auf "waiting"
-        update_processing_status(session_id, "waiting")
-
-        # Leite zur Verarbeitungs-Route weiter
-        return process_upload(session_id)
-    except Exception as e:
-        logger.error("Fehler beim Neustart der Verarbeitung für Session %s: %s", session_id, str(e))
-
-        return jsonify({
-            "success": False,
-            "message": "Fehler beim Neustart der Verarbeitung",
-            "error": {"code": ERROR_PROCESSING_FAILED, "detail": str(e)}
-        }), 500
+# -------------------------------------------------------------------------
+# -- Gelöschte Funktionen (waren hier vorher):                         --
+# --                                                                     --
+# -- process_uploaded_file: Logik jetzt in upload_core.upload_file     --
+# -- delegate_to_worker: Wird nicht mehr direkt hier verwendet         --
+# -- process_upload: Veraltet, Route sollte entfernt/angepasst werden  --
+# -- retry_processing: Veraltet, Route sollte entfernt/angepasst werden --
+# -- update_session_with_extracted_text: Veraltet                      --
+# -- generate_demo_flashcards: Demo-Code, ausgelagert                 --
+# -- generate_demo_questions: Demo-Code, ausgelagert                --
+# -- generate_demo_topics: Demo-Code, ausgelagert                   --
+# -- Celery/Redis Konfigurationsblöcke: Gehören in app_factory        --
+# -- Imports für gelöschte Funktionen entfernt                         --
+# -------------------------------------------------------------------------

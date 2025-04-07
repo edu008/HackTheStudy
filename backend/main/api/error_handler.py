@@ -25,7 +25,7 @@ from .errors.exceptions import (APIError, AuthenticationError,
                                   InsufficientCreditsError, InvalidInputError,
                                   ResourceNotFoundError)
 # Import APIPermissionError statt PermissionError
-from .errors.exceptions import APIPermissionError
+from .errors.exceptions import APIPermissionError, PermissionError
 from .errors.handlers import setup_error_handlers
 from .errors.logging import log_error
 from .errors.responses import create_error_response

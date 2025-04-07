@@ -1,63 +1,63 @@
 """
-Celery-Tasks für den Worker.
+Task-Modul-Initialisierung.
+Registriert alle Tasks für den Worker.
 """
-# System-Imports
 import logging
-from importlib import import_module
-from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Liste aller Task-Module, die automatisch geladen werden sollen
-TASK_MODULES = [
-    'tasks.document_tasks',    # Dokumentenverarbeitung
-    'tasks.ai_tasks',          # KI-Generierung
-    'tasks.maintenance_tasks'  # Wartungsaufgaben
-]
-
-
-def register_tasks(celery_app) -> Dict[str, Any]:
+def register_tasks(celery_app):
     """
-    Registriert alle definierten Tasks mit der Celery-App.
-
+    Registriert alle Tasks aus den Untermodulen für die Celery-App.
+    
     Args:
-        celery_app: Die Celery-App-Instanz.
-
+        celery_app: Die Celery-App-Instanz
+        
     Returns:
-        dict: Registrierte Tasks und ihre Funktionen.
+        dict: Dictionary mit allen registrierten Tasks
     """
-    registered_tasks = {}
+    all_registered_tasks = {}
 
-    # Durchgehe alle Task-Module und registriere Tasks
-    for module_name in TASK_MODULES:
-        try:
-            # Importiere das Modul
-            module = import_module(module_name)
+    # Importiere und registriere AI-Tasks
+    try:
+        from .ai_tasks import register_tasks as register_ai_tasks
+        ai_tasks_dict = register_ai_tasks(celery_app)
+        all_registered_tasks.update(ai_tasks_dict)
+        logger.info(f"AI-Tasks erfolgreich registriert: {list(ai_tasks_dict.keys())}")
+    except ImportError as e:
+        logger.error(f"Fehler beim Importieren/Registrieren der AI-Tasks: {e}")
+    except Exception as e:
+        logger.error(f"Unerwarteter Fehler beim Registrieren der AI-Tasks: {e}")
+    
+    # Importiere und registriere Document-Tasks
+    try:
+        from .document_tasks import register_tasks as register_document_tasks
+        document_tasks_dict = register_document_tasks(celery_app)
+        all_registered_tasks.update(document_tasks_dict)
+        logger.info(f"Document-Tasks erfolgreich registriert: {list(document_tasks_dict.keys())}")
+    except ImportError as e:
+        logger.error(f"Fehler beim Importieren/Registrieren der Document-Tasks: {e}")
+    except Exception as e:
+        logger.error(f"Unerwarteter Fehler beim Registrieren der Document-Tasks: {e}")
+        
+    # Importiere und registriere Maintenance-Tasks
+    try:
+        from .maintenance_tasks import register_tasks as register_maintenance_tasks
+        maintenance_tasks_dict = register_maintenance_tasks(celery_app)
+        all_registered_tasks.update(maintenance_tasks_dict)
+        logger.info(f"Maintenance-Tasks erfolgreich registriert: {list(maintenance_tasks_dict.keys())}")
+    except ImportError as e:
+        logger.error(f"Fehler beim Importieren/Registrieren der Maintenance-Tasks: {e}")
+    except Exception as e:
+        logger.error(f"Unerwarteter Fehler beim Registrieren der Maintenance-Tasks: {e}")
+            
+    # --- Die redundante Definition von document.process_upload wird entfernt --- 
+    # @celery_app.task(name='document.process_upload', bind=True, max_retries=3)
+    # def process_upload(self, task_id, file_path, file_type, options=None):
+    #     ...
+    
+    logger.info(f"Gesamtanzahl registrierter Tasks: {len(all_registered_tasks)}")
+    return all_registered_tasks
 
-            # Prüfe, ob das Modul eine register_tasks-Funktion hat
-            if hasattr(module, 'register_tasks'):
-                module_tasks = module.register_tasks(celery_app)
-                registered_tasks.update(module_tasks)
-                logger.info("Tasks aus %s registriert: %s", module_name, list(module_tasks.keys()))
-            else:
-                logger.warning("Modul %s hat keine register_tasks-Funktion", module_name)
-        except ImportError as e:
-            logger.warning("Konnte Modul %s nicht importieren: %s", module_name, e)
-        except Exception as e:
-            logger.error("Fehler beim Registrieren von Tasks aus %s: %s", module_name, e)
-
-    # Log-Zusammenfassung
-    task_count = len(registered_tasks)
-    if task_count > 0:
-        logger.info("Insgesamt %s Tasks registriert: %s", task_count, list(registered_tasks.keys()))
-    else:
-        logger.warning("Keine Tasks registriert!")
-
-    return registered_tasks
-
-
-# Manueller Import der Haupt-Task-Module, um sicherzustellen, dass sie beim Import verfügbar sind
-try:
-    from tasks import ai_tasks, document_tasks, maintenance_tasks
-except ImportError as e:
-    logger.warning("Konnte einige Task-Module nicht importieren: %s", e)
+# Optional: Definiere __all__ für explizite Exporte, falls benötigt
+# __all__ = ['register_tasks'] 

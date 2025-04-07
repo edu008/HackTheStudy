@@ -18,6 +18,16 @@ import redis as redis_lib
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
 
+# Redis-Konfiguration
+REDIS_HOST = os.environ.get('REDIS_HOST', 'main')  # Verwende 'main' statt 'redis'
+REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
+REDIS_DB = int(os.environ.get('REDIS_DB', 0))
+REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD', 'hackthestudy_redis_password')
+REDIS_URL = os.environ.get('REDIS_URL', f"redis://:hackthestudy_redis_password@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}")
+
+# Singleton-Redis-Client
+_redis_client = None
+
 
 class RedisClient:
     """
@@ -40,85 +50,45 @@ class RedisClient:
         Returns:
             Redis-Client-Instanz
         """
-        # Wenn Instanz bereits existiert, direkt zurückgeben
-        if cls._redis_instance is not None:
-            return cls._redis_instance
-
-        # Redis-URL ermitteln
-        try:
-            # Importiere Konfiguration nur wenn nötig, um zirkuläre Importe zu vermeiden
-            from config.config import config
-            redis_url = config.redis_url
-        except ImportError:
-            # Fallback, wenn die Config nicht verfügbar ist
-            redis_url = os.environ.get('REDIS_URL', cls._default_redis_url)
-
-        # Versuche echten Redis-Client zu erstellen
-        try:
-            cls._redis_instance = redis_lib.from_url(
-                redis_url,
-                decode_responses=True,
-                socket_timeout=3,
-                socket_keepalive=True,
-                health_check_interval=30
-            )
-            # Teste die Verbindung
-            cls._redis_instance.ping()
-            logger.info("Redis-Client erfolgreich initialisiert mit URL: %s", redis_url)
-            
-        # Bei Fehler Dummy-Client erstellen
-        except Exception as e:
-            logger.error("Fehler beim Initialisieren des Redis-Clients (%s): %s", redis_url, str(e))
-
-            # Erstelle einen Dummy-Redis-Client für Fehlertoleranz
-            class DummyRedis:
-                def __init__(self, *args, **kwargs):
-                    self.data = {}  # In-Memory-Speicher für Dummy-Operationen
-
-                def ping(self):
-                    logger.warning("DummyRedis.ping() aufgerufen")
-                    return True
-
-                def get(self, key):
-                    logger.warning("DummyRedis.get(%s) aufgerufen", key)
-                    return self.data.get(key)
-
-                def set(self, key, value, *args, **kwargs):
-                    logger.warning("DummyRedis.set(%s) aufgerufen", key)
-                    self.data[key] = value
-                    return True
-
-                def delete(self, key):
-                    logger.warning("DummyRedis.delete(%s) aufgerufen", key)
-                    if key in self.data:
-                        del self.data[key]
-                        return 1
-                    return 0
-
-                def exists(self, key):
-                    logger.warning("DummyRedis.exists(%s) aufgerufen", key)
-                    return key in self.data
-
-                def incr(self, key, amount=1):
-                    logger.warning("DummyRedis.incr(%s, %s) aufgerufen", key, amount)
-                    self.data[key] = int(self.data.get(key, 0)) + amount
-                    return self.data[key]
-
-                def incrby(self, key, amount=1):
-                    # Rufe die incr-Methode auf, kein eigener return nötig da diese bereits einen Wert zurückgibt
-                    return self.incr(key, amount)
-
-                def __getattr__(self, name):
-                    def dummy_method(*args, **kwargs):
-                        logger.warning("DummyRedis.%s() aufgerufen", name)
-                        return None
-                    return dummy_method
-
-            cls._redis_instance = DummyRedis()
-            logger.warning("⚠️ Dummy-Redis wird verwendet! Redis-Funktionalität ist eingeschränkt.")
-
-        # Fertig initialisierte Instanz zurückgeben
-        return cls._redis_instance
+        global _redis_client
+        if _redis_client is None:
+            try:
+                # Verwende Redis-URL mit Authentifizierung
+                logger.info(f"Versuche Redis-Verbindung zu {REDIS_URL}")
+                _redis_client = redis_lib.from_url(REDIS_URL)
+                
+                # Teste die Verbindung
+                _redis_client.ping()
+                logger.info(f"Redis-Verbindung erfolgreich hergestellt zu {REDIS_URL}")
+            except redis_lib.ConnectionError as e:
+                logger.error(f"Fehler beim Verbinden mit Redis: {str(e)}")
+                logger.info("Versuche alternative Verbindungsmethode...")
+                
+                # Alternatives Verbindungsverfahren
+                try:
+                    _redis_client = redis_lib.Redis(
+                        host=REDIS_HOST,
+                        port=REDIS_PORT,
+                        db=REDIS_DB,
+                        password=REDIS_PASSWORD,
+                        decode_responses=False,
+                        socket_timeout=5
+                    )
+                    _redis_client.ping()
+                    logger.info(f"Alternative Redis-Verbindung erfolgreich hergestellt zu {REDIS_HOST}:{REDIS_PORT}")
+                except Exception as alt_e:
+                    logger.error(f"Alle Redis-Verbindungsversuche fehlgeschlagen: {str(alt_e)}")
+                    # Statt None zurückzugeben, werfen wir eine Exception oder verwenden einen Mock
+                    # Hier erstellen wir eine Dummy-Redis-Instanz für Entwicklung/Tests
+                    if os.environ.get('FLASK_ENV') == 'development':
+                        from fakeredis import FakeRedis
+                        logger.warning("Verwende FakeRedis für Entwicklungsumgebung")
+                        _redis_client = FakeRedis()
+                    else:
+                        # In Produktion sollte der Fehler weitergegeben werden
+                        raise
+        
+        return _redis_client
 
     @classmethod
     def get(cls, key: str, default: Any = None, as_json: bool = False) -> Any:
@@ -133,9 +103,9 @@ class RedisClient:
         Returns:
             Wert aus Redis oder default
         """
-        # Nur OpenAI-Cache-Schlüssel erlauben
-        if not key.startswith('openai:'):
-            logger.warning("Zugriff auf nicht-OpenAI-Cache-Schlüssel verweigert: %s", key)
+        # Nur erlaubte Schlüssel zulassen
+        if not (key.startswith('openai:') or key.startswith('processing:') or key.startswith('health:')):
+            logger.warning("Zugriff auf nicht erlaubten Schlüssel verweigert: %s", key)
             return default
 
         try:
@@ -172,9 +142,9 @@ class RedisClient:
         Returns:
             True bei Erfolg, False bei Fehler
         """
-        # Nur OpenAI-Cache-Schlüssel erlauben
-        if not key.startswith('openai:'):
-            logger.warning("Schreiben auf nicht-OpenAI-Cache-Schlüssel verweigert: %s", key)
+        # Nur erlaubte Schlüssel zulassen
+        if not (key.startswith('openai:') or key.startswith('processing:') or key.startswith('health:')):
+            logger.warning("Schreiben auf nicht erlaubten Schlüssel verweigert: %s", key)
             return False
 
         try:
@@ -202,9 +172,9 @@ class RedisClient:
         Returns:
             True bei Erfolg, False bei Fehler
         """
-        # Nur OpenAI-Cache-Schlüssel erlauben
-        if not key.startswith('openai:'):
-            logger.warning("Löschen von nicht-OpenAI-Cache-Schlüssel verweigert: %s", key)
+        # Nur erlaubte Schlüssel zulassen
+        if not (key.startswith('openai:') or key.startswith('processing:') or key.startswith('health:')):
+            logger.warning("Löschen von nicht erlaubtem Schlüssel verweigert: %s", key)
             return False
 
         try:
@@ -225,9 +195,9 @@ class RedisClient:
         Returns:
             True, wenn der Schlüssel existiert, sonst False
         """
-        # Nur OpenAI-Cache-Schlüssel erlauben
-        if not key.startswith('openai:'):
-            logger.warning("Existenzprüfung für nicht-OpenAI-Cache-Schlüssel verweigert: %s", key)
+        # Nur erlaubte Schlüssel zulassen
+        if not (key.startswith('openai:') or key.startswith('processing:') or key.startswith('health:')):
+            logger.warning("Existenzprüfung für nicht erlaubten Schlüssel verweigert: %s", key)
             return False
 
         try:
@@ -249,9 +219,9 @@ class RedisClient:
         Returns:
             Neuer Wert oder None bei Fehler
         """
-        # Nur OpenAI-Cache-Schlüssel erlauben
-        if not key.startswith('openai:'):
-            logger.warning("Inkrementieren von nicht-OpenAI-Cache-Schlüssel verweigert: %s", key)
+        # Nur erlaubte Schlüssel zulassen
+        if not (key.startswith('openai:') or key.startswith('processing:') or key.startswith('health:')):
+            logger.warning("Inkrementieren von nicht erlaubtem Schlüssel verweigert: %s", key)
             return None
 
         try:

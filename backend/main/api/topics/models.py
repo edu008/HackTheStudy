@@ -2,13 +2,13 @@
 Datenbankoperationen für Topics
 ----------------------------
 
-Dieses Modul enthält Funktionen für die Datenbankinteraktion mit Topics und Connections.
+Dieses Modul enthält Funktionen für die Datenbankinteraktion mit Topics.
 """
 
 import logging
 from datetime import datetime
 
-from core.models import Connection, Topic, Upload, UserActivity, db
+from core.models import Topic, Upload, UserActivity, db
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,10 @@ def get_topic_hierarchy(upload_id):
         upload_id: Die ID des Uploads
 
     Returns:
-        dict: Eine strukturierte Hierarchie der Topics und ihrer Verbindungen
+        dict: Eine strukturierte Hierarchie der Topics
     """
     topics = Topic.query.filter_by(upload_id=upload_id).all()
-    connections = Connection.query.filter_by(upload_id=upload_id).all()
-
+    
     # Erstelle ein Dictionary mit allen Topics
     topics_dict = {topic.id: {
         "id": topic.id,
@@ -43,17 +42,23 @@ def get_topic_hierarchy(upload_id):
     # Erstelle die Hierarchie, ausgehend vom Hauptthema
     main_topic = next((t for t in topics if t.is_main_topic), None)
 
-    # Erstelle das Ergebnis mit Topics und Connections
+    # Erstelle Verbindungen basierend auf parent_id-Beziehungen
+    connections = []
+    for topic in topics:
+        if topic.parent_id:
+            connections.append({
+                "id": f"conn_{topic.id}",
+                "source_id": topic.parent_id,
+                "target_id": topic.id,
+                "label": "has subtopic",
+                "source_text": next((t.name for t in topics if t.id == topic.parent_id), ""),
+                "target_text": topic.name
+            })
+
+    # Erstelle das Ergebnis mit Topics und Verbindungen
     result = {
         "topics": [topics_dict[topic.id] for topic in topics],
-        "connections": [{
-            "id": conn.id,
-            "source_id": conn.source_id,
-            "target_id": conn.target_id,
-            "label": conn.label,
-            "source_text": next((t.name for t in topics if t.id == conn.source_id), ""),
-            "target_text": next((t.name for t in topics if t.id == conn.target_id), "")
-        } for conn in connections]
+        "connections": connections
     }
 
     # Füge die Haupthierarchie hinzu, wenn ein Hauptthema existiert
@@ -88,40 +93,31 @@ def create_topic(upload_id, name, is_main_topic=False, parent_id=None):
     return topic
 
 
-def create_connection(upload_id, source_id, target_id, label):
+def create_connection_via_parent(upload_id, source_id, target_id, label=None):
     """
-    Erstellt eine neue Verbindung zwischen zwei Topics.
+    Erstellt eine hierarchische Beziehung zwischen Topics über parent_id.
 
     Args:
         upload_id: Die ID des Uploads
-        source_id: Die ID des Quell-Topics
-        target_id: Die ID des Ziel-Topics
-        label: Die Beschreibung der Verbindung
+        source_id: Die ID des übergeordneten Topics (parent)
+        target_id: Die ID des untergeordneten Topics (child)
+        label: Nicht verwendet, nur für Kompatibilität
 
     Returns:
-        Connection: Das erstellte Connection-Objekt
+        Topic: Das aktualisierte untergeordnete Topic
     """
-    # Überprüfe, ob bereits eine Verbindung zwischen diesen Topics existiert
-    existing = Connection.query.filter_by(
-        upload_id=upload_id,
-        source_id=source_id,
-        target_id=target_id
-    ).first()
-
-    if existing:
-        logger.info("Connection between %s and %s already exists, updating label", source_id, target_id)
-        existing.label = label
-        return existing
-
-    connection = Connection(
-        upload_id=upload_id,
-        source_id=source_id,
-        target_id=target_id,
-        label=label
-    )
-    db.session.add(connection)
-    logger.info("Created new connection: %s -> %s with label: %s", source_id, target_id, label)
-    return connection
+    # Hole das untergeordnete Topic
+    target_topic = Topic.query.get(target_id)
+    
+    if not target_topic:
+        logger.warning(f"Target topic with ID {target_id} not found")
+        return None
+        
+    # Setze parent_id auf source_id
+    target_topic.parent_id = source_id
+    logger.info(f"Updated topic {target_id} with parent {source_id}")
+    
+    return target_topic
 
 
 def find_topic_by_name(upload_id, name):
@@ -167,21 +163,20 @@ def create_topics_from_list(upload_id, topics_list, parent_id=None):
 
 def create_connections_from_list(upload_id, connections_list):
     """
-    Erstellt mehrere Verbindungen aus einer Liste von Verbindungsinformationen.
+    Erstellt mehrere hierarchische Beziehungen aus einer Liste von Verbindungsinformationen.
 
     Args:
         upload_id: Die ID des Uploads
         connections_list: Liste der Verbindungsinformationen (dict mit source_text, target_text, label)
 
     Returns:
-        list: Die erstellten Connection-Objekte
+        list: Die aktualisierten Topics
     """
-    created_connections = []
+    updated_topics = []
     for conn_info in connections_list:
         source_text = conn_info.get("source_text")
         target_text = conn_info.get("target_text")
-        label = conn_info.get("label")
-
+        
         # Finde die entsprechenden Topics
         source = find_topic_by_name(upload_id, source_text)
         target = find_topic_by_name(upload_id, target_text)
@@ -191,11 +186,12 @@ def create_connections_from_list(upload_id, connections_list):
                           source_text, target_text)
             continue
 
-        # Erstelle Verbindung
-        connection = create_connection(upload_id, source.id, target.id, label)
-        created_connections.append(connection)
+        # Setze die parent_id-Beziehung
+        target.parent_id = source.id
+        logger.info(f"Set parent relationship: {source.name} -> {target.name}")
+        updated_topics.append(target)
 
-    return created_connections
+    return updated_topics
 
 
 def log_topic_activity(user_id, upload_id, activity_type, details=None):

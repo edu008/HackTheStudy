@@ -1,54 +1,50 @@
 """
-Fragen-Modul für das Backend
--------------------------
+Questions-Modul für das Backend (Refaktoriert)
+------------------------------------
 
-Dieses Modul bietet eine modularisierte Struktur für die Verwaltung von Testfragen:
-
-- routes: API-Endpunkte für Fragen-Operationen
-- controllers: Geschäftslogik für Anfragenverarbeitung
-- generation: Funktionen für die Generierung von Fragen
-- models: Datenbankoperationen für Fragen-Objekte
-- schemas: Validierungsschemas für Fragenformate
-- validation: Validierungslogik und Bereinigung von Fragen
-- utils: Hilfsfunktionen für das Fragen-Modul
+Enthält den Blueprint und exportiert notwendige Komponenten
+für das Abrufen und Verwalten von Questions.
+Generierungs-Funktionen wurden entfernt.
 """
 
 from flask import Blueprint
 
-from .controllers import (process_generate_more_questions,
-                          process_generate_questions)
-from .generation import (generate_additional_questions,
-                         generate_fallback_questions, generate_questions)
+# Entferne Imports für Generierungs-Controller
+# from .controllers import (
+#    process_generate_more_questions,
+#    process_generate_questions)
+
+# Entferne Imports für Generierungs-Funktionen
+# from .generation import generate_questions, generate_more_questions
+
+# Behalte andere notwendige Imports
 from .models import get_questions, save_question
-from .routes import *
-from .schemas import QuestionRequestSchema
-from .utils import detect_language_wrapper, format_questions
-from .validation import (sanitize_question, sanitize_question_options,
-                         sanitize_question_text, validate_generated_questions,
+# Keine Routen mehr in routes.py
+# from .routes import *
+from .schemas import QuestionRequestSchema # Wird das noch gebraucht?
+from .utils import format_questions
+from .validation import (sanitize_question, validate_generated_questions,
                          validate_question_data)
 
 # Erstelle den Blueprint für das Questions-Modul
 questions_bp = Blueprint('questions', __name__)
 
-# Importiere die Routen, um sie zu registrieren
+# Routen werden jetzt in api/__init__.py registriert (falls dieser BP genutzt wird)
 
-# Exportiere wichtige Komponenten
-
+# Exportiere wichtige Komponenten (bereinigt)
 __all__ = [
     'questions_bp',
-    'generate_questions',
-    'generate_additional_questions',
-    'generate_fallback_questions',
-    'process_generate_questions',
-    'process_generate_more_questions',
-    'get_questions',
-    'save_question',
+    # Keine Generierungs-Funktionen mehr exportieren
+    # 'generate_questions',
+    # 'generate_more_questions',
+    # Keine Generierungs-Controller mehr exportieren
+    # 'process_generate_questions',
+    # 'process_generate_more_questions',
+    'get_questions', # Wird das extern genutzt?
+    'save_question', # Wird das extern genutzt?
     'QuestionRequestSchema',
     'validate_question_data',
-    'validate_generated_questions',
+    # 'validate_generated_questions',
     'sanitize_question',
-    'sanitize_question_text',
-    'sanitize_question_options',
-    'format_questions',
-    'detect_language_wrapper'
+    'format_questions'
 ]

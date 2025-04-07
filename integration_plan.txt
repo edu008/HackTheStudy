@@ -1,0 +1,508 @@
+# HackTheStudy - Detaillierter Integrationsplan
+
+## 1. API Client im Frontend erstellen
+
+### API Basis-Konfiguration
+```typescript
+// src/lib/api/config.ts
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+export const API_ENDPOINTS = {
+  AUTH: {
+    LOGIN: '/api/v1/auth/login',
+    REGISTER: '/api/v1/auth/register',
+    REFRESH: '/api/v1/auth/refresh',
+    LOGOUT: '/api/v1/auth/logout',
+  },
+  USER: {
+    PROFILE: '/api/v1/user/profile',
+    CREDITS: '/api/v1/user/credits',
+  },
+  TOPICS: {
+    LIST: '/api/v1/topics',
+    GET: (id: string) => `/api/v1/topics/${id}`,
+    CREATE: '/api/v1/topics',
+    UPDATE: (id: string) => `/api/v1/topics/${id}`,
+    DELETE: (id: string) => `/api/v1/topics/${id}`,
+  },
+  FLASHCARDS: {
+    LIST: '/api/v1/flashcards',
+    GET: (id: string) => `/api/v1/flashcards/${id}`,
+    CREATE: '/api/v1/flashcards',
+    UPDATE: (id: string) => `/api/v1/flashcards/${id}`,
+    DELETE: (id: string) => `/api/v1/flashcards/${id}`,
+  },
+  QUESTIONS: {
+    LIST: '/api/v1/questions',
+    GET: (id: string) => `/api/v1/questions/${id}`,
+    CREATE: '/api/v1/questions',
+    UPDATE: (id: string) => `/api/v1/questions/${id}`,
+    DELETE: (id: string) => `/api/v1/questions/${id}`,
+  },
+  PAYMENT: {
+    CREATE: '/api/v1/payment/create',
+    VERIFY: '/api/v1/payment/verify',
+  },
+  UPLOADS: {
+    FILE: '/api/v1/uploads/file',
+  }
+};
+```
+
+### Axios Client mit Interceptors
+
+```typescript
+// src/lib/api/client.ts
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import { API_BASE_URL } from './config';
+import { toast } from '@/components/ui/use-toast';
+
+// Erstelle Axios-Instanz mit Basiskonfiguration
+const apiClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Request Interceptor - fügt JWT Token zu Anfragen hinzu
+apiClient.interceptors.request.use(
+  (config: AxiosRequestConfig) => {
+    const token = localStorage.getItem('auth_token');
+    if (token && config.headers) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error: AxiosError) => {
+    return Promise.reject(error);
+  }
+);
+
+// Response Interceptor - verarbeitet API-Fehler und Token-Refresh
+apiClient.interceptors.response.use(
+  (response: AxiosResponse) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config;
+    
+    // Bei 401 Unauthorized - versuche Token zu erneuern
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      try {
+        const refreshToken = localStorage.getItem('refresh_token');
+        if (!refreshToken) {
+          throw new Error('Kein Refresh-Token vorhanden');
+        }
+        
+        const response = await axios.post(`${API_BASE_URL}/api/v1/auth/refresh`, {
+          refresh_token: refreshToken
+        });
+        
+        const { token } = response.data;
+        localStorage.setItem('auth_token', token);
+        
+        // Wiederhole ursprüngliche Anfrage mit neuem Token
+        if (originalRequest.headers) {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+        }
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        // Bei Fehler - Benutzer ausloggen
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('exammaster_user');
+        
+        // Zur Anmeldeseite weiterleiten
+        window.location.href = '/signin';
+        
+        toast({
+          title: "Sitzung abgelaufen",
+          description: "Bitte melde dich erneut an.",
+          variant: "destructive"
+        });
+        
+        return Promise.reject(refreshError);
+      }
+    }
+    
+    // Fehlermeldungen anzeigen
+    if (error.response) {
+      const errorMessage = error.response.data?.message || 'Ein unbekannter Fehler ist aufgetreten';
+      toast({
+        title: "Fehler",
+        description: errorMessage,
+        variant: "destructive"
+      });
+    } else if (error.request) {
+      toast({
+        title: "Netzwerkfehler",
+        description: "Verbindung zum Server fehlgeschlagen",
+        variant: "destructive"
+      });
+    } else {
+      toast({
+        title: "Fehler",
+        description: error.message || 'Ein unbekannter Fehler ist aufgetreten',
+        variant: "destructive"
+      });
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;
+```
+
+## 2. Auth-System-Integration
+
+### Backend: JWT Auth-Endpunkt sicherstellen
+- Überprüfen, ob JWT richtig implementiert ist
+- Refresh-Token-Mechanismus implementieren
+
+### Frontend: AuthContext anpassen
+
+```typescript
+// src/contexts/AuthContext.tsx - Änderung
+import apiClient from '@/lib/api/client';
+import { API_ENDPOINTS } from '@/lib/api/config';
+
+// Authentifizierungs-Funktion anpassen
+const signIn = async (provider: string, credentials: any) => {
+  setIsLoading(true);
+  try {
+    // Tatsächliche API-Anfrage statt Mock-Daten
+    const response = await apiClient.post(API_ENDPOINTS.AUTH.LOGIN, {
+      provider,
+      ...credentials
+    });
+    
+    const { user, token, refreshToken } = response.data;
+    
+    // Token speichern
+    localStorage.setItem('auth_token', token);
+    localStorage.setItem('refresh_token', refreshToken);
+    
+    // Benutzer setzen
+    setUser(user);
+    
+    toast({
+      title: "Erfolgreich angemeldet",
+      description: `Willkommen, ${user.name}!`,
+    });
+  } catch (error) {
+    // Fehlerbehandlung wird vom API-Client übernommen
+  } finally {
+    setIsLoading(false);
+  }
+};
+```
+
+## 3. Daten-Hooks für API-Ressourcen
+
+### Beispiel für ein Topic-Hook
+
+```typescript
+// src/hooks/useTopic.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import apiClient from '@/lib/api/client';
+import { API_ENDPOINTS } from '@/lib/api/config';
+
+export const useTopic = (id?: string) => {
+  const queryClient = useQueryClient();
+  
+  // Einzelnes Topic abrufen
+  const getTopic = useQuery(
+    ['topic', id],
+    async () => {
+      if (!id) return null;
+      const response = await apiClient.get(API_ENDPOINTS.TOPICS.GET(id));
+      return response.data;
+    },
+    {
+      enabled: !!id,
+    }
+  );
+  
+  // Liste aller Topics
+  const getTopics = useQuery(
+    ['topics'],
+    async () => {
+      const response = await apiClient.get(API_ENDPOINTS.TOPICS.LIST);
+      return response.data;
+    }
+  );
+  
+  // Topic erstellen
+  const createTopic = useMutation(
+    async (topicData) => {
+      const response = await apiClient.post(API_ENDPOINTS.TOPICS.CREATE, topicData);
+      return response.data;
+    },
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['topics']);
+      },
+    }
+  );
+  
+  // Topic aktualisieren
+  const updateTopic = useMutation(
+    async ({ id, data }) => {
+      const response = await apiClient.put(API_ENDPOINTS.TOPICS.UPDATE(id), data);
+      return response.data;
+    },
+    {
+      onSuccess: (data) => {
+        queryClient.invalidateQueries(['topics']);
+        queryClient.invalidateQueries(['topic', data.id]);
+      },
+    }
+  );
+  
+  // Topic löschen
+  const deleteTopic = useMutation(
+    async (id) => {
+      const response = await apiClient.delete(API_ENDPOINTS.TOPICS.DELETE(id));
+      return response.data;
+    },
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['topics']);
+      },
+    }
+  );
+  
+  return {
+    topic: getTopic.data,
+    topics: getTopics.data,
+    isLoading: getTopic.isLoading || getTopics.isLoading,
+    isError: getTopic.isError || getTopics.isError,
+    create: createTopic.mutate,
+    update: updateTopic.mutate,
+    delete: deleteTopic.mutate,
+  };
+};
+```
+
+## 4. UI-Komponenten für Backend-Funktionen
+
+### Topic-Verwaltungskomponente
+
+```tsx
+// src/components/TopicManager.tsx
+import { useState } from 'react';
+import { useTopic } from '@/hooks/useTopic';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
+const TopicManager = () => {
+  const { topics, create, delete: deleteTopic, isLoading } = useTopic();
+  const [newTopicName, setNewTopicName] = useState('');
+  
+  const handleCreateTopic = () => {
+    if (newTopicName.trim()) {
+      create({ name: newTopicName });
+      setNewTopicName('');
+    }
+  };
+  
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Themen verwalten</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex gap-2 mb-4">
+          <Input
+            value={newTopicName}
+            onChange={(e) => setNewTopicName(e.target.value)}
+            placeholder="Neues Thema..."
+          />
+          <Button onClick={handleCreateTopic} disabled={isLoading}>
+            Erstellen
+          </Button>
+        </div>
+        
+        {isLoading ? (
+          <p>Wird geladen...</p>
+        ) : (
+          <ul className="space-y-2">
+            {topics?.map((topic) => (
+              <li key={topic.id} className="flex justify-between items-center p-2 border rounded">
+                <span>{topic.name}</span>
+                <Button 
+                  variant="destructive" 
+                  size="sm"
+                  onClick={() => deleteTopic(topic.id)}
+                >
+                  Löschen
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default TopicManager;
+```
+
+## 5. Zahlungsintegration
+
+### Backend-Endpunkt für Zahlungsabwicklung
+
+Sicherstellen, dass folgender Endpunkt im Backend existiert:
+- POST /api/v1/payment/create - Erstellt eine Zahlungsanforderung
+- POST /api/v1/payment/verify - Verifiziert eine abgeschlossene Zahlung
+
+### Frontend-Komponente für Zahlungen
+
+```tsx
+// src/components/PaymentForm.tsx
+import { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import apiClient from '@/lib/api/client';
+import { API_ENDPOINTS } from '@/lib/api/config';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
+import { toast } from '@/components/ui/use-toast';
+
+const PaymentForm = () => {
+  const { addCredits } = useAuth();
+  const [selectedPlan, setSelectedPlan] = useState('basic');
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const plans = {
+    basic: { name: 'Basic', credits: 100, price: 9.99 },
+    standard: { name: 'Standard', credits: 250, price: 19.99 },
+    premium: { name: 'Premium', credits: 500, price: 29.99 },
+  };
+  
+  const handlePlanChange = (value) => {
+    setSelectedPlan(value);
+  };
+  
+  const handlePayment = async () => {
+    setIsProcessing(true);
+    try {
+      const plan = plans[selectedPlan];
+      
+      // 1. Zahlungsanforderung erstellen
+      const createResponse = await apiClient.post(API_ENDPOINTS.PAYMENT.CREATE, {
+        plan: selectedPlan,
+        amount: plan.price,
+      });
+      
+      const { paymentId, redirectUrl } = createResponse.data;
+      
+      // 2. Mock-Zahlungsabwicklung (in Produktionsumgebung würde hier eine Weiterleitung erfolgen)
+      // Simuliere Zahlungsabwicklung nach kurzer Verzögerung
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // 3. Zahlungsverifizierung
+      const verifyResponse = await apiClient.post(API_ENDPOINTS.PAYMENT.VERIFY, {
+        paymentId,
+      });
+      
+      if (verifyResponse.data.success) {
+        // 4. Credits zum Benutzerkonto hinzufügen
+        addCredits(plan.credits);
+        
+        toast({
+          title: "Zahlung erfolgreich",
+          description: `${plan.credits} Credits wurden deinem Konto gutgeschrieben.`,
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Zahlungsfehler",
+        description: "Die Zahlung konnte nicht verarbeitet werden.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+  
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Credits kaufen</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <RadioGroup value={selectedPlan} onValueChange={handlePlanChange} className="space-y-4">
+          {Object.entries(plans).map(([key, plan]) => (
+            <div key={key} className="flex items-center space-x-2 border p-4 rounded">
+              <RadioGroupItem value={key} id={`plan-${key}`} />
+              <Label htmlFor={`plan-${key}`} className="flex-1">
+                <div className="flex justify-between">
+                  <span className="font-medium">{plan.name}</span>
+                  <span>{plan.credits} Credits</span>
+                  <span className="font-bold">{plan.price.toFixed(2)} €</span>
+                </div>
+              </Label>
+            </div>
+          ))}
+        </RadioGroup>
+        
+        <Button 
+          onClick={handlePayment} 
+          disabled={isProcessing}
+          className="w-full mt-6"
+        >
+          {isProcessing ? 'Wird verarbeitet...' : `${plans[selectedPlan].name}-Plan kaufen`}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+};
+
+export default PaymentForm;
+```
+
+## 6. Deployment-Konfiguration
+
+### Docker-Compose-Konfiguration für Entwicklung
+
+Die vorhandene Docker-Compose-Konfiguration überprüfen und sicherstellen,
+dass sowohl Backend als auch Frontend darin enthalten sind.
+
+### .env-Dateien für Konfiguration
+
+#### Backend .env (existiert bereits)
+Anpassen, um die richtigen URLs und Ports einzustellen.
+
+#### Frontend .env
+```
+VITE_API_URL=http://localhost:5000
+VITE_APP_NAME=HackTheStudy
+VITE_ENV=development
+```
+
+## 7. Integration Testing
+
+### Integrationstests für die Kommunikation zwischen Backend und Frontend
+
+Tests einrichten, um sicherzustellen, dass:
+1. Die Authentifizierung korrekt funktioniert
+2. API-Anfragen richtig ausgeführt werden
+3. Daten korrekt zwischen Backend und Frontend übertragen werden
+4. Fehlerbehandlung in beiden Systemen funktioniert
+
+## 8. Dokumentation
+
+### API-Dokumentation erstellen
+
+Swagger/OpenAPI-Dokumentation für alle Backend-Endpunkte einrichten,
+die vom Frontend verwendet werden.
+
+### Frontend-Komponenten-Dokumentation
+
+Storybook für UI-Komponenten einrichten, um deren Funktionalität
+und Verwendung zu dokumentieren. 

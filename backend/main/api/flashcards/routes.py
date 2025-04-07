@@ -1,12 +1,10 @@
 """
-Routes-Modul für das Flashcards-Paket
+Routes-Modul für das Flashcards-Paket (Refaktoriert)
 -----------------------------------
 
-Dieses Modul definiert alle API-Endpunkte für die Flashcard-Verwaltung:
-- Generierung von Flashcards
-- Generierung weiterer Flashcards
-- Abfrage von Flashcards
-- Verwaltung von Lern-Sessions
+Enthält nur noch API-Endpunkte zum Abrufen und Verwalten
+von bereits generierten Flashcards.
+Die Generierungs-Routen wurden entfernt, da dies im Worker geschieht.
 """
 
 import logging
@@ -17,12 +15,10 @@ from api.auth import token_required
 from flask import current_app, g, jsonify, request
 
 from .controllers import (process_delete_flashcard,
-                          process_generate_flashcards,
-                          process_generate_more_flashcards,
                           process_get_flashcards, process_get_study_session,
                           process_save_flashcard_feedback,
                           process_update_flashcard)
-from .schemas import FlashcardFeedbackSchema, FlashcardRequestSchema
+from .schemas import FlashcardFeedbackSchema
 
 logger = logging.getLogger(__name__)
 
@@ -33,59 +29,6 @@ CORS_CONFIG = {
     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     "allow_headers": ["Content-Type", "Authorization"]
 }
-
-
-@api_bp.route('/generate-more-flashcards', methods=['POST', 'OPTIONS'])
-def generate_more_flashcards_route():
-    """
-    API-Endpunkt zum Generieren weiterer Lernkarten zu einer bestehenden Sitzung.
-    Erfordert eine gültige Sitzungs-ID und optional die Anzahl der zu generierenden Lernkarten.
-    """
-    # OPTIONS-Anfragen sofort beantworten
-    if request.method == 'OPTIONS':
-        response = jsonify({"success": True})
-        return response
-
-    # Authentifizierung für nicht-OPTIONS Anfragen
-    auth_decorator = token_required(lambda: None)
-    auth_result = auth_decorator()
-    if auth_result is not None:
-        return auth_result
-
-    data = request.get_json()
-    if not data or 'session_id' not in data:
-        return jsonify({'error': 'Session-ID erforderlich', 'success': False}), 400
-
-    session_id = data['session_id']
-    count = data.get('count', 5)  # Standardmäßig 5 neue Lernkarten
-    timestamp = data.get('timestamp', '')
-
-    return process_generate_more_flashcards(session_id, count, timestamp)
-
-
-@api_bp.route('/flashcards/generate/<session_id>', methods=['POST', 'OPTIONS'])
-def generate_flashcards_route(session_id):
-    """
-    API-Endpunkt zum erstmaligen Generieren von Lernkarten zu einer Sitzung.
-    Verwendet die Sitzungs-ID, um den zugehörigen Upload zu finden und Lernkarten zu generieren.
-    """
-    # OPTIONS-Anfragen sofort beantworten
-    if request.method == 'OPTIONS':
-        response = jsonify({"success": True})
-        return response
-
-    # Authentifizierung für nicht-OPTIONS Anfragen
-    auth_decorator = token_required(lambda: None)
-    auth_result = auth_decorator()
-    if auth_result is not None:
-        return auth_result
-
-    # Parameter aus der Anfrage extrahieren
-    data = request.get_json() or {}
-    count = data.get('count', 10)  # Standardwert: 10 Lernkarten
-    topic_filter = data.get('topic_filter', None)  # Optional: Beschränkung auf bestimmte Themen
-
-    return process_generate_flashcards(session_id, count, topic_filter)
 
 
 @api_bp.route('/flashcards/<session_id>', methods=['GET', 'OPTIONS'])

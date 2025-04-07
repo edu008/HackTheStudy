@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HackTheStudy - Simple React Test 2</title>
+    
+    <!-- Umgebungsvariablen -->
+    <script src="/env-config.js"></script>
+    
+    <!-- Alternative React-CDN-Quellen -->
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel von cdnjs -->
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.22.20/babel.min.js"></script>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+        }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1d4ed8;
+        }
+        .debug-info {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #fffbeb;
+            border: 1px solid #fef3c7;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>HackTheStudy - Simple React Test (Alternative CDN)</h1>
+        <p id="loading-message">Prüfe React-Verfügbarkeit...</p>
+        <div id="root"></div>
+        <div class="debug-info">
+            <h3>Debug-Informationen</h3>
+            <p>Prüfe, ob die grundlegenden Variablen verfügbar sind:</p>
+            <ul>
+                <li>React verfügbar: <span id="react-check">Wird geprüft...</span></li>
+                <li>ReactDOM verfügbar: <span id="react-dom-check">Wird geprüft...</span></li>
+                <li>Babel verfügbar: <span id="babel-check">Wird geprüft...</span></li>
+                <li>window.__env verfügbar: <span id="env-check">Wird geprüft...</span></li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Einfaches Script zur Verfügbarkeitsprüfung -->
+    <script>
+        // Prüfe, ob die Bibliotheken geladen wurden
+        document.getElementById('react-check').textContent = typeof React !== 'undefined' ? 'Ja ✓' : 'Nein ✗';
+        document.getElementById('react-dom-check').textContent = typeof ReactDOM !== 'undefined' ? 'Ja ✓' : 'Nein ✗';
+        document.getElementById('babel-check').textContent = typeof Babel !== 'undefined' ? 'Ja ✓' : 'Nein ✗';
+        document.getElementById('env-check').textContent = typeof window.__env !== 'undefined' ? 'Ja ✓' : 'Nein ✗';
+        
+        // Wenn alle verfügbar sind, ändere die Nachricht
+        if (typeof React !== 'undefined' && typeof ReactDOM !== 'undefined' && typeof Babel !== 'undefined') {
+            document.getElementById('loading-message').textContent = 'React, ReactDOM und Babel wurden geladen!';
+        } else {
+            document.getElementById('loading-message').textContent = 'Einige Bibliotheken konnten nicht geladen werden.';
+        }
+    </script>
+    
+    <!-- React-Komponente (wird mit Babel kompiliert) -->
+    <script type="text/babel">
+        // Einfacher Timeout, um sicherzustellen, dass alles geladen ist
+        setTimeout(() => {
+            try {
+                // Einfache React-Komponente
+                const App = () => {
+                    const [count, setCount] = React.useState(0);
+                    
+                    return (
+                        <div style={{ padding: '20px', borderTop: '1px solid #e5e7eb', marginTop: '20px' }}>
+                            <h2>React-Komponente</h2>
+                            <p>Diese Komponente wird mit React gerendert.</p>
+                            
+                            <div>
+                                <p>Zähler: {count}</p>
+                                <button onClick={() => setCount(count + 1)}>
+                                    Zähler erhöhen
+                                </button>
+                            </div>
+                            
+                            <div style={{ marginTop: '20px' }}>
+                                <h3>Umgebungsvariablen</h3>
+                                <pre>
+                                    {JSON.stringify(window.__env || {}, null, 2)}
+                                </pre>
+                            </div>
+                        </div>
+                    );
+                };
+                
+                // React-Komponente rendern
+                const rootElement = document.getElementById('root');
+                if (rootElement) {
+                    ReactDOM.createRoot(rootElement).render(<App />);
+                    console.log('React-Komponente erfolgreich gerendert.');
+                } else {
+                    console.error('Root-Element nicht gefunden!');
+                }
+            } catch (error) {
+                console.error('Fehler beim Rendern der React-Komponente:', error);
+                document.getElementById('root').innerHTML = `
+                    <div style="color: red; padding: 20px; border: 1px solid red; margin-top: 20px;">
+                        <h3>Fehler beim Rendern</h3>
+                        <p>${error.message}</p>
+                        <pre>${error.stack}</pre>
+                    </div>
+                `;
+            }
+        }, 1000);
+    </script>
+</body>
+</html> 

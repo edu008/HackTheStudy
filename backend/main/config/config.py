@@ -266,6 +266,7 @@ class LoggingManager:
             message: Fortschrittsnachricht
             stage: Verarbeitungsstufe
         """
+        # Redis-Client nur hier importieren, um zirkuläre Importe zu vermeiden
         from core.redis_client import redis_client
 
         details = {
@@ -301,6 +302,7 @@ class LoggingManager:
             trace: Stacktrace (optional)
             diagnostics: Diagnosedaten (optional)
         """
+        # Redis-Client nur hier importieren, um zirkuläre Importe zu vermeiden
         from core.redis_client import redis_client
 
         # Bereinige Traceback für Logs
@@ -351,82 +353,92 @@ class AppConfig:
         """Stellt sicher, dass nur eine Instanz existiert (Singleton)."""
         if cls._instance is None:
             cls._instance = super(AppConfig, cls).__new__(cls)
-            # Initialisiere hier alle Klassenvariablen, um 'access before definition' zu vermeiden
-            cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
-        """Initialisiert die Konfigurationsinstanz, wenn sie noch nicht initialisiert wurde."""
-        if self._initialized:
+        """Initialisiert die Konfigurationsklasse mit Standardwerten und Umgebungsvariablen."""
+        # Verhindere mehrfache Initialisierung
+        if hasattr(self, '_initialized') and self._initialized:
             return
 
-        # Umgebungsvariablen laden
+        # Lade .env-Datei, falls vorhanden
         self.load_env()
 
-        # Umgebung ermitteln
-        self.environment = os.environ.get('ENVIRONMENT', 'production').lower()
-        self.is_production = self.environment == 'production'
-        self.is_development = self.environment == 'development'
-        self.is_testing = self.environment == 'testing'
-        self.is_digital_ocean = bool(os.environ.get('DIGITAL_OCEAN_APP_NAME'))
+        # Logging-Manager initialisieren
+        self._logging_manager = LoggingManager()
 
-        # Basiseinstellungen
-        self.debug = self.is_development or os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-        self.testing = self.is_testing
-        self.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-key-please-change-in-production')
+        # Basisverzeichnis für relativen Pfadzugriff
+        self.base_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
-        # Datenbankverbindung
-        self.database_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
-        self.track_modifications = False
-
-        # Redis-Konfiguration
-        self.redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        # Allgemeine Konfiguration
+        self.debug = os.environ.get('FLASK_DEBUG', '0').lower() in ('1', 'true', 'yes', 'y')
+        self.env = os.environ.get('FLASK_ENV', 'production')
+        self.host = os.environ.get('FLASK_RUN_HOST', '0.0.0.0')
+        self.port = int(os.environ.get('PORT', 8080))
+        self.health_port = int(os.environ.get('HEALTH_PORT', 8081))
+        self.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24).hex())
+        self.timezone = os.environ.get('TZ', 'Europe/Zurich')
 
         # JWT-Konfiguration
-        self.jwt_secret_key = os.environ.get('JWT_SECRET', 'jwt-secret-key')
-        self.jwt_access_token_expires = timedelta(hours=1)
-        self.jwt_refresh_token_expires = timedelta(days=30)
+        self.jwt_secret = os.environ.get('JWT_SECRET', os.urandom(24).hex())
+        
+        # Swagger-Konfiguration
+        self.swagger_ui_enabled = os.environ.get('SWAGGER_UI_ENABLED', 'true').lower() == 'true'
+        
+        # API-URLs
+        self.api_url = os.environ.get('API_URL', f'http://localhost:{self.port}')
+        self.frontend_url = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+        self.worker_url = os.environ.get('WORKER_URL', 'http://localhost:8081')
+        
+        # Redis-Konfiguration
+        self.redis_host = os.environ.get('REDIS_HOST', 'localhost')
+        self.redis_port = int(os.environ.get('REDIS_PORT', 6379))
+        self.redis_password = os.environ.get('REDIS_PASSWORD', None)
+        # Baue Redis-URL mit Passwort (falls vorhanden) oder ohne
+        if self.redis_password:
+            self.redis_url = f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
+        else:
+            self.redis_url = f"redis://{self.redis_host}:{self.redis_port}/0"
+        
+        # Überschreibe mit expliziter URL, falls gesetzt
+        if os.environ.get('REDIS_URL'):
+            self.redis_url = os.environ.get('REDIS_URL')
+            
+        # Datenbank-Konfiguration für SQLAlchemy
+        self.db_uri = os.environ.get('SQLALCHEMY_DATABASE_URI', os.environ.get('DATABASE_URL', 'sqlite:///app.db'))
+        self.db_binds = {}  # Für mehrere Datenbanken
+        
+        # CORS-Konfiguration
+        self.cors_origins = self.setup_cors_origins()
+        
+        # OpenAI-Konfiguration
+        self.openai_api_key = os.environ.get('OPENAI_API_KEY', 'sk-dummy-key')
+        self.openai_model = os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo')
+        self.openai_cache_enabled = os.environ.get('OPENAI_CACHE_ENABLED', 'true').lower() == 'true'
+        self.openai_cache_ttl = int(os.environ.get('OPENAI_CACHE_TTL', 86400))  # 24 Stunden
+        self.openai_max_retries = int(os.environ.get('OPENAI_MAX_RETRIES', 3))
+        
+        # OAuth-Konfiguration
+        self.google_client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+        self.google_client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+        self.github_client_id = os.environ.get('GITHUB_CLIENT_ID', '')
+        self.github_client_secret = os.environ.get('GITHUB_CLIENT_SECRET', '')
 
-        # Allgemeine Einstellungen
-        self.api_url = os.environ.get(
-            'API_URL', 'https://api.hackthestudy.ch' if self.is_production else 'http://localhost:8080')
-        self.frontend_url = os.environ.get('FRONTEND_URL', 'https://www.hackthestudy.ch')
-        self.port = int(os.environ.get('PORT', 8080 if self.is_digital_ocean else 5000))
-        self.host = os.environ.get('FLASK_RUN_HOST', '0.0.0.0')
+        # Stripe-Konfiguration
+        self.stripe_api_key = os.environ.get('STRIPE_API_KEY', '')
+        self.stripe_publishable_key = os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
+        
+        # Proxy-Konfiguration
+        self.proxy_fix_x_for = int(os.environ.get('PROXY_FIX_X_FOR', 1))
+        self.proxy_fix_x_proto = int(os.environ.get('PROXY_FIX_X_PROTO', 1))
+        self.proxy_fix_x_host = int(os.environ.get('PROXY_FIX_X_HOST', 1))
+        self.proxy_fix_x_port = int(os.environ.get('PROXY_FIX_X_PORT', 1))
+        self.proxy_fix_x_prefix = int(os.environ.get('PROXY_FIX_X_PREFIX', 1))
 
-        # Log-Level
-        self.log_level = os.environ.get('LOG_LEVEL', 'INFO')
-
-        # Logging-Manager initialisieren
-        self.logging_manager = LoggingManager()
-
-        # Produktionsspezifische Einstellungen
-        if self.is_production:
-            self.session_cookie_secure = True
-            self.remember_cookie_secure = True
-            self.session_cookie_httponly = True
-            self.remember_cookie_httponly = True
-
-            # ProxyFix-Einstellungen für Reverse-Proxy
-            self.proxy_fix_x_for = int(os.environ.get('PROXY_FIX_X_FOR', 1))
-            self.proxy_fix_x_proto = int(os.environ.get('PROXY_FIX_X_PROTO', 1))
-            self.proxy_fix_x_host = int(os.environ.get('PROXY_FIX_X_HOST', 1))
-            self.proxy_fix_x_port = int(os.environ.get('PROXY_FIX_X_PORT', 1))
-            self.proxy_fix_x_prefix = int(os.environ.get('PROXY_FIX_X_PREFIX', 1))
-
-        # Entwicklungsspezifische Einstellungen
-        if self.is_development:
-            self.sqlalchemy_echo = True
-            self.explain_template_loading = True
-
-        # Flask-Konfiguration für verschiedene Umgebungen
+        # Flask-Konfiguration als Eigenschaft
         self.flask_config = self.get_flask_config()
 
-        # Umgebungsvariablen protokollieren, wenn gewünscht
-        if os.environ.get('LOG_ENV_VARS', 'false').lower() == 'true':
-            self.log_env_vars()
-
-        # Initialisierung abgeschlossen
+        # Initialisierungsstatus
         self._initialized = True
 
     def load_env(self, env_file: Optional[str] = None) -> Dict[str, str]:
@@ -498,39 +510,71 @@ class AppConfig:
 
     def get_flask_config(self) -> Dict[str, Any]:
         """
-        Erstellt ein Konfigurations-Dictionary für Flask basierend auf der aktuellen Umgebung.
+        Gibt die Flask-Konfiguration als Dictionary zurück.
+        Enthält alle wichtigen Einstellungen für die Flask-App.
 
         Returns:
-            Flask-Konfigurationsdictionary
+            Dictionary mit Flask-Konfigurationsparametern
         """
-        config = {
+        config_dict = {
             'DEBUG': self.debug,
-            'TESTING': self.testing,
             'SECRET_KEY': self.secret_key,
-            'SQLALCHEMY_DATABASE_URI': self.database_url,
-            'SQLALCHEMY_TRACK_MODIFICATIONS': self.track_modifications,
-            'JWT_SECRET_KEY': self.jwt_secret_key,
-            'JWT_ACCESS_TOKEN_EXPIRES': self.jwt_access_token_expires,
-            'JWT_REFRESH_TOKEN_EXPIRES': self.jwt_refresh_token_expires
+            'JWT_SECRET_KEY': self.jwt_secret,
+            'SESSION_TYPE': 'redis',
+            'SESSION_PERMANENT': False,
+            'SESSION_USE_SIGNER': True,
+            'SESSION_REDIS': None,  # Wird durch die URL konfiguriert
+            'SESSION_REDIS_URL': self.redis_url,  # Verwenden der URL direkt
+            'SESSION_COOKIE_NAME': 'hackthestudy_session',
+            'SESSION_COOKIE_HTTPONLY': True,
+            'SESSION_COOKIE_SECURE': not self.debug,  # True in Produktion, False im Debug-Modus
+            'PERMANENT_SESSION_LIFETIME': timedelta(days=1),
+            'JSON_SORT_KEYS': False,  # Ermöglicht formatierte JSON-Ausgabe
+            'JSONIFY_PRETTYPRINT_REGULAR': True,  # Schönere JSON-Ausgabe
+
+            # Cache-Konfiguration
+            'CACHE_TYPE': 'redis',
+            'CACHE_REDIS_URL': self.redis_url,
+            'CACHE_DEFAULT_TIMEOUT': 3600,  # 1 Stunde
+
+            # OpenAPI/Swagger-Konfiguration
+            'SWAGGER_UI_DOC_EXPANSION': 'list',
+            'SWAGGER_UI_OPERATION_ID': True,
+            'SWAGGER_UI_REQUEST_DURATION': True,
+            'SWAGGER_UI_ENABLED': self.swagger_ui_enabled,
+
+            # SQLAlchemy-Konfiguration - WICHTIG für Datenbankverbindung
+            'SQLALCHEMY_DATABASE_URI': self.db_uri,
+            'SQLALCHEMY_BINDS': self.db_binds,
+            'SQLALCHEMY_TRACK_MODIFICATIONS': False,
+            'SQLALCHEMY_ENGINE_OPTIONS': {
+                'pool_pre_ping': True,
+                'pool_recycle': 300,
+                'pool_timeout': 30,
+                'max_overflow': 15
+            },
+
+            # Sicherheitseinstellungen
+            'PREFERRED_URL_SCHEME': 'https' if not self.debug else 'http',
+            'SERVER_NAME': None,  # Lässt beide HTTP und HTTPS zu
+
+            # OAuth und Stripe
+            'GOOGLE_CLIENT_ID': self.google_client_id,
+            'GOOGLE_CLIENT_SECRET': self.google_client_secret,
+            'GITHUB_CLIENT_ID': self.github_client_id,
+            'GITHUB_CLIENT_SECRET': self.github_client_secret,
+            'STRIPE_API_KEY': self.stripe_api_key,
+            'STRIPE_PUBLISHABLE_KEY': self.stripe_publishable_key,
+
+            # CORS-Einstellungen - werden in app_factory.py überschrieben
+            'CORS_ORIGINS': self.cors_origins,
+
+            # API-URLs
+            'API_URL': self.api_url,
+            'FRONTEND_URL': self.frontend_url,
+            'WORKER_URL': self.worker_url
         }
-
-        # Produktionsspezifische Konfiguration
-        if self.is_production:
-            config.update({
-                'SESSION_COOKIE_SECURE': True,
-                'REMEMBER_COOKIE_SECURE': True,
-                'SESSION_COOKIE_HTTPONLY': True,
-                'REMEMBER_COOKIE_HTTPONLY': True
-            })
-
-        # Entwicklungsspezifische Konfiguration
-        if self.is_development:
-            config.update({
-                'SQLALCHEMY_ECHO': True,
-                'EXPLAIN_TEMPLATE_LOADING': True
-            })
-
-        return config
+        return config_dict
 
     def setup_cors_origins(self) -> List[str]:
         """
@@ -588,7 +632,7 @@ class AppConfig:
         Returns:
             Logger-Instanz
         """
-        return self.logging_manager.setup_logging()
+        return self._logging_manager.setup_logging()
 
     def get_logger(self, name: str) -> logging.Logger:
         """
@@ -600,7 +644,7 @@ class AppConfig:
         Returns:
             Logger-Instanz
         """
-        return self.logging_manager.get_logger(name)
+        return self._logging_manager.get_logger(name)
 
     def structured_log(self, level: str, message: str, **kwargs):
         """
@@ -611,7 +655,7 @@ class AppConfig:
             message: Log-Nachricht
             **kwargs: Weitere Attribute für das Log
         """
-        self.logging_manager.structured_log(level, message, **kwargs)
+        self._logging_manager.structured_log(level, message, **kwargs)
 
     def track_session_progress(self, session_id: str, progress_percent: int,
                                message: str, stage: str = "processing"):
@@ -624,7 +668,7 @@ class AppConfig:
             message: Fortschrittsnachricht
             stage: Verarbeitungsstufe
         """
-        self.logging_manager.track_session_progress(session_id, progress_percent, message, stage)
+        self._logging_manager.track_session_progress(session_id, progress_percent, message, stage)
 
     def track_error(self, session_id: str, error_type: str, message: str,
                     trace: Optional[str] = None, diagnostics: Optional[Dict] = None):
@@ -638,7 +682,7 @@ class AppConfig:
             trace: Stacktrace (optional)
             diagnostics: Diagnosedaten (optional)
         """
-        self.logging_manager.track_error(session_id, error_type, message, trace, diagnostics)
+        self._logging_manager.track_error(session_id, error_type, message, trace, diagnostics)
 
     def force_flush_handlers(self):
         """
@@ -646,7 +690,7 @@ class AppConfig:
 
         Nützlich vor einem geordneten Shutdown.
         """
-        self.logging_manager.force_flush_handlers()
+        self._logging_manager.force_flush_handlers()
 
 
 # Zentrale Konfigurationsinstanz

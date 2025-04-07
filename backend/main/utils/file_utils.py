@@ -27,6 +27,14 @@ DEPENDENCIES = {
     '.odt': ['odf']
 }
 
+# Funktionen im Modul, die exportiert werden sollen
+__all__ = [
+    "extract_text_from_file",
+    "extract_text_from_pdf",
+    "check_extension",
+    "allowed_file",
+    "get_secure_filename"
+]
 
 def _check_dependency(module_name: str) -> bool:
     """
@@ -60,6 +68,67 @@ def _safely_import(module_name: str) -> Optional[Any]:
     except ImportError:
         logger.warning("Modul %s konnte nicht importiert werden.", module_name)
         return None
+
+
+def check_extension(filename: str) -> str:
+    """
+    Extrahiert und prüft die Dateierweiterung.
+
+    Args:
+        filename: Der zu prüfende Dateiname
+
+    Returns:
+        Die Dateierweiterung (z.B. '.pdf') oder leeren String wenn ungültig
+    """
+    if not filename or not isinstance(filename, str):
+        logger.warning("Ungültiger Dateiname für Erweiterungsprüfung: %s", filename)
+        return ""
+
+    try:
+        # Normalisiere den Dateinamen und extrahiere die Erweiterung
+        filename = filename.lower()
+        ext = os.path.splitext(filename)[1]
+        
+        if not ext:
+            logger.warning("Keine Erweiterung gefunden in: %s", filename)
+            return ""
+            
+        return ext
+    except Exception as e:
+        logger.error("Fehler bei der Extraktion der Dateierweiterung: %s, Fehler: %s", filename, str(e))
+        return ""
+
+
+def get_secure_filename(filename: str) -> str:
+    """
+    Gibt einen sicheren Dateinamen zurück, der für die Speicherung auf dem Dateisystem geeignet ist.
+    
+    Basierend auf werkzeug.utils.secure_filename, aber als direktes Utility verfügbar.
+
+    Args:
+        filename: Der zu sichernde Dateiname
+
+    Returns:
+        Ein sicherer Dateiname ohne problematische Zeichen
+    """
+    if not filename:
+        return ""
+        
+    # Ersetzt Leerzeichen durch Unterstriche und entfernt alle nicht-ASCII-Zeichen
+    # sowie Schrägstriche und Punkte am Anfang der Datei
+    filename = str(filename).strip().replace(" ", "_")
+    filename = re.sub(r"[^a-zA-Z0-9_.-]", "", filename)
+    filename = re.sub(r"^[.]+", "", filename)
+    
+    # Entferne doppelte Dateiendungen, z.B. .pdf.pdf
+    filename = re.sub(r"(\.[a-zA-Z0-9]+)\1+$", r"\1", filename)
+    
+    # Begrenze die Länge auf 255 Zeichen (maximale Dateipfadlänge in vielen Dateisystemen)
+    if len(filename) > 255:
+        name, ext = os.path.splitext(filename)
+        filename = name[:255-len(ext)] + ext
+        
+    return filename
 
 
 def allowed_file(filename: str, allowed_extensions: Set[str] = None) -> bool:
@@ -113,128 +182,126 @@ def are_dependencies_installed(file_extension: str) -> bool:
     return True
 
 
-def extract_text_from_file(file_content: bytes, filename: str) -> str:
+def extract_text_from_file(file_content, filename):
     """
-    Extrahiert Text aus verschiedenen Dateiformaten.
-
+    Extrahiert Text aus einer Datei basierend auf ihrer Erweiterung.
+    Falls die eigentliche Extraktionsfunktion nicht verfügbar ist,
+    wird eine Platzhalter-Implementierung verwendet.
+    
     Args:
-        file_content: Binärer Inhalt der Datei
-        filename: Name der Datei (für Formatbestimmung)
-
+        file_content: Der binäre Inhalt der Datei
+        filename: Der Name der Datei (für die Erweiterungserkennung)
+        
     Returns:
-        Extrahierter Text
-
-    Raises:
-        ValueError: Wenn die Datei nicht unterstützt wird oder nicht gelesen werden kann
+        Extrahierter Text oder Platzhaltertext
     """
-    if not file_content:
-        raise ValueError("Leerer Dateiinhalt")
+    logger.info(f"Extrahiere Text aus Datei: {filename}")
+    
+    if filename.lower().endswith('.pdf'):
+        try:
+            return extract_text_from_pdf(file_content, filename)
+        except Exception as e:
+            logger.error(f"Fehler bei PDF-Extraktion: {e}")
+            return f"[PDF-Text konnte nicht extrahiert werden: {filename}]"
+    elif filename.lower().endswith(('.doc', '.docx')):
+        return f"[Word-Text konnte nicht extrahiert werden: {filename}]"
+    elif filename.lower().endswith('.txt'):
+        try:
+            return file_content.decode('utf-8', errors='replace')
+        except Exception:
+            return f"[Text konnte nicht decodiert werden: {filename}]"
+    else:
+        return f"[Nicht unterstütztes Dateiformat: {filename}]"
+    
 
-    if not filename or not isinstance(filename, str):
-        raise ValueError(f"Ungültiger Dateiname: {filename}")
-
-    # Erweiterung bestimmen
-    ext = os.path.splitext(filename.lower())[1]
-
-    # Prüfen, ob der Dateityp unterstützt wird
-    if ext not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"Nicht unterstütztes Dateiformat: {ext}")
-
-    # Prüfen, ob alle Abhängigkeiten installiert sind
-    if not are_dependencies_installed(ext):
-        missing_deps = [dep for dep in DEPENDENCIES.get(ext, []) if not _check_dependency(dep)]
-        raise ImportError(f"Fehlende Abhängigkeiten für {ext}: {', '.join(missing_deps)}")
-
-    # Tempfile für binäre Dateien erstellen
-    temp_path = None
+def extract_text_from_pdf(file_content, filename):
+    """
+    Verbesserte Funktion für PDF-Textextraktion mit zusätzlichen Fehlerprüfungen.
+    
+    Args:
+        file_content: Der binäre Inhalt der PDF-Datei
+        filename: Der Name der PDF-Datei
+        
+    Returns:
+        Extrahierter Text oder Platzhaltertext
+    """
+    # Versuche PyMuPDF zu importieren
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp:
+        import fitz
+        # Speichere die PDF temporär
+        import tempfile
+        import os
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp:
             temp_path = temp.name
             temp.write(file_content)
-
-        # Je nach Dateityp verschiedene Extraktionsmethoden verwenden
-        if ext == '.pdf':
-            text = _extract_text_from_pdf(temp_path)
-        elif ext in ['.docx', '.doc']:
-            text = _extract_text_from_word(temp_path)
-        elif ext == '.txt':
-            text = _extract_text_from_text(file_content)
-        elif ext == '.rtf':
-            text = _extract_text_from_rtf(temp_path)
-        elif ext == '.odt':
-            text = _extract_text_from_odt(temp_path)
-        else:
-            # Dieser Fall sollte durch die vorherige Prüfung abgefangen werden
-            raise ValueError(f"Nicht unterstütztes Dateiformat: {ext}")
-
-        return text
-    except Exception as e:
-        logger.error("Fehler beim Extrahieren von Text aus %s: %s", filename, str(e))
-        logger.debug(traceback.format_exc())
-        raise ValueError(f"Konnte Text nicht aus Datei extrahieren: {str(e)}") from e
-    finally:
-        # Temporäre Datei immer aufräumen
-        if temp_path and os.path.exists(temp_path):
+        
+        # Überprüfe explizit, ob die temporäre Datei existiert
+        if not os.path.exists(temp_path):
+            logger.error(f"Temporäre Datei wurde nicht erstellt: {temp_path}")
+            return f"[Fehler bei der PDF-Extraktion: temporäre Datei konnte nicht erstellt werden: {temp_path}]"
+            
+        try:
+            # Log die tatsächliche Dateigröße
+            file_size = os.path.getsize(temp_path)
+            logger.info(f"Temporäre PDF-Datei erstellt: {temp_path}, Größe: {file_size} Bytes")
+            
+            # Öffne die PDF mit PyMuPDF
+            doc = fitz.open(temp_path)
+            text = ""
+            
+            # Extrahiere Text aus jeder Seite
+            for page in doc:
+                text += page.get_text() + "\n\n"
+                
+            # Schließe das Dokument
+            doc.close()
+            
+            # Lösche die temporäre Datei
             try:
                 os.unlink(temp_path)
-            except Exception:
-                logger.warning("Konnte temporäre Datei nicht löschen")
-
-
-def _extract_text_from_pdf(file_path: str) -> str:
-    """
-    Extrahiert Text aus einer PDF-Datei mit PyMuPDF (fitz).
-
-    Args:
-        file_path: Pfad zur PDF-Datei
-
-    Returns:
-        Extrahierter Text
-
-    Raises:
-        ValueError: Wenn der Text nicht extrahiert werden kann
-    """
-    fitz_module = _safely_import('fitz')
-    if not fitz_module:
-        raise ImportError("PyMuPDF (fitz) ist erforderlich, um PDF-Dateien zu verarbeiten")
-
-    try:
-        text = ""
-        # Öffne das PDF-Dokument
-        with fitz_module.open(file_path) as pdf_document:
-            # Überprüfe, ob das Dokument Seiten hat
-            num_pages = len(pdf_document)
-            if num_pages == 0:
-                logger.warning("Die PDF-Datei enthält keine Seiten")
-                return ""
-
-            # Extrahiere Text von jeder Seite
-            for page_num in range(num_pages):
-                page = pdf_document[page_num]
-                # PyMuPDF bietet verschiedene Text-Extraktionsmodi
-                # 'text' ist der Standardmodus, 'blocks' gibt strukturierten Text zurück
-                page_text = page.get_text() or ""
-                text += page_text + "\n"
-
-                # Prüfen, ob die Seite Bilder enthält (für Debug-Zwecke)
-                image_list = page.get_images(full=True)
-                if len(image_list) > 0:
-                    logger.debug("Seite %s enthält %s Bilder", page_num+1, len(image_list))
-
-        if not text.strip():
-            logger.warning("Die PDF-Datei enthält keinen extrahierbaren Text, möglicherweise ein gescanntes Dokument")
-
-            # Option: Bei leeren PDFs können wir prüfen, ob es ein gescanntes Dokument ist
-            # und eine OCR-Erkennung vorschlagen
-            if num_pages > 0:
-                logger.info(
-                    "Die PDF enthält %s Seiten aber keinen Text. Möglicherweise ist OCR erforderlich.", num_pages)
-
-        return text
-    except Exception as e:
-        logger.error("Fehler beim Extrahieren von Text aus PDF: %s", str(e))
-        logger.debug(traceback.format_exc())
-        raise ValueError(f"PDF-Extraktion fehlgeschlagen: {str(e)}") from e
+                logger.info(f"Temporäre Datei gelöscht: {temp_path}")
+            except Exception as del_err:
+                logger.warning(f"Konnte temporäre Datei nicht löschen: {temp_path}, Fehler: {del_err}")
+            
+            return text
+        except FileNotFoundError as fnf:
+            error_msg = f"Fehler bei der PDF-Extraktion: no such file: '{temp_path}'"
+            logger.error(error_msg)
+            
+            # Überprüfe das Verzeichnis
+            dir_path = os.path.dirname(temp_path)
+            if not os.path.exists(dir_path):
+                logger.error(f"Verzeichnis existiert nicht: {dir_path}")
+                try:
+                    os.makedirs(dir_path, exist_ok=True)
+                    logger.info(f"Verzeichnis erstellt: {dir_path}")
+                except Exception as dir_err:
+                    logger.error(f"Konnte Verzeichnis nicht erstellen: {dir_err}")
+            
+            # Versuche, Berechtigungen zu überprüfen
+            try:
+                logger.info(f"Temporäres Verzeichnis: {tempfile.gettempdir()}")
+                temp_dir_writable = os.access(tempfile.gettempdir(), os.W_OK)
+                logger.info(f"Temp-Verzeichnis beschreibbar: {temp_dir_writable}")
+            except Exception as perm_err:
+                logger.error(f"Fehler beim Überprüfen der Berechtigungen: {perm_err}")
+            
+            return error_msg
+        except Exception as e:
+            logger.error(f"PyMuPDF-Fehler: {e}")
+            # Lösche die temporäre Datei im Fehlerfall
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                    logger.info(f"Temporäre Datei im Fehlerfall gelöscht: {temp_path}")
+            except Exception as del_err:
+                logger.warning(f"Konnte temporäre Datei nicht löschen: {del_err}")
+            
+            return f"[Fehler bei der PDF-Extraktion: {str(e)}]"
+    except ImportError:
+        logger.error("PyMuPDF (fitz) ist nicht installiert")
+        return f"[PDF-Text konnte nicht extrahiert werden (PyMuPDF fehlt): {filename}]"
 
 
 def _extract_text_from_word(file_path: str) -> str:

@@ -77,16 +77,6 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
             )
             db.session.add(oauth_token)
 
-        # Protokolliere Aktivität
-        activity = UserActivity(
-            id=str(uuid4()),
-            user_id=user.id,
-            activity_type='account',
-            title='Account created' if not existing_user else f'Account linked with {provider}',
-            timestamp=datetime.utcnow()
-        )
-        db.session.add(activity)
-
         # Speichere alle Änderungen
         try:
             db.session.commit()
@@ -105,8 +95,18 @@ def handle_oauth_callback(provider: str, user_info: dict, token_data: dict = Non
                 'access_token': token,
                 'user': user.to_dict()
             }), 200
+            
         # Bei normalen Anfragen zum Frontend weiterleiten
-        frontend_url = current_app.config.get('FRONTEND_URL', 'https://www.hackthestudy.ch')
+        # Bestimme die richtige Frontend-URL
+        referer = request.headers.get('Referer', '')
+        if 'localhost' in referer or '127.0.0.1' in referer:
+            # Wenn die Anfrage von localhost kommt, verwende die lokale URL
+            frontend_url = 'http://localhost:3000'
+            logger.info("Lokale Entwicklungsumgebung erkannt, verwende: %s", frontend_url)
+        else:
+            # Ansonsten verwende die konfigurierte Frontend-URL
+            frontend_url = current_app.config.get('FRONTEND_URL', 'https://www.hackthestudy.ch')
+            
         redirect_url = f"{frontend_url}/auth-callback?token={token}"
         logger.info("Weiterleitung nach erfolgreicher Authentifizierung zu: %s", redirect_url)
         return redirect(redirect_url)

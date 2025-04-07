@@ -1,0 +1,327 @@
+{
+  "navigation": {
+    "home": "Startseite",
+    "dashboard": "Übersicht",
+    "history": "Verlauf",
+    "credits": "Guthaben",
+    "signIn": "Anmelden",
+    "signOut": "Abmelden",
+    "profile": "Profil",
+    "settings": "Einstellungen",
+    "buyCredits": "Guthaben kaufen"
+  },
+  "uploader": {
+    "title": "Lade deine Prüfungen hoch",
+    "subtitle": "Unterstützte Formate: PDF, TXT",
+    "dropzone": "Dateien hier ablegen oder klicken, um auszuwählen",
+    "dropzoneDescription": "Lade bis zu 5 Dateien (PDF, TXT) hoch. Die Dateien werden analysiert und daraus Lernmaterialien erstellt.",
+    "uploadButton": "Hochladen",
+    "uploading": "Wird hochgeladen...",
+    "resetButton": "Zurücksetzen",
+    "selectFiles": "Dateien auswählen",
+    "limitReached": "Limit erreicht",
+    "maxFiles": "Maximale Anzahl an Dateien erreicht",
+    "maxFilesReached": "Maximale Anzahl von 5 Dateien erreicht",
+    "processing": "Verarbeitung läuft...",
+    "success": "Erfolgreich hochgeladen",
+    "error": "Fehler beim Hochladen",
+    "newSession": "Neue Session starten",
+    "loadingSessionInfo": "Lade Session-Informationen..."
+  },
+  "flashcards": {
+    "title": "Lernkarten",
+    "description": "Aus deinen Prüfungen erstellt unsere KI optimal strukturierte Karteikarten, die dir beim Lernen helfen.",
+    "front": "Vorderseite",
+    "back": "Rückseite",
+    "next": "Nächste",
+    "previous": "Vorherige",
+    "clickToFlip": "Klicken zum Umdrehen",
+    "generateMore": "Mehr generieren",
+    "generating": "Generiere...",
+    "noCardsAvailable": "Keine Karteikarten verfügbar",
+    "uploadFirst": "Lade zuerst eine Prüfung hoch, um Karteikarten zu generieren.",
+    "total": "Gesamt",
+    "cards": "Karten",
+    "tokenUsage": "Token-Nutzung",
+    "input": "Input",
+    "output": "Output"
+  },
+  "tests": {
+    "title": "Testfragen",
+    "description": "Überprüfe dein Wissen mit einer Sammlung von Übungsfragen.",
+    "question": "Frage",
+    "score": "Punkte",
+    "selectAnswer": "Wähle die richtige Antwort aus.",
+    "answer": "Antwort",
+    "showAnswer": "Antwort anzeigen",
+    "hideAnswer": "Antwort ausblenden",
+    "checkAnswer": "Antwort prüfen",
+    "explanation": "Erklärung",
+    "previous": "Zurück",
+    "next": "Weiter",
+    "moreQuestions": "Mehr Fragen",
+    "generateMore": "Mehr generieren",
+    "generating": "Generiere...",
+    "generateQuestions": "Testfragen generieren",
+    "generatingQuestions": "Generiere Testfragen...",
+    "noQuestionsAvailable": "Keine Testfragen verfügbar",
+    "uploadFirst": "Lade zuerst eine Prüfung hoch, um Testfragen zu generieren.",
+    "tokenUsage": "Token-Nutzung",
+    "input": "Input",
+    "output": "Output"
+  },
+  "conceptMap": {
+    "title": "Konzeptkarte",
+    "addConcept": "Konzept hinzufügen",
+    "editConcept": "Konzept bearbeiten",
+    "deleteConcept": "Konzept löschen",
+    "generateMore": "Weitere Konzepte generieren"
+  },
+  "payment": {
+    "title": "Guthaben kaufen",
+    "credits": "Credits",
+    "price": "Preis",
+    "buyNow": "Jetzt kaufen",
+    "success": {
+      "title": "Zahlungsbestätigung",
+      "paymentStatus": "Zahlungsstatus",
+      "statusCheck": "Wir überprüfen den Status Ihrer Zahlung.",
+      "successMessage": "Ihre Zahlung wurde erfolgreich verarbeitet.",
+      "pendingMessage": "Ihre Zahlung wird noch bearbeitet.",
+      "errorMessage": "Bei der Bearbeitung Ihrer Zahlung ist ein Fehler aufgetreten.",
+      "verifying": "Zahlung wird verifiziert...",
+      "thankyou": "Vielen Dank!",
+      "accountCredited": "Die Credits wurden Ihrem Konto gutgeschrieben.",
+      "newBalance": "Ihr neues Guthaben:",
+      "backToDashboard": "Zum Dashboard",
+      "noInformation": "Keine Zahlungsinformationen gefunden",
+      "loginRequired": "Bitte melden Sie sich an, um die Zahlung zu verifizieren",
+      "confirmed": "Zahlung erfolgreich!",
+      "verificationFailed": "Zahlungsverifizierung fehlgeschlagen",
+      "processingError": "Fehler bei der Zahlungsverarbeitung",
+      "contactSupport": "Bitte kontaktieren Sie den Support, wenn das Problem weiterhin besteht."
+    },
+    "history": "Zahlungsverlauf",
+    "description": "Mit Credits können Sie die KI-Funktionen von HackTheStudy nutzen. Je mehr Credits Sie kaufen, desto mehr Tokens können Sie verarbeiten.",
+    "currentBalance": "Aktuelles Guthaben",
+    "creditsPerCHF": "Credits pro CHF",
+    "securePayment": "Nach erfolgreicher Zahlung werden die Credits automatisch Ihrem Konto gutgeschrieben und sofort verfügbar.",
+    "tokenModel": {
+      "title": "Kostenmodell für Tokens",
+      "inputTitle": "Input-Tokens",
+      "inputRate": "100.000 Input-Tokens = 15.000 Credits",
+      "inputDescription": "Für Texteingaben wie Uploads und Prompts",
+      "outputTitle": "Output-Tokens",
+      "outputRate": "100.000 Output-Tokens = 30.000 Credits",
+      "outputDescription": "Für generierte Inhalte wie Karteikarten und Fragen"
+    },
+    "tiers": {
+      "basic": "Grundpaket",
+      "standard": "Standardpaket",
+      "premium": "Premiumpaket",
+      "professional": "Profipaket",
+      "credits": "{{count}} Credits",
+      "inputTokens": "Für ca. {{count}} Input-Tokens",
+      "outputTokens": "Für ca. {{count}} Output-Tokens"
+    },
+    "errors": {
+      "checkoutSession": "Fehler beim Erstellen der Checkout-Session",
+      "initiate": "Zahlung konnte nicht initiiert werden",
+      "fetchHistory": "Fehler beim Laden der Zahlungshistorie",
+      "selectTier": "Bitte wählen Sie eine Preisstufe aus",
+      "loginRequired": "Sie müssen eingeloggt sein, um Credits zu kaufen",
+      "processingError": "Es ist ein Fehler bei der Zahlungsabwicklung aufgetreten",
+      "tryAgain": "Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut."
+    },
+    "history.noPayments": "Keine Zahlungen gefunden",
+    "amount": "Betrag",
+    "status": "Status",
+    "completed": "Abgeschlossen",
+    "for": "für",
+    "selectPackage": "Wählen Sie ein Paket aus, um Credits für API-Anfragen zu erwerben.",
+    "useCredits": "Nutzen Sie diese Credits für API-Abfragen in unserer Anwendung.",
+    "selected": "Ausgewählt",
+    "select": "Auswählen"
+  },
+  "languageSelector": {
+    "title": "Sprache",
+    "german": "Deutsch",
+    "english": "Englisch"
+  },
+  "common": {
+    "loading": "Wird geladen...",
+    "error": "Fehler",
+    "success": "Erfolg",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "submit": "Absenden",
+    "back": "Zurück",
+    "next": "Weiter"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "profile": "Profil",
+    "history": "Verlauf",
+    "payments": "Zahlungen",
+    "welcomeBack": "Willkommen zurück",
+    "loadingAnalysis": "Analyse wird geladen",
+    "navigatingTo": "Navigiere zu \"{{topic}}\"...",
+    "historySection": {
+      "analyzedSessions": "Analysierte Sessions",
+      "refresh": "Aktualisieren",
+      "noSessions": "Keine analysierten Sessions gefunden.",
+      "loadError": "Die Aktivitäten konnten nicht geladen werden.",
+      "contentGenerated": "Inhalte generiert",
+      "flashcardsGenerated": "Neue Karteikarten wurden erfolgreich generiert.",
+      "questionsGenerated": "Neue Testfragen wurden erfolgreich generiert.",
+      "topicsGenerated": "Neue Themen wurden erfolgreich generiert.",
+      "generateError": "Fehler beim Generieren von Inhalten",
+      "flashcardsGenerateError": "Die Karteikarten konnten nicht generiert werden.",
+      "questionsGenerateError": "Die Testfragen konnten nicht generiert werden.",
+      "topicsGenerateError": "Die Themen konnten nicht generiert werden.",
+      "newSession": "Neue Session",
+      "uploadPrompt": "Starte eine neue Session. Bitte lade deine Prüfungen hoch."
+    }
+  },
+  "footer": {
+    "description": "Revolutioniere deine Prüfungsvorbereitung mit KI-generierten Lernmaterialien basierend auf deinen alten Prüfungen.",
+    "featuresTitle": "Features",
+    "examAnalysis": "Prüfungsanalyse",
+    "flashcards": "Karteikarten",
+    "testSimulator": "Testsimulator",
+    "aiAssistant": "KI-Lernassistent",
+    "contactLegalTitle": "Kontakt & Rechtliches",
+    "allRightsReserved": "Alle Rechte vorbehalten"
+  },
+  "notFound": {
+    "message": "Hoppla! Seite nicht gefunden",
+    "returnHome": "Zurück zur Startseite"
+  },
+  "legal": {
+    "impressum": {
+      "title": "Impressum",
+      "infoTitle": "Angaben gemäss schweizerischem Recht",
+      "contactTitle": "Kontakt",
+      "responsibleTitle": "Verantwortlich für den Inhalt",
+      "country": "Schweiz",
+      "disclaimerTitle": "Haftungsausschluss",
+      "liabilityContentTitle": "Haftung für Inhalte",
+      "liabilityContentText": "Die Inhalte dieser Website wurden mit grösster Sorgfalt erstellt. Dennoch können wir keine Gewähr für die Richtigkeit, Vollständigkeit und Aktualität der Inhalte übernehmen. Als Diensteanbieter sind wir für eigene Inhalte auf diesen Seiten nach den allgemeinen Gesetzen der Schweiz verantwortlich.",
+      "liabilityLinksTitle": "Haftung für Links",
+      "liabilityLinksText": "Diese Website enthält Links zu externen Webseiten Dritter, auf deren Inhalte wir keinen Einfluss haben. Deshalb können wir für diese fremden Inhalte auch keine Gewähr übernehmen. Für die Inhalte der verlinkten Seiten ist stets der jeweilige Anbieter oder Betreiber der Seiten verantwortlich. Bei Bekanntwerden von Rechtsverletzungen werden wir derartige Links umgehend entfernen.",
+      "copyrightTitle": "Urheberrechte",
+      "copyrightText": "Die durch die Seitenbetreiber erstellten Inhalte und Werke auf dieser Website unterliegen dem schweizerischen Urheberrecht. Die Vervielfältigung, Bearbeitung, Verbreitung und jede Art der Verwertung ausserhalb der Grenzen des Urheberrechts bedürfen der schriftlichen Zustimmung des jeweiligen Autors bzw. Erstellers."
+    },
+    "privacy": {
+      "title": "Datenschutzerklärung",
+      "responsibleTitle": "1. Verantwortliche Stelle",
+      "responsibleText": "Verantwortlich für die Datenverarbeitung auf dieser Website ist der Betreiber von HackTheStudy. Kontaktdetails finden Sie im Impressum.",
+      "dataCollectionTitle": "2. Erhobene und verarbeitete Daten",
+      "dataRegistration": "Registrierungsdaten (Name, E-Mail, Passwort)",
+      "dataDocuments": "Hochgeladene Dokumente und erstellte Inhalte",
+      "dataUsage": "Nutzungsdaten (z. B. Lernfortschritte, Sitzungsinformationen)",
+      "dataTechnical": "Technische Daten (IP-Adresse, Gerätetyp, Browserinformationen)",
+      "dataPayment": "Bei kostenpflichtigen Services: Zahlungsinformationen",
+      "purposeTitle": "3. Verwendungszwecke",
+      "purposeIntro": "Wir verwenden die erfassten Daten zur:",
+      "purposePlatform": "Bereitstellung der Plattform und Funktionen",
+      "purposeOptimization": "Optimierung der Lerninhalte und -angebote",
+      "purposePremium": "Ermöglichung von Premium-Diensten",
+      "purposeLegal": "Erfüllung gesetzlicher Pflichten",
+      "legalBasisTitle": "4. Rechtliche Grundlagen",
+      "legalBasisText": "Die Datenverarbeitung erfolgt im Einklang mit dem schweizerischen Datenschutzgesetz (DSG), insbesondere:",
+      "cookiesTitle": "5. Cookies und Tracking",
+      "cookiesText": "Unsere Plattform nutzt Cookies und Tracking-Technologien zur Verbesserung der Benutzererfahrung. Sie können Cookies in den Browsereinstellungen verwalten oder deaktivieren.",
+      "apiTitle": "6. API-Nutzung und Datenverarbeitung",
+      "apiText": "Wir nutzen APIs zur Datenverarbeitung und zur Bereitstellung personalisierter Lerninhalte. Dabei achten wir auf Datenschutz und Sicherheit.",
+      "paymentTitle": "7. Zahlungsdaten",
+      "paymentText": "Bei der Nutzung kostenpflichtiger Funktionen werden Zahlungsdaten über sichere Zahlungsanbieter verarbeitet. Wir speichern keine vollständigen Kreditkartendaten auf unseren Servern.",
+      "rightsTitle": "8. Ihre Rechte",
+      "rightsAccess": "Recht auf Auskunft über gespeicherte Daten",
+      "rightsCorrection": "Recht auf Berichtigung unrichtiger Daten",
+      "rightsDeletion": "Recht auf Löschung Ihrer Daten",
+      "rightsObjection": "Recht auf Widerspruch gegen die Verarbeitung",
+      "rightsContact": "Zur Ausübung Ihrer Rechte kontaktieren Sie uns bitte über die im Impressum angegebene E-Mail-Adresse.",
+      "securityTitle": "9. Datensicherheit",
+      "securityText": "Wir setzen technische und organisatorische Massnahmen ein, um Ihre Daten zu schützen. Alle Datenübertragungen erfolgen verschlüsselt über HTTPS.",
+      "retentionTitle": "10. Speicherdauer",
+      "retentionText": "Daten werden nur so lange gespeichert, wie es für die Bereitstellung unserer Dienste notwendig oder gesetzlich vorgeschrieben ist. Sie können Ihre Daten jederzeit löschen lassen."
+    }
+  },
+  "index": {
+    "newSession": {
+      "title": "Neue Session gestartet",
+      "description": "Die alte Session wurde entfernt und eine neue Session wird erstellt."
+    },
+    "insufficientCredits": {
+      "title": "Nicht genügend Credits",
+      "flashcardsNeeded": "Für neue Karteikarten benötigst du {{required}} Credits. Aktuell verfügbar: {{available}} Credits.",
+      "questionsNeeded": "Für neue Testfragen benötigst du {{required}} Credits. Aktuell verfügbar: {{available}} Credits."
+    },
+    "buyCredits": "Credits aufladen",
+    "testSimulator": {
+      "description": "Überprüfe dein Wissen mit einer Sammlung von Übungsfragen."
+    },
+    "conceptMap": {
+      "uploadPrompt": "Bitte lade zuerst eine Datei hoch oder wähle eine existierende Session, um die Mindmap anzuzeigen."
+    }
+  },
+  "landing": {
+    "hero": {
+      "tagline": "Die intelligente Lernplattform",
+      "title1": "Lerne intelligenter",
+      "title2": "mit",
+      "description": "Revolutioniere dein Lernen mit KI-unterstützten Karteikarten, dynamischen Tests und umfassenden Konzeptanalysen.",
+      "startButton": "Jetzt starten",
+      "learnMoreButton": "Mehr erfahren",
+      "stats": {
+        "users": "Aktive Nutzer",
+        "flashcards": "Erstellte Karteikarten",
+        "satisfaction": "Zufriedene Nutzer",
+        "support": "Support"
+      }
+    },
+    "about": {
+      "title": "Wie HackTheStudy funktioniert",
+      "subtitle": "Revolutioniere dein Lernen in wenigen einfachen Schritten und erreiche mehr mit weniger Aufwand.",
+      "included": "Enthalten in allen Plänen",
+      "features": {
+        "upload": {
+          "title": "Unterlagen hochladen",
+          "description": "Lade deine Skripte, Vorlesungsnotizen oder Lehrbücher hoch. Unsere KI verarbeitet verschiedene Formate und extrahiert die wichtigsten Informationen."
+        },
+        "analysis": {
+          "title": "KI-Analyse",
+          "description": "Unsere fortschrittliche KI analysiert deine Unterlagen, identifiziert Schlüsselkonzepte und erstellt ein Konzeptnetzwerk für besseres Verständnis."
+        },
+        "generate": {
+          "title": "Lernmaterialien generieren",
+          "description": "Mit nur einem Klick erstellst du personalisierte Karteikarten und Testfragen zu den wichtigsten Themen deiner Unterlagen."
+        },
+        "test": {
+          "title": "Wissen testen",
+          "description": "Nutze den Testmodus, um dein Wissen zu überprüfen und Wissenslücken zu identifizieren, mit automatischer Anpassung an deine Fortschritte."
+        },
+        "learn": {
+          "title": "Kontinuierliches Lernen",
+          "description": "Generiere zusätzliche Karteikarten oder Testfragen zu den Themen, die dir noch Schwierigkeiten bereiten, und vertiefe dein Verständnis."
+        }
+      },
+      "cta": {
+        "title": "Bereit, dein Lernen zu revolutionieren?",
+        "back": "Zurück zur Startseite",
+        "start": "Jetzt anmelden und loslegen"
+      }
+    },
+    "login": {
+      "title": "Jetzt loslegen",
+      "description": "Melde dich an, um alle Funktionen zu nutzen",
+      "googleButton": "Mit Google anmelden",
+      "githubButton": "Mit GitHub anmelden",
+      "note": "Hinweis: Für die echte OAuth-Authentifizierung muss der Backend-Server laufen.",
+      "backButton": "Zurück zur Startseite"
+    }
+  }
+} 

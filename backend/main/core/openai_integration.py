@@ -531,7 +531,10 @@ def get_openai_client() -> OpenAI:
         _thread_local.client = OpenAI(
             api_key=api_key,
             timeout=MAX_TIMEOUT,
-            max_retries=MAX_RETRIES
+            max_retries=MAX_RETRIES,
+            default_headers={
+                "OpenAI-Beta": "assistants=v2"
+            }
         )
 
     return _thread_local.client

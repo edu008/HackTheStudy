@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from core.models import Payment, TokenUsage, User, db
 from flask import jsonify, request
-from sqlalchemy import Float, cast, desc, func
+from sqlalchemy import Float, case, cast, desc, func
 
 # Logger konfigurieren
 logger = logging.getLogger(__name__)
@@ -34,12 +34,13 @@ def get_user_credit_info():
         month_ago = datetime.utcnow() - timedelta(days=30)
 
         # Token-Nutzung für den letzten Monat berechnen
+        # Verwende case() für die Konvertierung von boolean nach numerisch
         usage_stats = db.session.query(
             func.sum(TokenUsage.input_tokens).label('total_input_tokens'),
             func.sum(TokenUsage.output_tokens).label('total_output_tokens'),
             func.sum(TokenUsage.cost).label('total_cost'),
             func.count().label('total_requests'),
-            func.sum(cast(TokenUsage.cached, Float)).label('cached_requests')
+            func.sum(case([(TokenUsage.cached == True, 1)], else_=0)).label('cached_requests')
         ).filter(
             TokenUsage.user_id == request.user_id,
             TokenUsage.timestamp >= month_ago

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Env Config Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Umgebungsvariablen-Test</h1>
+        <p>Diese Seite testet nur, ob die env-config.js korrekt geladen wird.</p>
+        
+        <h3>Status</h3>
+        <p id="status">Umgebungsvariablen werden geladen...</p>
+        
+        <h3>Umgebungsvariablen</h3>
+        <pre id="env-data">Wird geladen...</pre>
+    </div>
+
+    <!-- Lade env-config.js -->
+    <script src="/env-config.js"></script>
+    
+    <!-- Test-Script -->
+    <script>
+        window.onload = function() {
+            setTimeout(function() {
+                const statusElement = document.getElementById('status');
+                const envDataElement = document.getElementById('env-data');
+                
+                if (window.__env) {
+                    statusElement.textContent = 'Umgebungsvariablen erfolgreich geladen!';
+                    statusElement.style.color = 'green';
+                    envDataElement.textContent = JSON.stringify(window.__env, null, 2);
+                } else {
+                    statusElement.textContent = 'Fehler: Umgebungsvariablen nicht gefunden!';
+                    statusElement.style.color = 'red';
+                    envDataElement.textContent = 'window.__env ist nicht verfügbar.';
+                }
+            }, 500);
+        };
+    </script>
+</body>
+</html> 

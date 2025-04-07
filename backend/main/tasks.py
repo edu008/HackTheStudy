@@ -399,3 +399,63 @@ def get_task_status(task_id: str) -> Dict[str, Any]:
             "status": "unknown",
             "error": str(e)
         }
+
+
+def _dispatch_processing_task(task):
+    """
+    Sendet einen ProcessingTask an den Worker.
+
+    Args:
+        task: Ein ProcessingTask-Objekt
+
+    Returns:
+        Dict mit Status und Task-ID
+    """
+    # Prüfe Worker-Verbindung
+    if not check_worker_connection():
+        logger.warning("Worker nicht erreichbar - Task für Upload %s wird in Queue gestellt", task.upload_id)
+
+    try:
+        # Konvertiere ProcessingTask in ein Dictionary
+        task_data = task.to_dict()
+        
+        # Task an Worker senden
+        celery_task = celery_app.send_task(
+            'process_document',
+            args=[task.id, task.upload_id, task.session_id],
+            kwargs={"task_metadata": task.task_metadata}
+        )
+
+        # Task-ID im Redis-Cache speichern
+        from core.redis_client import get_redis_client
+        redis_client = get_redis_client()
+        redis_client.hset(
+            f"processing_task:{task.id}",
+            mapping={
+                "celery_task_id": celery_task.id,
+                "status": "dispatched",
+                "timestamp": time.time()
+            }
+        )
+        redis_client.expire(f"processing_task:{task.id}", 86400)  # 24 Stunden TTL
+
+        logger.info("Processing-Task %s für Upload %s gesendet, Celery-Task-ID: %s", 
+                    task.id, task.upload_id, celery_task.id)
+
+        return {
+            "success": True,
+            "task_id": celery_task.id,
+            "processing_task_id": task.id
+        }
+    except Exception as e:
+        logger.error("Fehler beim Senden des Processing-Tasks: %s", str(e))
+        task.status = "error"
+        task.error_message = f"Task-Dispatch-Fehler: {str(e)}"
+        from core.models import db
+        db.session.commit()
+        
+        return {
+            "success": False,
+            "error": str(e),
+            "processing_task_id": task.id
+        }

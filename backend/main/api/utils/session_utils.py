@@ -4,12 +4,18 @@ Funktionen zur Verwaltung von Benutzer-Sessions und Upload-Sessions.
 """
 
 import logging
+import os
 import time
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 
-from core.models import (Connection, Flashcard, Question, Topic, Upload,
+from core.models import (Flashcard, Question, Topic, Upload,
                          UserActivity, db)
 from core.redis_client import redis_client
+from flask import current_app, g, request
+
+from ..auth import token_required
+from ..auth.token_auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -78,20 +84,19 @@ def delete_session(session_id):
             return False
 
         # Lösche zugehörige Daten in der richtigen Reihenfolge (wegen Fremdschlüsselbeziehungen)
-        # 1. Verbindungen (hängen von Topics ab)
-        Connection.query.filter_by(upload_id=upload.id).delete()
-
-        # 2. Fragen und Flashcards
+        # Beachte: Die Connection-Tabelle existiert nicht mehr
+        
+        # Fragen und Flashcards
         Question.query.filter_by(upload_id=upload.id).delete()
         Flashcard.query.filter_by(upload_id=upload.id).delete()
 
-        # 3. Topics
+        # Topics
         Topic.query.filter_by(upload_id=upload.id).delete()
 
-        # 4. Benutzeraktivitäten
+        # Benutzeraktivitäten
         UserActivity.query.filter_by(session_id=session_id).delete()
 
-        # 5. Upload selbst
+        # Upload selbst
         db.session.delete(upload)
 
         # Commit der Änderungen
@@ -234,3 +239,45 @@ def get_active_sessions(user_id=None, limit=10):
     except Exception as e:
         logger.error("Fehler beim Abrufen der aktiven Sessions: %s", str(e))
         return []
+
+
+def delete_session_data(session_id, remove_uploads=False):
+    """
+    Löscht alle Daten, die mit einer Session verbunden sind.
+
+    Args:
+        session_id: Die zu löschende Session-ID
+        remove_uploads: Ob auch Upload-Einträge entfernt werden sollen
+
+    Returns:
+        dict: Ergebnis der Löschoperation
+    """
+    try:
+        upload = Upload.query.filter_by(session_id=session_id).first()
+        if not upload:
+            logger.warning(f"Kein Upload gefunden für Session {session_id}")
+            return {"success": False, "error": "Keine Session-Daten gefunden."}
+
+        upload_id = upload.id
+        logger.info(f"Lösche alle Daten für Upload {upload_id} (Session {session_id})")
+
+        # Lösche alle abhängigen Daten
+        Question.query.filter_by(upload_id=upload_id).delete()
+        Flashcard.query.filter_by(upload_id=upload_id).delete()
+        Topic.query.filter_by(upload_id=upload_id).delete()
+        
+        # In der Connection-Tabelle wurden Verbindungen gespeichert,
+        # Diese Zeile wurde entfernt, da die Connection-Tabelle nicht mehr existiert
+
+        if remove_uploads:
+            Upload.query.filter_by(id=upload_id).delete()
+
+        # Commit die Änderungen
+        db.session.commit()
+        logger.info(f"Alle Daten für Upload {upload_id} wurden gelöscht")
+
+        return {"success": True, "upload_id": upload_id}
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Fehler beim Löschen der Session-Daten: {str(e)}")
+        return {"success": False, "error": str(e)}

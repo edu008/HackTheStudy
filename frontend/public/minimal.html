@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HackTheStudy - Minimal Test</title>
+    <!-- Umgebungsvariablen -->
+    <script src="/env-config.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-top: 30px;
+        }
+        h1 {
+            color: #2563eb;
+        }
+        pre {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+        }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .success {
+            background-color: #d1fae5;
+            color: #065f46;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .error {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>HackTheStudy - Minimaler Test</h1>
+        <p>Diese Seite verwendet nur natives JavaScript ohne externe Ressourcen.</p>
+        
+        <div class="success">
+            Wenn du diese Seite siehst, funktioniert der HTML-Webserver richtig.
+        </div>
+        
+        <div>
+            <h2>Zähler Test</h2>
+            <p>Zähler: <span id="counter">0</span></p>
+            <button id="increment-btn">Erhöhen</button>
+        </div>
+        
+        <div>
+            <h2>Umgebungsvariablen</h2>
+            <pre id="env-vars">Wird geladen...</pre>
+        </div>
+        
+        <div>
+            <h2>API Test</h2>
+            <button id="test-api-btn">API testen</button>
+            <div id="api-result"></div>
+        </div>
+    </div>
+
+    <script>
+        // Einfacher Zähler mit nativem JavaScript
+        let count = 0;
+        const counterElement = document.getElementById('counter');
+        const incrementButton = document.getElementById('increment-btn');
+        
+        incrementButton.addEventListener('click', function() {
+            count++;
+            counterElement.textContent = count;
+        });
+        
+        // Umgebungsvariablen anzeigen
+        const envVarsElement = document.getElementById('env-vars');
+        if (window.__env) {
+            envVarsElement.textContent = JSON.stringify(window.__env, null, 2);
+        } else {
+            envVarsElement.textContent = 'Keine __env Variablen gefunden';
+        }
+        
+        // API-Test
+        const testApiButton = document.getElementById('test-api-btn');
+        const apiResultElement = document.getElementById('api-result');
+        
+        testApiButton.addEventListener('click', function() {
+            apiResultElement.textContent = 'API wird getestet...';
+            apiResultElement.className = '';
+            
+            // API-URL aus Umgebungsvariablen oder Fallback
+            const apiUrl = window.__env?.API_URL || 'http://localhost:8080';
+            
+            fetch(`${apiUrl}/health`)
+                .then(response => {
+                    if (response.ok) {
+                        return response.text().then(text => {
+                            apiResultElement.textContent = `API antwortet: ${text.substring(0, 50)}...`;
+                            apiResultElement.className = 'success';
+                        });
+                    } else {
+                        apiResultElement.textContent = `API-Fehler: ${response.status} ${response.statusText}`;
+                        apiResultElement.className = 'error';
+                    }
+                })
+                .catch(error => {
+                    apiResultElement.textContent = `API-Fehler: ${error.message}`;
+                    apiResultElement.className = 'error';
+                });
+        });
+    </script>
+</body>
+</html> 

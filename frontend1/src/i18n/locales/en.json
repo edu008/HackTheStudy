@@ -1,0 +1,327 @@
+{
+  "navigation": {
+    "home": "Home",
+    "dashboard": "Dashboard",
+    "history": "History",
+    "credits": "Credits",
+    "signIn": "Sign In",
+    "signOut": "Sign Out",
+    "profile": "Profile",
+    "settings": "Settings",
+    "buyCredits": "Buy Credits"
+  },
+  "uploader": {
+    "title": "Upload your exams",
+    "subtitle": "Supported formats: PDF, TXT",
+    "dropzone": "Drop files here or click to select",
+    "dropzoneDescription": "Upload up to 5 files (PDF, TXT). Files will be analyzed to create study materials.",
+    "uploadButton": "Upload",
+    "uploading": "Uploading...",
+    "resetButton": "Reset",
+    "selectFiles": "Select Files",
+    "limitReached": "Limit reached",
+    "maxFiles": "Maximum number of files reached",
+    "maxFilesReached": "Maximum of 5 files reached",
+    "processing": "Processing...",
+    "success": "Successfully uploaded",
+    "error": "Error uploading",
+    "newSession": "Start New Session",
+    "loadingSessionInfo": "Loading session information..."
+  },
+  "flashcards": {
+    "title": "Flashcards",
+    "description": "Our AI creates optimally structured flashcards from your exams to help you study.",
+    "front": "Front",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "clickToFlip": "Click to flip",
+    "generateMore": "Generate More",
+    "generating": "Generating...",
+    "noCardsAvailable": "No flashcards available",
+    "uploadFirst": "Upload an exam first to generate flashcards.",
+    "total": "Total",
+    "cards": "cards",
+    "tokenUsage": "Token Usage",
+    "input": "Input",
+    "output": "Output"
+  },
+  "tests": {
+    "title": "Test Questions",
+    "description": "Test your knowledge with a collection of practice questions.",
+    "question": "Question",
+    "score": "Score",
+    "selectAnswer": "Select the correct answer.",
+    "answer": "Answer",
+    "showAnswer": "Show Answer",
+    "hideAnswer": "Hide Answer",
+    "checkAnswer": "Check Answer",
+    "explanation": "Explanation",
+    "previous": "Previous",
+    "next": "Next",
+    "moreQuestions": "More Questions",
+    "generateMore": "Generate More",
+    "generating": "Generating...",
+    "generateQuestions": "Generate Test Questions",
+    "generatingQuestions": "Generating Test Questions...",
+    "noQuestionsAvailable": "No Test Questions Available",
+    "uploadFirst": "Upload an exam first to generate test questions.",
+    "tokenUsage": "Token Usage",
+    "input": "Input",
+    "output": "Output"
+  },
+  "conceptMap": {
+    "title": "Concept Map",
+    "addConcept": "Add Concept",
+    "editConcept": "Edit Concept",
+    "deleteConcept": "Delete Concept",
+    "generateMore": "Generate More Concepts"
+  },
+  "payment": {
+    "title": "Buy Credits",
+    "credits": "Credits",
+    "price": "Price",
+    "buyNow": "Buy Now",
+    "success": {
+      "title": "Payment Confirmation",
+      "paymentStatus": "Payment Status",
+      "statusCheck": "We are checking the status of your payment.",
+      "successMessage": "Your payment has been successfully processed.",
+      "pendingMessage": "Your payment is still being processed.",
+      "errorMessage": "An error occurred while processing your payment.",
+      "verifying": "Verifying payment...",
+      "thankyou": "Thank you!",
+      "accountCredited": "The credits have been added to your account.",
+      "newBalance": "Your new balance:",
+      "backToDashboard": "Back to Dashboard",
+      "noInformation": "No payment information found",
+      "loginRequired": "Please log in to verify your payment",
+      "confirmed": "Payment successful!",
+      "verificationFailed": "Payment verification failed",
+      "processingError": "Error processing payment",
+      "contactSupport": "Please contact support if the problem persists."
+    },
+    "history": "Payment History",
+    "description": "With credits, you can use the AI features of HackTheStudy. The more credits you buy, the more tokens you can process.",
+    "currentBalance": "Current Balance",
+    "creditsPerCHF": "Credits per CHF",
+    "securePayment": "After successful payment, the credits will be automatically added to your account and immediately available.",
+    "tokenModel": {
+      "title": "Token Cost Model",
+      "inputTitle": "Input Tokens",
+      "inputRate": "100,000 Input Tokens = 15,000 Credits",
+      "inputDescription": "For text inputs such as uploads and prompts",
+      "outputTitle": "Output Tokens",
+      "outputRate": "100,000 Output Tokens = 30,000 Credits",
+      "outputDescription": "For generated content such as flashcards and questions"
+    },
+    "tiers": {
+      "basic": "Basic Package",
+      "standard": "Standard Package",
+      "premium": "Premium Package",
+      "professional": "Professional Package",
+      "credits": "{{count}} Credits",
+      "inputTokens": "For approx. {{count}} Input Tokens",
+      "outputTokens": "For approx. {{count}} Output Tokens"
+    },
+    "errors": {
+      "checkoutSession": "Error creating checkout session",
+      "initiate": "Payment could not be initiated",
+      "fetchHistory": "Error loading payment history",
+      "selectTier": "Please select a price tier",
+      "loginRequired": "You must be logged in to buy credits",
+      "processingError": "An error occurred during payment processing",
+      "tryAgain": "An error occurred. Please try again later."
+    },
+    "history.noPayments": "No payments found",
+    "amount": "Amount",
+    "status": "Status",
+    "completed": "Completed",
+    "for": "for",
+    "selectPackage": "Select a package to purchase credits for API requests.",
+    "useCredits": "Use these credits for API requests in our application.",
+    "selected": "Selected",
+    "select": "Select"
+  },
+  "languageSelector": {
+    "title": "Language",
+    "german": "German",
+    "english": "English"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "submit": "Submit",
+    "back": "Back",
+    "next": "Next"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "profile": "Profile",
+    "history": "History",
+    "payments": "Payments",
+    "welcomeBack": "Welcome Back",
+    "loadingAnalysis": "Loading Analysis",
+    "navigatingTo": "Navigating to \"{{topic}}\"...",
+    "historySection": {
+      "analyzedSessions": "Analyzed Sessions",
+      "refresh": "Refresh",
+      "noSessions": "No analyzed sessions found.",
+      "loadError": "The activities could not be loaded.",
+      "contentGenerated": "Content Generated",
+      "flashcardsGenerated": "New flashcards were successfully generated.",
+      "questionsGenerated": "New test questions were successfully generated.",
+      "topicsGenerated": "New topics were successfully generated.",
+      "generateError": "Error generating content",
+      "flashcardsGenerateError": "The flashcards could not be generated.",
+      "questionsGenerateError": "The test questions could not be generated.",
+      "topicsGenerateError": "The topics could not be generated.",
+      "newSession": "New Session",
+      "uploadPrompt": "Start a new session. Please upload your exams."
+    }
+  },
+  "index": {
+    "newSession": {
+      "title": "New Session Started",
+      "description": "The old session has been removed and a new session is being created."
+    },
+    "insufficientCredits": {
+      "title": "Insufficient Credits",
+      "flashcardsNeeded": "You need {{required}} credits for new flashcards. Currently available: {{available}} credits.",
+      "questionsNeeded": "You need {{required}} credits for new test questions. Currently available: {{available}} credits."
+    },
+    "buyCredits": "Buy Credits",
+    "testSimulator": {
+      "description": "Test your knowledge with a collection of practice questions."
+    },
+    "conceptMap": {
+      "uploadPrompt": "Please upload a file first or select an existing session to view the concept map."
+    }
+  },
+  "landing": {
+    "hero": {
+      "tagline": "The Intelligent Learning Platform",
+      "title1": "Learn smarter",
+      "title2": "with",
+      "description": "Revolutionize your learning with AI-powered flashcards, dynamic tests, and comprehensive concept analyses.",
+      "startButton": "Get Started",
+      "learnMoreButton": "Learn More",
+      "stats": {
+        "users": "Active Users",
+        "flashcards": "Created Flashcards",
+        "satisfaction": "Satisfied Users",
+        "support": "Support"
+      }
+    },
+    "about": {
+      "title": "How HackTheStudy Works",
+      "subtitle": "Revolutionize your learning in a few simple steps and achieve more with less effort.",
+      "included": "Included in all plans",
+      "features": {
+        "upload": {
+          "title": "Upload Documents",
+          "description": "Upload your scripts, lecture notes, or textbooks. Our AI processes various formats and extracts the most important information."
+        },
+        "analysis": {
+          "title": "AI Analysis",
+          "description": "Our advanced AI analyzes your documents, identifies key concepts, and creates a concept network for better understanding."
+        },
+        "generate": {
+          "title": "Generate Study Materials",
+          "description": "With just one click, create personalized flashcards and test questions on the most important topics in your documents."
+        },
+        "test": {
+          "title": "Test Knowledge",
+          "description": "Use the test mode to check your knowledge and identify knowledge gaps, with automatic adaptation to your progress."
+        },
+        "learn": {
+          "title": "Continuous Learning",
+          "description": "Generate additional flashcards or test questions on topics that you still find difficult, and deepen your understanding."
+        }
+      },
+      "cta": {
+        "title": "Ready to revolutionize your learning?",
+        "back": "Back to Home",
+        "start": "Sign up and get started"
+      }
+    },
+    "login": {
+      "title": "Get Started",
+      "description": "Sign in to use all features",
+      "googleButton": "Sign in with Google",
+      "githubButton": "Sign in with GitHub",
+      "note": "Note: For real OAuth authentication, the backend server must be running.",
+      "backButton": "Back to Home"
+    }
+  },
+  "footer": {
+    "description": "Revolutionize your exam preparation with AI-generated study materials based on your old exams.",
+    "featuresTitle": "Features",
+    "examAnalysis": "Exam Analysis",
+    "flashcards": "Flashcards",
+    "testSimulator": "Test Simulator",
+    "aiAssistant": "AI Learning Assistant",
+    "contactLegalTitle": "Contact & Legal",
+    "allRightsReserved": "All Rights Reserved"
+  },
+  "notFound": {
+    "message": "Oops! Page not found",
+    "returnHome": "Return to Home"
+  },
+  "legal": {
+    "impressum": {
+      "title": "Legal Notice",
+      "infoTitle": "Information according to Swiss law",
+      "contactTitle": "Contact",
+      "responsibleTitle": "Responsible for content",
+      "country": "Switzerland",
+      "disclaimerTitle": "Disclaimer",
+      "liabilityContentTitle": "Liability for content",
+      "liabilityContentText": "The contents of this website have been created with the utmost care. However, we cannot guarantee the accuracy, completeness, and timeliness of the content. As a service provider, we are responsible for our own content on these pages in accordance with the general laws of Switzerland.",
+      "liabilityLinksTitle": "Liability for links",
+      "liabilityLinksText": "This website contains links to external websites of third parties, over whose content we have no influence. Therefore, we cannot assume any liability for these external contents. The respective provider or operator of the pages is always responsible for the content of the linked pages. If we become aware of any legal violations, we will remove such links immediately.",
+      "copyrightTitle": "Copyright",
+      "copyrightText": "The content and works created by the site operators on this website are subject to Swiss copyright law. Duplication, processing, distribution, and any kind of exploitation outside the limits of copyright require the written consent of the respective author or creator."
+    },
+    "privacy": {
+      "title": "Privacy Policy",
+      "responsibleTitle": "1. Responsible Entity",
+      "responsibleText": "The operator of HackTheStudy is responsible for data processing on this website. Contact details can be found in the Legal Notice.",
+      "dataCollectionTitle": "2. Collected and Processed Data",
+      "dataRegistration": "Registration data (name, email, password)",
+      "dataDocuments": "Uploaded documents and created content",
+      "dataUsage": "Usage data (e.g., learning progress, session information)",
+      "dataTechnical": "Technical data (IP address, device type, browser information)",
+      "dataPayment": "For paid services: payment information",
+      "purposeTitle": "3. Purpose of Use",
+      "purposeIntro": "We use the collected data for:",
+      "purposePlatform": "Providing the platform and functions",
+      "purposeOptimization": "Optimizing learning content and offers",
+      "purposePremium": "Enabling premium services",
+      "purposeLegal": "Fulfilling legal obligations",
+      "legalBasisTitle": "4. Legal Basis",
+      "legalBasisText": "Data processing is carried out in accordance with the Swiss Data Protection Act (DSG), in particular:",
+      "cookiesTitle": "5. Cookies and Tracking",
+      "cookiesText": "Our platform uses cookies and tracking technologies to improve the user experience. You can manage or disable cookies in your browser settings.",
+      "apiTitle": "6. API Usage and Data Processing",
+      "apiText": "We use APIs for data processing and to provide personalized learning content. We pay attention to data protection and security.",
+      "paymentTitle": "7. Payment Data",
+      "paymentText": "When using paid functions, payment data is processed via secure payment providers. We do not store complete credit card data on our servers.",
+      "rightsTitle": "8. Your Rights",
+      "rightsAccess": "Right to access stored data",
+      "rightsCorrection": "Right to correct inaccurate data",
+      "rightsDeletion": "Right to delete your data",
+      "rightsObjection": "Right to object to the processing",
+      "rightsContact": "To exercise your rights, please contact us via the email address provided in the Legal Notice.",
+      "securityTitle": "9. Data Security",
+      "securityText": "We implement technical and organizational measures to protect your data. All data transfers are encrypted via HTTPS.",
+      "retentionTitle": "10. Storage Duration",
+      "retentionText": "Data is only stored for as long as necessary to provide our services or as required by law. You can have your data deleted at any time."
+    }
+  }
+} 

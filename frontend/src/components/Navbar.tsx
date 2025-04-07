@@ -1,20 +1,47 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
-import { GraduationCap, Menu, X, History, CreditCard, LogOut } from 'lucide-react';
+import { GraduationCap, Menu, X, History, CreditCard, LogOut, User as UserIcon, CheckSquare } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useTranslation } from 'react-i18next';
-import LanguageSelector from './LanguageSelector';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import UserHistory from '@/components/UserHistory';
+
+// Einfache LanguageSelector-Komponente
+const LanguageSelector = () => {
+  const { i18n } = useTranslation();
+  
+  const changeLanguage = (language: string) => {
+    i18n.changeLanguage(language);
+  };
+  
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm">
+          {i18n.language === 'en' ? 'EN' : 'DE'}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuItem onClick={() => changeLanguage('de')}>
+          Deutsch
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => changeLanguage('en')}>
+          English
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
 
 interface NavbarProps {
   onLoginClick?: () => void;
@@ -25,26 +52,10 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyKey, setHistoryKey] = useState(Date.now());
-  const { user, signOut, refreshUserCredits } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
-
-  useEffect(() => {
-    const updateCredits = async () => {
-      if (user) {
-        const lastUpdateTime = parseInt(localStorage.getItem('last_nav_credit_update') || '0');
-        const currentTime = Date.now();
-        
-        if (currentTime - lastUpdateTime > 60000) {
-          await refreshUserCredits();
-          localStorage.setItem('last_nav_credit_update', currentTime.toString());
-        }
-      }
-    };
-
-    updateCredits();
-  }, [refreshUserCredits, user]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -55,18 +66,6 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  useEffect(() => {
-    if (user) {
-      const creditUpdateInterval = setInterval(() => {
-        refreshUserCredits();
-      }, 120000);
-
-      return () => {
-        clearInterval(creditUpdateInterval);
-      };
-    }
-  }, [user, refreshUserCredits]);
-
   const handleSignOut = () => {
     signOut();
     navigate('/');
@@ -75,7 +74,20 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
   const handleOpenHistory = () => {
     setHistoryKey(Date.now());  // Force re-render of UserHistory
     setHistoryOpen(true);
-    refreshUserCredits();
+  };
+
+  const refreshUserCredits = () => {
+    // Platzhalter für die Aktualisierung der Benutzer-Credits
+    // In einer echten App würde hier ein API-Aufruf erfolgen
+    console.log('Aktualisiere Benutzer-Credits');
+  };
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(part => part[0])
+      .join('')
+      .toUpperCase();
   };
 
   return (
@@ -96,7 +108,7 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
               <>
                 <div className="flex items-center space-x-1">
                   <div className="text-sm font-medium">
-                    {t('navigation.credits')}: {user.credits}
+                    {t('navigation.credits', 'Credits')}: {user.credits}
                   </div>
                 </div>
 
@@ -107,40 +119,45 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
                     <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                       <Avatar className="h-8 w-8">
                         <AvatarImage src={user.avatar} alt={user.name} />
-                        <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
+                        <AvatarFallback>{getInitials(user.name)}</AvatarFallback>
                       </Avatar>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => navigate('/dashboard')}>
-                      {t('navigation.dashboard')}
+                      {t('navigation.dashboard', 'Dashboard')}
                     </DropdownMenuItem>
                     
                     <DropdownMenuItem onClick={() => navigate('/payment')}>
                       <CreditCard className="h-4 w-4 mr-2" />
-                      {t('navigation.buyCredits')}
+                      {t('navigation.buyCredits', 'Buy Credits')}
                     </DropdownMenuItem>
                     
                     <DropdownMenuItem onClick={handleOpenHistory}>
                       <History className="h-4 w-4 mr-2" />
-                      {t('navigation.history')}
+                      {t('navigation.history', 'History')}
+                    </DropdownMenuItem>
+                    
+                    <DropdownMenuItem onClick={() => navigate('/tasks')}>
+                      <CheckSquare className="h-4 w-4 mr-2" />
+                      {t('navigation.tasks', 'Tasks')}
                     </DropdownMenuItem>
                     
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={signOut}>
+                    <DropdownMenuItem onClick={handleSignOut}>
                       <LogOut className="h-4 w-4 mr-2" />
-                      {t('navigation.signOut')}
+                      {t('navigation.signOut', 'Sign Out')}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
                 
-                {/* History Sheet - wird über handleOpenHistory geöffnet */}
+                {/* History Sheet */}
                 <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
                   <SheetContent side="right" onCloseAutoFocus={() => {}}>
                     <SheetHeader>
-                      <SheetTitle>{t('navigation.history')}</SheetTitle>
+                      <SheetTitle>{t('navigation.history', 'History')}</SheetTitle>
                       <SheetDescription>
-                        {t('common.loading')}
+                        {t('common.loading', 'Loading...')}
                       </SheetDescription>
                     </SheetHeader>
                     <UserHistory key={historyKey} />
@@ -150,6 +167,12 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
             ) : (
               <>
                 <LanguageSelector />
+                <Button 
+                  size="sm" 
+                  onClick={onLoginClick || (() => navigate('/signin'))}
+                >
+                  {t('navigation.signIn', 'Sign In')}
+                </Button>
               </>
             )}
           </nav>
@@ -178,7 +201,7 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
                   <div className="flex items-center space-x-3">
                     <Avatar className="h-10 w-10">
                       <AvatarImage src={user.avatar} alt={user.name} />
-                      <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
+                      <AvatarFallback>{getInitials(user.name)}</AvatarFallback>
                     </Avatar>
                     <div>
                       <p className="text-sm font-medium">{user.name}</p>
@@ -186,7 +209,7 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
                     </div>
                   </div>
                   <div>
-                    <p className="text-sm font-medium">{t('navigation.credits')}: {user.credits}</p>
+                    <p className="text-sm font-medium">{t('navigation.credits', 'Credits')}: {user.credits}</p>
                   </div>
                 </div>
 
@@ -197,7 +220,7 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
                   className="flex items-center rounded-md px-3 py-2 text-sm hover:bg-accent"
                   onClick={() => setIsMenuOpen(false)}
                 >
-                  {t('navigation.dashboard')}
+                  {t('navigation.dashboard', 'Dashboard')}
                 </Link>
                 
                 <Link
@@ -205,20 +228,20 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
                   className="flex items-center rounded-md px-3 py-2 text-sm hover:bg-accent"
                   onClick={() => setIsMenuOpen(false)}
                 >
-                  {t('navigation.buyCredits')}
+                  {t('navigation.buyCredits', 'Buy Credits')}
                 </Link>
                 <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
                   <SheetTrigger asChild>
                     <Button variant="outline" size="sm" className="w-full justify-start" onClick={handleOpenHistory}>
                       <History className="h-4 w-4 mr-2" />
-                      {t('navigation.history')}
+                      {t('navigation.history', 'History')}
                     </Button>
                   </SheetTrigger>
                   <SheetContent side="right" onCloseAutoFocus={() => {}}>
                     <SheetHeader>
-                      <SheetTitle>{t('navigation.history')}</SheetTitle>
+                      <SheetTitle>{t('navigation.history', 'History')}</SheetTitle>
                       <SheetDescription>
-                        {t('common.loading')}
+                        {t('common.loading', 'Loading...')}
                       </SheetDescription>
                     </SheetHeader>
                     <UserHistory key={historyKey} />
@@ -229,20 +252,29 @@ const Navbar = ({ onLoginClick }: NavbarProps) => {
                   <LanguageSelector />
                   <Button 
                     onClick={() => {
-                      signOut();
+                      handleSignOut();
                       setIsMenuOpen(false);
                     }} 
                     variant="destructive" 
                     className="w-full"
                   >
                     <LogOut className="h-4 w-4 mr-2" />
-                    {t('navigation.signOut')}
+                    {t('navigation.signOut', 'Sign Out')}
                   </Button>
                 </div>
               </>
             ) : (
               <div className="flex flex-col space-y-3">
                 <LanguageSelector />
+                <Button 
+                  onClick={() => {
+                    if (onLoginClick) onLoginClick();
+                    else navigate('/signin');
+                    setIsMenuOpen(false);
+                  }}
+                >
+                  {t('navigation.signIn', 'Sign In')}
+                </Button>
               </div>
             )}
           </div>

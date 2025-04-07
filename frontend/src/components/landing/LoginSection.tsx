@@ -2,7 +2,7 @@ import React from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { FcGoogle } from "react-icons/fc";
-import { Github, ArrowLeft, ArrowUp } from "lucide-react";
+import { Github, ArrowUp } from "lucide-react";
 import { useTranslation } from 'react-i18next';
 
 interface LoginSectionProps {
@@ -18,9 +18,9 @@ const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
       <div className="max-w-md mx-auto transform transition-all duration-500">
         <Card className="shadow-lg border-blue-100 bg-white">
           <CardHeader className="text-center">
-            <CardTitle className="text-gray-800">{t('landing.login.title')}</CardTitle>
+            <CardTitle className="text-gray-800">{t('landing.login.title', 'Anmelden')}</CardTitle>
             <CardDescription className="text-gray-600">
-              {t('landing.login.description')}
+              {t('landing.login.description', 'Wähle eine Anmeldemethode')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -30,7 +30,7 @@ const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
               onClick={() => onSignIn('google')}
             >
               <FcGoogle className="mr-2 h-4 w-4" />
-              {t('landing.login.googleButton')}
+              {t('landing.login.googleButton', 'Mit Google anmelden')}
             </Button>
             <Button 
               variant="outline" 
@@ -38,10 +38,11 @@ const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
               onClick={() => onSignIn('github')}
             >
               <Github className="mr-2 h-4 w-4" />
-              {t('landing.login.githubButton')}
+              {t('landing.login.githubButton', 'Mit GitHub anmelden')}
             </Button>
-            <p className="text-xs text-center text-gray-500 mt-2">
-              {t('landing.login.note')}
+            
+            <p className="text-xs text-center text-gray-500 mt-4">
+              {t('landing.login.note', 'Durch die Anmeldung stimmst du unseren Nutzungsbedingungen zu')}
             </p>
           </CardContent>
           <CardFooter className="flex justify-center">
@@ -51,11 +52,10 @@ const LoginSection = ({ onBackClick, onSignIn }: LoginSectionProps) => {
               className="flex items-center text-blue-600 hover:bg-blue-50 gap-2"
             >
               <ArrowUp className="h-4 w-4" />
-              {t('landing.login.backButton')}
+              {t('landing.login.backButton', 'Zurück')}
             </Button>
           </CardFooter>
         </Card>
-        
       </div>
     </div>
   );

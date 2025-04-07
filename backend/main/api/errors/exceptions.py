@@ -59,6 +59,10 @@ class APIPermissionError(APIError):
         super().__init__(message, ERROR_PERMISSION, additional_data)
 
 
+# Alias für APIPermissionError für abwärtskompatibilität
+PermissionError = APIPermissionError
+
+
 class ResourceNotFoundError(APIError):
     """Fehler bei nicht gefundenen Ressourcen."""
 

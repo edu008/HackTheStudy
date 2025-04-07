@@ -1,8 +1,9 @@
 """
-API-Routen für Topics
+API-Routen für Topics (Refaktoriert)
 ------------------
 
-Dieses Modul enthält die API-Endpunkte für die Verwaltung von Topics.
+Enthält API-Endpunkte zum Abrufen von Topics und ggf. Concept Map Vorschlägen.
+Generierungs-Routen entfernt.
 """
 
 import logging
@@ -11,123 +12,59 @@ from datetime import datetime
 
 from api.error_handler import (InsufficientCreditsError, InvalidInputError,
                                ResourceNotFoundError)
-from core.models import Connection, Topic, Upload, UserActivity, db
+from core.models import Topic, Upload, UserActivity, db, Flashcard, Question
 from flask import current_app, g, jsonify, request
 
 from ..auth import token_required
-from ..utils import check_and_manage_user_sessions
-from . import topics_bp
+# Entferne check_and_manage_user_sessions, da /load-topics entfernt wird
+# from ..utils import check_and_manage_user_sessions 
+# Importiere topics_bp direkt aus dem __init__.py Modul
+from . import topics_bp # Geändert zu relativem Import
 from .concept_map import generate_concept_map_suggestions
-from .generation import generate_related_topics, generate_topics
-from .models import get_topic_hierarchy, log_topic_activity
-from .utils import find_upload_by_session
+# Entferne Imports für Generierungsfunktionen
+# from .generation import generate_related_topics, generate_topics
+from .models import get_topic_hierarchy # log_topic_activity importiert von core
+from .utils import find_upload_by_session # Nicht mehr benötigt?
+from core.user_tracking import log_topic_activity
+from ..error_handler import (DatabaseError, InvalidInputError,
+                             InsufficientCreditsError, ResourceNotFoundError)
+# Entferne ungenutzte Imports
+# from ..utils.ai_utils import query_chatgpt
+# from ..utils.utils_common import generate_unique_id
+# from .topic_manager import find_upload_by_session, get_topic_hierarchy, generate_topics
 
 logger = logging.getLogger(__name__)
 
 
-@topics_bp.route('/load-topics', methods=['POST', 'OPTIONS'])
-def load_topics():
-    """
-    Erstellt eine neue Topic-Session.
-    """
-    # OPTIONS-Anfragen sofort beantworten
-    if request.method == 'OPTIONS':
-        response = jsonify({"success": True})
-        return response
+# --- Veraltete Generierungs-Routen entfernt --- #
 
-    # Authentifizierung für nicht-OPTIONS Anfragen
-    auth_decorator = token_required(lambda: None)
-    auth_result = auth_decorator()
-    if auth_result is not None:
-        return auth_result
+# @topics_bp.route('/load-topics', methods=['POST', 'OPTIONS'])
+# def load_topics():
+#    ...
 
-    try:
-        user_id = getattr(request, 'user_id', None)
+# @topics_bp.route('/generate-related-topics', methods=['POST', 'OPTIONS'])
+# def generate_related_topics_route():
+#    ...
 
-        # Überprüfe und verwalte die Anzahl der Sessions des Benutzers
-        if user_id:
-            check_and_manage_user_sessions(user_id)
-
-        # Generiere eine neue Session-ID
-        session_id = str(uuid.uuid4())
-
-        logger.info("Creating new session with ID: %s for user: %s", session_id, user_id)
-
-        # Rückgabe der neuen Session-ID
-        return jsonify({
-            "success": True,
-            "message": "Session zurückgesetzt und neue Session erstellt",
-            "session_id": session_id
-        }), 200
-    except Exception as e:
-        logger.error("Error resetting session: %s", str(e))
-        return jsonify({"success": False, "message": f"Fehler beim Zurücksetzen der Session: {str(e)}"}), 500
+# @topics_bp.route('/generate/<session_id>', methods=['POST', 'OPTIONS'])
+# def generate_topics_route(session_id):
+#    ...
 
 
-@topics_bp.route('/generate-related-topics', methods=['POST', 'OPTIONS'])
-def generate_related_topics_route():
-    """
-    Generiert verwandte Topics für eine Sitzung.
-    """
-    # OPTIONS-Anfragen sofort beantworten
-    if request.method == 'OPTIONS':
-        response = jsonify({"success": True})
-        return response
+# --- Routen zum Abrufen und für Concept Maps --- #
 
-    # Führe Authentifizierung durch
-    auth_decorator = token_required(lambda: None)
-    auth_result = auth_decorator()
-    if auth_result is not None:
-        return auth_result
-
-    data = request.json
-    session_id = data.get('session_id')
-    user_id = getattr(request, 'user_id', None)
-
-    if not session_id:
-        return jsonify({"success": False, "error": {"code": "NO_SESSION_ID", "message": "Session ID required"}}), 400
-
-    try:
-        # Generiere verwandte Topics
-        result = generate_related_topics(session_id, user_id)
-
-        # Protokolliere Aktivität
-        if result.get("success") and user_id:
-            upload = find_upload_by_session(session_id)
-            if upload:
-                log_topic_activity(user_id, upload.id, "generate_related_topics", {
-                    "new_topics_count": result.get("new_topics_count", 0),
-                    "new_connections_count": result.get("new_connections_count", 0)
-                })
-
-        return jsonify(result), 200 if result.get("success") else 400
-    except InvalidInputError as e:
-        return jsonify({"success": False, "error": {"code": "INVALID_INPUT", "message": str(e)}}), 400
-    except ResourceNotFoundError as e:
-        return jsonify({"success": False, "error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}}), 404
-    except InsufficientCreditsError as e:
-        return jsonify({
-            "success": False,
-            "error": {
-                "code": "INSUFFICIENT_CREDITS",
-                "message": str(e),
-                "credits_required": e.additional_data.get("credits_required")
-            }
-        }), 402
-    except Exception as e:
-        logger.error("Error generating related topics: %s", str(e))
-        return jsonify({"success": False, "error": {"code": "SERVER_ERROR", "message": str(e)}}), 500
-
-
-@topics_bp.route('/topics/<session_id>', methods=['GET', 'OPTIONS'])
+@topics_bp.route('/<session_id>', methods=['GET', 'OPTIONS'])
 def get_topics_route(session_id):
     """
     Holt alle Topics für eine Sitzung.
+    HINWEIS: Sollte idealerweise über /api/results/<session_id> erfolgen.
     """
     # OPTIONS-Anfragen sofort beantworten
     if request.method == 'OPTIONS':
-        response = jsonify({"success": True})
-        return response
+        # Minimalistische Antwort, da CORS global gehandhabt wird
+        return "", 204
+
+    logger.info(f"Topics-Abruf-Endpunkt aufgerufen für Session: {session_id}")
 
     # Authentifizierung
     auth_decorator = token_required(lambda: None)
@@ -136,39 +73,55 @@ def get_topics_route(session_id):
         return auth_result
 
     try:
-        upload = find_upload_by_session(session_id)
+        # Finde Upload basierend auf Session ID
+        upload = Upload.query.filter_by(session_id=session_id).first()
         if not upload:
-            return jsonify({"success": False, 
+            logger.warning(f"Keine Upload-Session gefunden für {session_id}")
+            return jsonify({"success": False,
                            "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
+
+        logger.info(f"Upload gefunden: ID={upload.id}, Session={session_id}, Status={upload.overall_processing_status}")
 
         # Hole die Topics für diesen Upload
         topics_hierarchy = get_topic_hierarchy(upload.id)
+        logger.info(f"Topics geladen für Upload {upload.id}: {len(topics_hierarchy.get('topics', []))} Topics")
+
+        # Hole Counts für Kontext
+        flashcards_count = db.session.query(Flashcard.id).filter_by(upload_id=upload.id).count()
+        questions_count = db.session.query(Question.id).filter_by(upload_id=upload.id).count()
 
         # Protokolliere Aktivität
-        user_id = getattr(request, 'user_id', None)
+        user_id = g.get('user_id') # Hole user_id aus g nach @token_required
         if user_id:
             log_topic_activity(user_id, upload.id, "view_topics")
 
+        # Gib nur die Topic-Hierarchie zurück
         return jsonify({
             "success": True,
-            "data": topics_hierarchy
+            "data": topics_hierarchy,
+            "metadata": {
+                "flashcards_count": flashcards_count,
+                "questions_count": questions_count,
+                "upload_id": upload.id,
+                "processing_status": upload.overall_processing_status
+            }
         }), 200
     except Exception as e:
-        logger.error("Error getting topics: %s", str(e))
-        return jsonify({"success": False, "error": {"code": "SERVER_ERROR", "message": str(e)}}), 500
+        logger.error(f"Error getting topics for session {session_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": {"code": "SERVER_ERROR", "message": "Fehler beim Laden der Themen."}}), 500
 
 
-@topics_bp.route('/generate-concept-map-suggestions', methods=['POST', 'OPTIONS'])
+@topics_bp.route('/concept-map/suggestions', methods=['POST', 'OPTIONS'])
 def generate_concept_map_suggestions_route():
     """
     Generiert Vorschläge für Verbindungen in einer Concept Map.
+    (Diese Funktion könnte potenziell bleiben, wenn sie nur DB-Daten nutzt)
     """
     # OPTIONS-Anfragen sofort beantworten
     if request.method == 'OPTIONS':
-        response = jsonify({"success": True})
-        return response
+        return "", 204
 
-    # Führe Authentifizierung durch
+    # Authentifizierung
     auth_decorator = token_required(lambda: None)
     auth_result = auth_decorator()
     if auth_result is not None:
@@ -177,12 +130,13 @@ def generate_concept_map_suggestions_route():
     data = request.json
     session_id = data.get('session_id')
     max_suggestions = data.get('max_suggestions', 5)
+    user_id = g.get('user_id')
 
     if not session_id:
         return jsonify({"success": False, "error": {"code": "NO_SESSION_ID", "message": "Session ID required"}}), 400
 
     try:
-        upload = find_upload_by_session(session_id)
+        upload = Upload.query.filter_by(session_id=session_id).first()
         if not upload:
             return jsonify({"success": False, 
                            "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}), 404
@@ -190,11 +144,20 @@ def generate_concept_map_suggestions_route():
         # Hole das Hauptthema
         main_topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
         if not main_topic:
+            # Versuche irgendein Topic zu finden, falls kein Hauptthema markiert ist
+            main_topic = Topic.query.filter_by(upload_id=upload.id).first()
+        if not main_topic:
             return jsonify({"success": False, 
-                           "error": {"code": "NO_MAIN_TOPIC", "message": "No main topic found"}}), 404
+                                "error": {"code": "NO_TOPICS_FOUND", "message": "No topics found for this upload"}}), 404
+            logger.warning(f"Kein Hauptthema gefunden für Upload {upload.id}, verwende Topic '{main_topic.name}'.")
 
         # Generiere Vorschläge
+        # Annahme: generate_concept_map_suggestions nutzt nur DB-Daten
         suggestions = generate_concept_map_suggestions(upload.id, main_topic, max_suggestions)
+
+        # Aktivität loggen
+        if user_id:
+             log_topic_activity(user_id, upload.id, "generate_concept_map_suggestions", {"count": len(suggestions)})
 
         return jsonify({
             "success": True,
@@ -204,55 +167,5 @@ def generate_concept_map_suggestions_route():
             }
         }), 200
     except Exception as e:
-        logger.error("Error generating concept map suggestions: %s", str(e))
-        return jsonify({"success": False, "error": {"code": "SERVER_ERROR", "message": str(e)}}), 500
-
-
-@topics_bp.route('/generate/<session_id>', methods=['POST', 'OPTIONS'])
-def generate_topics_route(session_id):
-    """
-    Generiert Topics für eine Sitzung.
-    """
-    # OPTIONS-Anfragen sofort beantworten
-    if request.method == 'OPTIONS':
-        response = jsonify({"success": True})
-        return response
-
-    # Authentifizierung
-    auth_decorator = token_required(lambda: None)
-    auth_result = auth_decorator()
-    if auth_result is not None:
-        return auth_result
-
-    user_id = getattr(request, 'user_id', None)
-
-    try:
-        # Generiere Topics
-        result = generate_topics(session_id, user_id)
-
-        # Protokolliere Aktivität
-        if result.get("success") and user_id:
-            upload = find_upload_by_session(session_id)
-            if upload:
-                log_topic_activity(user_id, upload.id, "generate_topics", {
-                    "topics_count": result.get("topics_count", 0),
-                    "main_topic": result.get("main_topic")
-                })
-
-        return jsonify(result), 200 if result.get("success") else 400
-    except InvalidInputError as e:
-        return jsonify({"success": False, "error": {"code": "INVALID_INPUT", "message": str(e)}}), 400
-    except ResourceNotFoundError as e:
-        return jsonify({"success": False, "error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}}), 404
-    except InsufficientCreditsError as e:
-        return jsonify({
-            "success": False,
-            "error": {
-                "code": "INSUFFICIENT_CREDITS",
-                "message": str(e),
-                "credits_required": e.additional_data.get("credits_required")
-            }
-        }), 402
-    except Exception as e:
-        logger.error("Error generating topics: %s", str(e))
-        return jsonify({"success": False, "error": {"code": "SERVER_ERROR", "message": str(e)}}), 500
+        logger.error(f"Error generating concept map suggestions for session {session_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": {"code": "SERVER_ERROR", "message": "Fehler beim Generieren der Vorschläge."}}), 500

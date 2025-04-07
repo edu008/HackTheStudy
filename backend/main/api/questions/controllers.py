@@ -9,6 +9,7 @@ Dieses Modul enthält die Geschäftslogik für die Fragenverwaltung:
 """
 
 import logging
+from datetime import datetime
 
 import tiktoken
 from api.token_tracking import (calculate_token_cost, check_credits_available,
@@ -100,7 +101,12 @@ def process_generate_more_questions(session_id, count, timestamp=""):
 
         # Initialize OpenAI client
         openai_api_key = current_app.config.get('OPENAI_API_KEY')
-        client = OpenAI(api_key=openai_api_key)
+        client = OpenAI(
+            api_key=openai_api_key,
+            default_headers={
+                "OpenAI-Beta": "assistants=v2"
+            }
+        )
 
         # Generiere neue Fragen
         new_questions = generate_additional_questions(
@@ -145,21 +151,24 @@ def process_generate_more_questions(session_id, count, timestamp=""):
         ]
 
         # Erstelle eine UserActivity-Eintrag für diese Aktion
-        if hasattr(g, 'user') and g.user:
-            user_activity = UserActivity(
-                user_id=g.user.id,
-                activity_type='question',
-                title=f'Generierte {len(new_questions)} zusätzliche Testfragen',
-                main_topic=main_topic,
-                subtopics=subtopics,
-                session_id=session_id,
-                details={
-                    'count': len(new_questions),
-                    'total_count': len(questions_data)
-                }
-            )
-            db.session.add(user_activity)
-            db.session.commit()
+        if hasattr(g, 'user') and g.user and upload:
+            try:
+                # Extrahiere Hauptthema (vereinfacht, nimmt das erste falls vorhanden)
+                topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
+                main_topic_title = topic.name if topic else None
+                
+                user_activity = UserActivity(
+                    user_id=g.user.id,
+                    session_id=session_id, 
+                    upload_id=upload.id,
+                    main_topic=main_topic_title, # Nur Hauptthema speichern
+                    timestamp=datetime.utcnow() # Timestamp wird jetzt automatisch gesetzt
+                )
+                db.session.add(user_activity)
+                db.session.commit()
+            except Exception as e_act:
+                logger.error(f"Fehler beim Erstellen des UserActivity Eintrags für Fragen: {e_act}")
+                db.session.rollback()
 
         # Rückgabe der erfolgreich generierten Fragen
         return jsonify({
@@ -278,7 +287,12 @@ def process_generate_questions(session_id, count=5, topic_filter=None):
 
         # Initialize OpenAI client
         openai_api_key = current_app.config.get('OPENAI_API_KEY')
-        client = OpenAI(api_key=openai_api_key)
+        client = OpenAI(
+            api_key=openai_api_key,
+            default_headers={
+                "OpenAI-Beta": "assistants=v2"
+            }
+        )
 
         # Sprache des Textes erkennen
         language = 'de' if detect_language_wrapper(upload.content) == 'de' else 'en'
@@ -323,20 +337,24 @@ def process_generate_questions(session_id, count=5, topic_filter=None):
         ]
 
         # Erstelle eine UserActivity-Eintrag für diese Aktion
-        if hasattr(g, 'user') and g.user:
-            user_activity = UserActivity(
-                user_id=g.user.id,
-                activity_type='question',
-                title=f'Generierte {len(questions)} Testfragen',
-                main_topic=main_topic,
-                subtopics=subtopics,
-                session_id=session_id,
-                details={
-                    'count': len(questions)
-                }
-            )
-            db.session.add(user_activity)
-            db.session.commit()
+        if hasattr(g, 'user') and g.user and upload:
+            try:
+                # Extrahiere Hauptthema (vereinfacht, nimmt das erste falls vorhanden)
+                topic = Topic.query.filter_by(upload_id=upload.id, is_main_topic=True).first()
+                main_topic_title = topic.name if topic else None
+                
+                user_activity = UserActivity(
+                    user_id=g.user.id,
+                    session_id=session_id, 
+                    upload_id=upload.id,
+                    main_topic=main_topic_title, # Nur Hauptthema speichern
+                    timestamp=datetime.utcnow() # Timestamp wird jetzt automatisch gesetzt
+                )
+                db.session.add(user_activity)
+                db.session.commit()
+            except Exception as e_act:
+                logger.error(f"Fehler beim Erstellen des UserActivity Eintrags für Fragen: {e_act}")
+                db.session.rollback()
 
         # Rückgabe der erfolgreich generierten Fragen
         return jsonify({

@@ -1,37 +1,41 @@
 """
-Topics-Modul für das Backend
---------------------------
+Topics-Modul für das Backend (Refaktoriert)
+-------------------
 
-Dieses Modul bietet eine modularisierte Struktur für die Verwaltung von Themen und Concept Maps:
-
-- routes: API-Endpunkte für Themen-Operationen
-- concept_map: Funktionen für die Generierung von Concept Maps
-- generation: Funktionen für die Generierung von Topics
-- models: Datenbankoperationen für Topics-Objekte
-- utils: Hilfsfunktionen für das Topics-Modul
+Enthält den Blueprint und exportiert notwendige Komponenten
+für das Abrufen von Topics und Concept Map Vorschlägen.
+Generierungs-, Speicher- und Formatierungs-Funktionen wurden entfernt oder sind intern.
 """
 
 from flask import Blueprint
 
+# Entferne Imports für Generierungs-Funktionen
+# from .generation import generate_topics, generate_related_topics
+
+# Behalte notwendige Imports
+# Entferne Import von save_topic, da dies im Worker geschieht
+from .models import get_topic_hierarchy #, save_topic
+# Entferne Import von routes, da dort keine Routen mehr definiert sind
+# from .routes import *
+# Entferne Import von format_topics, da nicht mehr direkt exportiert/benötigt
+# from .utils import format_topics
 from .concept_map import generate_concept_map_suggestions
-from .generation import generate_topics
-from .models import create_connection, create_topic, get_topic_hierarchy
-from .routes import *
-from .utils import process_topic_response
 
 # Erstelle den Blueprint für das Topics-Modul
 topics_bp = Blueprint('topics', __name__)
 
-# Importiere die Routen, um sie zu registrieren
+# Routen werden jetzt in api/__init__.py registriert
 
-# Exportiere wichtige Komponenten
-
+# Exportiere wichtige Komponenten (bereinigt)
 __all__ = [
     'topics_bp',
-    'generate_concept_map_suggestions',
-    'generate_topics',
+    # Keine Generierungs-Funktionen mehr exportieren
+    # 'generate_topics',
+    # 'generate_related_topics',
     'get_topic_hierarchy',
-    'create_topic',
-    'create_connection',
-    'process_topic_response'
+    # Kein save_topic mehr exportieren
+    # 'save_topic',
+    # Kein format_topics mehr exportieren
+    # 'format_topics',
+    'generate_concept_map_suggestions'
 ]
